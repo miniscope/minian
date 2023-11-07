@@ -1,3 +1,8 @@
+<p align="center">
+  <img src="https://github.com/denisecailab/minian/assets/844306/358d9a24-bc0d-40d0-8747-4c43693ce270" alt="image">
+</p>
+
+
 [![Python version](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://github.com/DeniseCaiLab/minian/blob/main/pyproject.toml)
 [![uv](https://img.shields.io/badge/uv-astral-purple.svg)](https://docs.astral.sh/uv/)
 
