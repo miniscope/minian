@@ -141,8 +141,8 @@ def generate_data(
             a_min=-2 * mo_sigma,
             a_max=2 * mo_sigma,
         ),
-        dims=["frame", "variable"],
-        coords={"frame": np.arange(ff), "variable": ["height", "width"]},
+        dims=["frame", "shift_dim"],
+        coords={"frame": np.arange(ff), "shift_dim": ["height", "width"]},
         name="shifts",
     )
     Y = (
@@ -170,7 +170,7 @@ if __name__ == "__main__":
     # optimal parameters
     param_denoise = {"method": "median", "ksize": 7}
     param_background_removal = {"method": "tophat", "wnd": 15}
-    param_estimate_shift = {"dim": "frame", "max_sh": 20}
+    param_estimate_motion = {"dim": "frame", "max_sh": 20}
     param_seeds_init = {
         "wnd_size": 100,
         "method": "rolling",
@@ -236,9 +236,7 @@ if __name__ == "__main__":
     for dat in [Y, Y_true, A, C, S, shifts]:
         save_minian(
             dat,
-            dpath=testpath,
-            fname="minian",
-            backend="zarr",
+            dpath=os.path.join(testpath, "minian"),
             meta_dict={"session": -1, "animal": -2},
             overwrite=True,
         )
@@ -247,14 +245,12 @@ if __name__ == "__main__":
     Y_glow = (Y - Y.min("frame").compute()).rename("Y_glow")
     Y_dn = denoise(Y_glow, **param_denoise).rename("Y_denoise")
     Y_bg = remove_background(Y_dn, **param_background_removal).rename("Y_bg")
-    shifts_est = estimate_shifts(Y_bg, **param_estimate_shift)
-    Y_mc = apply_shifts(Y_bg, shifts_est).fillna(0).rename("Y_mc")
+    shifts_est = estimate_motion(Y_bg, **param_estimate_motion)
+    Y_mc = apply_shifts(Y_bg.astype(float), shifts_est).fillna(0).rename("Y_mc")
     for dat in [Y_glow, Y_dn, Y_bg, Y_mc, shifts_est]:
         save_minian(
             dat,
-            dpath=testpath,
-            fname="minian",
-            backend="zarr",
+            dpath=os.path.join(testpath, "minian"),
             meta_dict={"session": -1, "animal": -2},
             overwrite=True,
         )
@@ -299,9 +295,7 @@ if __name__ == "__main__":
     ]:
         save_minian(
             dat,
-            dpath=testpath,
-            fname="minian",
-            backend="zarr",
+            dpath=os.path.join(testpath, "minian"),
             meta_dict={"session": -1, "animal": -2},
             overwrite=True,
         )

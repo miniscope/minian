@@ -42,3 +42,4 @@ dependencies:
   - rechunker=0.3.3
   - medpy=0.4.0
   - jinja2=2.11.3
+  - markupsafe=2.0.1
