@@ -110,6 +110,19 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Python tooling
+.nox/
+.ruff_cache/
+.pyre/
+.pytype/
+__pypackages__/
+
+# uv
+.uv/
+uv.lock
 
 # minian results
 demo_movies/minian
@@ -134,3 +147,7 @@ build_artifacts
 
 # minian intermediate
 minian_intermediate
+
+# Rust
+**/target/
+*.rs.bk

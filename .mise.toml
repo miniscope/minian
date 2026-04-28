@@ -1,0 +1,11 @@
+[tools]
+python = "3.12"
+rust = "1.95.0"
+
+[tasks.rs-dev]
+description = "Rebuild and install minian_rs into the current env (maturin develop)"
+run = "uv run maturin develop --manifest-path src-rust/Cargo.toml"
+
+[tasks.mypy]
+description = "Type-check Python with mypy ([tool.mypy] in pyproject.toml)"
+run = "uv run mypy minian"

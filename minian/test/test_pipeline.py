@@ -5,6 +5,7 @@ import sys
 import numpy as np
 import pytest
 
+from ..constants import MINIAN
 from ..utilities import open_minian
 
 
@@ -22,7 +23,7 @@ def test_pipeline_notebook():
         "pipeline.ipynb",
     ]
     subprocess.run(args, check=True)
-    minian_ds = open_minian("./demo_movies/minian")
+    minian_ds = open_minian(os.path.join("./demo_movies", MINIAN))
     assert minian_ds.sizes["frame"] == 2000
     assert minian_ds.sizes["height"] == 480
     assert minian_ds.sizes["width"] == 752
@@ -34,5 +35,5 @@ def test_pipeline_notebook():
     assert int(minian_ds["C"].sum().compute()) == 478444
     assert int(minian_ds["S"].sum().compute()) == 3943
     assert int(minian_ds["A"].sum().compute()) == 41755
-    assert os.path.exists("./demo_movies/minian_mc.mp4")
-    assert os.path.exists("./demo_movies/minian.mp4")
+    assert os.path.exists(os.path.join("./demo_movies", f"{MINIAN}_mc.mp4"))
+    assert os.path.exists(os.path.join("./demo_movies", f"{MINIAN}.mp4"))

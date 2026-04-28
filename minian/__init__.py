@@ -1,8 +1,20 @@
 import dask as da
 import os
+
+from ._version import get_package_version
+from .constants import MINIAN, MINIAN_CONFIG_FILENAME
+from .logger import configure_logging
 from .utilities import custom_arr_optimize, custom_delay_optimize
 
-__version__ = "1.2.1"
+__all__ = [
+    "__version__",
+    "MINIAN",
+    "MINIAN_CONFIG_FILENAME",
+    "configure_logging",
+    "custom_arr_optimize",
+    "custom_delay_optimize",
+]
+__version__ = get_package_version()
 
 da.config.set(
     array_optimize=custom_arr_optimize, delayed_optimize=custom_delay_optimize
@@ -15,7 +27,8 @@ da.config.set(
         "distributed.worker.memory.pause": 0.9,
         "distributed.worker.memory.terminate": 0.95,
         "distributed.admin.log-length": 100,
-        "distributed.scheduler.transition-log-length": 100,
+        # Formerly `distributed.scheduler.transition-log-length` (deprecated).
+        "distributed.admin.low-level-log-length": 100,
         "optimization.fuse.ave-width": 3,
         # "optimization.fuse.subgraphs": False,
         # "distributed.scheduler.allowed-failures": 1,

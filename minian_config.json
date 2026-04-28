@@ -1,0 +1,116 @@
+{
+  "intpath": "/Users/stu_latka/Code/minian/minian_intermediate",
+  "subset": {
+    "frame": {
+      "__slice__": [
+        0,
+        null,
+        null
+      ]
+    }
+  },
+  "subset_mc": null,
+  "interactive": true,
+  "output_size": 100,
+  "n_workers": null,
+  "reserve_cores_for_os": 1,
+  "thread_env": {
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1"
+  },
+  "param_save_minian": {
+    "meta_dict": {
+      "session": -1,
+      "animal": -2
+    },
+    "overwrite": true
+  },
+  "param_load_videos": {
+    "pattern": "msCam[0-9]+\\.avi$",
+    "dtype": "uint8",
+    "downsample": {
+      "frame": 1,
+      "height": 1,
+      "width": 1
+    },
+    "downsample_strategy": "subset"
+  },
+  "param_denoise": {
+    "method": "median",
+    "ksize": 7
+  },
+  "param_background_removal": {
+    "method": "tophat",
+    "wnd": 15
+  },
+  "param_estimate_motion": {
+    "dim": "frame"
+  },
+  "param_seeds_init": {
+    "wnd_size": 1000,
+    "method": "rolling",
+    "stp_size": 500,
+    "max_wnd": 15,
+    "diff_thres": 3
+  },
+  "param_pnr_refine": {
+    "noise_freq": 0.06,
+    "thres": 1
+  },
+  "param_ks_refine": {
+    "sig": 0.05
+  },
+  "param_seeds_merge": {
+    "thres_dist": 10,
+    "thres_corr": 0.8,
+    "noise_freq": 0.06
+  },
+  "param_initialize": {
+    "thres_corr": 0.8,
+    "wnd": 10,
+    "noise_freq": 0.06
+  },
+  "param_init_merge": {
+    "thres_corr": 0.8
+  },
+  "param_get_noise": {
+    "noise_range": [
+      0.06,
+      0.5
+    ]
+  },
+  "param_first_spatial": {
+    "dl_wnd": 10,
+    "sparse_penal": 0.01,
+    "size_thres": [
+      25,
+      null
+    ]
+  },
+  "param_first_temporal": {
+    "noise_freq": 0.06,
+    "sparse_penal": 1,
+    "p": 1,
+    "add_lag": 20,
+    "jac_thres": 0.2
+  },
+  "param_first_merge": {
+    "thres_corr": 0.8
+  },
+  "param_second_spatial": {
+    "dl_wnd": 10,
+    "sparse_penal": 0.01,
+    "size_thres": [
+      25,
+      null
+    ]
+  },
+  "param_second_temporal": {
+    "noise_freq": 0.06,
+    "sparse_penal": 1,
+    "p": 1,
+    "add_lag": 20,
+    "jac_thres": 0.4
+  }
+}

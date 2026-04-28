@@ -1,4 +1,5 @@
 import itertools as itt
+import logging
 from typing import Iterable
 
 import dask as da
@@ -8,6 +9,8 @@ import pandas as pd
 import xarray as xr
 
 from .visualization import centroid
+
+log = logging.getLogger(__name__)
 
 
 def calculate_centroids(A: xr.DataArray, window: xr.DataArray) -> pd.DataFrame:
@@ -103,7 +106,7 @@ def calculate_centroid_distance(
         dist_df = da.delayed(pd.concat)(dist_df_ls, ignore_index=True, sort=True)
         return dist_df, len_df
 
-    print("creating parallel schedule")
+    log.info("creating parallel schedule")
     if index_dim:
         for idxs, grp in cents.groupby(index_dim):
             dist_df, len_df = cent_pair(grp)
@@ -120,7 +123,7 @@ def calculate_centroid_distance(
             res_list.append(res_df)
     else:
         res_list = [cent_pair(cents)[0]]
-    print("computing distances")
+    log.info("computing distances")
     res_list = da.compute(res_list)[0]
     res_df = pd.concat(res_list, ignore_index=True)
     res_df.columns = pd.MultiIndex.from_tuples(res_df.columns)

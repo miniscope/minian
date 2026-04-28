@@ -1,3 +1,4 @@
+import logging
 import os
 
 import numba as nb
@@ -6,12 +7,15 @@ import xarray as xr
 from cv2 import GaussianBlur
 from numpy import random
 
+from ..constants import MINIAN
 from ..cnmf import *
 from ..initialization import *
 from ..motion_correction import *
 from ..preprocessing import *
 from ..utilities import save_minian
 from ..visualization import write_video
+
+log = logging.getLogger(__name__)
 
 
 def gauss_cell(
@@ -237,13 +241,13 @@ if __name__ == "__main__":
         save_minian(
             dat,
             dpath=testpath,
-            fname="minian",
+            fname=MINIAN,
             backend="zarr",
             meta_dict={"session": -1, "animal": -2},
             overwrite=True,
         )
     # run pipeline
-    print("pre-processing")
+    log.info("pre-processing")
     Y_glow = (Y - Y.min("frame").compute()).rename("Y_glow")
     Y_dn = denoise(Y_glow, **param_denoise).rename("Y_denoise")
     Y_bg = remove_background(Y_dn, **param_background_removal).rename("Y_bg")
@@ -253,12 +257,12 @@ if __name__ == "__main__":
         save_minian(
             dat,
             dpath=testpath,
-            fname="minian",
+            fname=MINIAN,
             backend="zarr",
             meta_dict={"session": -1, "animal": -2},
             overwrite=True,
         )
-    print("initialization")
+    log.info("initialization")
     Y_flt = Y_mc.compute().stack(spatial=["height", "width"])
     seeds_in = seeds_init(Y_mc, **param_seeds_init)
     seeds_pnr, _, _ = pnr_refine(Y_flt, seeds_in.copy(), **param_pnr_refine)
@@ -269,7 +273,7 @@ if __name__ == "__main__":
     A_init, C_init, b_init, f_init = initialize(
         Y_mc, seeds_mrg[seeds_mrg["mask_mrg"]], **param_initialize
     )
-    print("cnmf")
+    log.info("cnmf")
     sn = get_noise_fft(Y_mc, **param_get_noise).persist()
     A_sp1, b_sp1, C_sp1, f_sp1 = update_spatial(
         Y_mc, A_init, b_init, C_init, f_init, sn, **param_first_spatial
@@ -279,7 +283,7 @@ if __name__ == "__main__":
     )
     A_tp1 = A_sp1.sel(unit_id=C_tp1.coords["unit_id"]).rename("A_tp1")
     A_mrg, sig_mrg = unit_merge(A_tp1, sig_tp1, [], **param_first_merge)
-    print(A_mrg)
+    log.info("%s", A_mrg)
     # save results
     for dat in [
         A_init.rename("A_init").rename(unit_id="unit_id_init"),
@@ -300,7 +304,7 @@ if __name__ == "__main__":
         save_minian(
             dat,
             dpath=testpath,
-            fname="minian",
+            fname=MINIAN,
             backend="zarr",
             meta_dict={"session": -1, "animal": -2},
             overwrite=True,

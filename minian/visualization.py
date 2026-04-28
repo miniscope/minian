@@ -1,16 +1,15 @@
 import functools as fct
 import itertools as itt
+import logging
 import os
 from collections import OrderedDict
 from typing import Callable, List, Optional, Tuple, Union
 from uuid import uuid4
 
-import colorcet as cc
 import cv2
 import dask
 import dask.array as da
 import ffmpeg
-import holoviews as hv
 import numpy as np
 import pandas as pd
 import panel as pn
@@ -22,26 +21,44 @@ import xarray as xr
 from bokeh.palettes import Category10_10, Viridis256
 from dask.diagnostics import ProgressBar
 from datashader import count_cat
-from holoviews.operation.datashader import datashade, dynspread
-from holoviews.streams import (
-    BoxEdit,
-    DoubleTap,
-    Pipe,
-    RangeXY,
-    Selection1D,
-    Stream,
-    Tap,
-)
-from holoviews.util import Dynamic
 from matplotlib import cm
+from matplotlib.colors import LinearSegmentedColormap
 from panel import widgets as pnwgt
 from scipy import linalg
 from scipy.ndimage.measurements import center_of_mass
 from scipy.spatial import cKDTree
 
 from .cnmf import compute_AtC
+from .constants import MINIAN
+
+log = logging.getLogger(__name__)
+
+# AlignViewer: black -> saturated channel -> white (matplotlib-only; replaces colorcet).
+_ALIGN_VIEWER_CHANNEL_CMAPS = {
+    "r": LinearSegmentedColormap.from_list(
+        "minian_align_r", [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 1.0)], N=256
+    ),
+    "g": LinearSegmentedColormap.from_list(
+        "minian_align_g", [(0.0, 0.0, 0.0), (0.0, 0.85, 0.0), (1.0, 1.0, 1.0)], N=256
+    ),
+    "b": LinearSegmentedColormap.from_list(
+        "minian_align_b", [(0.0, 0.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 1.0)], N=256
+    ),
+}
 from .motion_correction import apply_shifts
 from .utilities import custom_arr_optimize, rechunk_like
+from .viz_backend import (
+    BoxEdit,
+    DoubleTap,
+    Dynamic,
+    Pipe,
+    RangeXY,
+    Selection1D,
+    Stream,
+    datashade,
+    dynspread,
+    hv,
+)
 
 
 class VArrayViewer:
@@ -179,9 +196,9 @@ class VArrayViewer:
             try:
                 summ = {k: summ_all[k] for k in summary}
             except KeyError:
-                print("{} Not understood for specifying summary".format(summary))
+                log.warning("{} Not understood for specifying summary".format(summary))
             if summ:
-                print("computing summary")
+                log.info("computing summary")
                 sum_list = []
                 for k, v in summ.items():
                     sum_list.append(v.compute().assign_coords(sum_var=k))
@@ -383,7 +400,7 @@ class CNMFViewer:
               calcium traces, the spike signals, or to normalize both traces
               to unit range for each cell.
             * "Group" dropbox, "Previous Group" and "Next Group" buttons, select
-              the group of cells to visualize. The grouping is controled by
+              the group of cells to visualize. The grouping is controlled by
               `sortNN` parameter.
             * Playback toolbar, used to control which timepoint is visualized.
             * Additional metadata dropdown, if the input dataset contains
@@ -478,7 +495,7 @@ class CNMFViewer:
             output_dtypes=[self._C.dtype],
         )
         self.cents = centroid(self._A, verbose=True)
-        print("computing sum projection")
+        log.info("computing sum projection")
         with ProgressBar():
             self.Asum = self._A.sum("unit_id").compute()
         self._NNsort = sortNN
@@ -1115,13 +1132,10 @@ class AlignViewer:
             for c, im in imdict.items():
                 uids = uma_map[self.sess_rgb[c]].dropna().values
                 imdict[c] = im + Adict[c].sel(unit_id=uids).sum("unit_id").compute()
-        cmaps = {
-            "r": cc.m_linear_kryw_0_100_c71,
-            "g": cc.m_linear_green_5_95_c69,
-            "b": cc.m_linear_blue_5_95_c73,
-        }
         for c, im in imdict.items():
-            imdict[c] = cm.ScalarMappable(cmap=cmaps[c]).to_rgba(im)
+            imdict[c] = cm.ScalarMappable(cmap=_ALIGN_VIEWER_CHANNEL_CMAPS[c]).to_rgba(
+                im
+            )
         im_ovly = xr.DataArray(
             np.clip(imdict["r"] + imdict["g"] + imdict["b"] + self.brt_offset, 0, 1),
             dims=["height", "width", "rgb"],
@@ -1305,7 +1319,7 @@ def generate_videos(
     nfm_norm: int = None,
     gain=1.5,
     vpath=".",
-    vname="minian.mp4",
+    vname=f"{MINIAN}.mp4",
     options={"crf": "18", "preset": "ultrafast"},
 ) -> str:
     """
@@ -1350,7 +1364,7 @@ def generate_videos(
     vpath : str, optional
         Desired folder containing the resulting video. By default `"."`.
     vname : str, optional
-        Desired name of the video. By default `"minian.mp4"`.
+        Desired name of the video (default basename ``minian.mp4`` from :data:`~minian.constants.MINIAN`).
     options : dict, optional
         Output options for `ffmpeg`, passed directly to :func:`write_video`. By
         default `{"crf": "18", "preset": "ultrafast"}`.
@@ -1361,9 +1375,9 @@ def generate_videos(
         Absolute path of the resulting video.
     """
     if AC is None:
-        print("generating traces")
+        log.info("generating traces")
         AC = compute_AtC(A, C)
-    print("normalizing")
+    log.info("normalizing")
     gain = 255 / Y.max().compute().values * gain
     Y = Y * gain
     if nfm_norm is not None:
@@ -1379,7 +1393,7 @@ def generate_videos(
         norm_factor = gain
     AC = AC * norm_factor
     res = Y - AC
-    print("writing videos")
+    log.info("writing videos")
     vid = xr.concat(
         [
             xr.concat([varr, Y], "width", coords="minimal"),
@@ -1611,7 +1625,7 @@ def centroid(A: xr.DataArray, verbose=False) -> pd.DataFrame:
         dask="allowed",
     ).assign_coords(dim=["height", "width"])
     if verbose:
-        print("computing centroids")
+        log.info("computing centroids")
         with ProgressBar():
             cents = cents.compute()
     cents_df = (
@@ -1914,13 +1928,10 @@ def visualize_spatial_update(
         lambda cr: cr.opts(frame_width=500, frame_height=50),
         hv.RGB if datashading else hv.Curve,
     )
-    return (
-        hv.NdLayout(
-            {"pseudo-color": (hv_pts * hv_A), "binary": (hv_pts * hv_Ab)},
-            kdims="Spatial Matrix",
-        ).cols(1)
-        + hv_C.relabel("Temporal Components")
-    )
+    return hv.NdLayout(
+        {"pseudo-color": (hv_pts * hv_A), "binary": (hv_pts * hv_Ab)},
+        kdims="Spatial Matrix",
+    ).cols(1) + hv_C.relabel("Temporal Components")
 
 
 def visualize_temporal_update(
@@ -2124,7 +2135,7 @@ def NNsort(cents: pd.DataFrame) -> pd.Series:
         result.loc[idu_next] = NNord
         remain_list.remove(idu_next)
         for k in range(1, int(np.ceil(np.log2(len(result)))) + 1):
-            qry = kdtree.query(cents_hw.loc[idu_next], 2 ** k)
+            qry = kdtree.query(cents_hw.loc[idu_next], 2**k)
             NNs = qry[1][np.isfinite(qry[0])].squeeze()
             NNs = NNs[np.sort(np.unique(NNs, return_index=True)[1])]
             NNs = np.array(result.iloc[NNs].index)

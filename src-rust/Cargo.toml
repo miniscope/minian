@@ -1,0 +1,20 @@
+[package]
+name = "src-rust"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95.0"
+license = "GPL-3.0"
+description = "PyO3 extension (minian.minian_rs) for MiniAn"
+repository = "https://github.com/DeniseCaiLab/minian"
+
+[lib]
+name = "minian_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+ndarray = "0.17"
+num-complex = "0.4"
+numpy = "0.28.0"
+pyo3 = { version = "0.28.3", features = ["extension-module"] }
+rayon = "1.12.0"
+realfft = "3"
