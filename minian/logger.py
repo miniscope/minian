@@ -6,6 +6,9 @@ import logging
 import sys
 from typing import Any
 
+from .constants import MINIAN
+
+
 def configure_logging(
     level: int | str = logging.INFO,
     *,
@@ -20,14 +23,10 @@ def configure_logging(
     logger unless you attach a NullHandler elsewhere. Prefer calling this once
     for consistent formatting.
     """
-    lg = logging.getLogger("minian")
+    lg = logging.getLogger(MINIAN)
 
     def _non_null_handlers() -> list:
-        return [
-            h
-            for h in lg.handlers
-            if not isinstance(h, logging.NullHandler)
-        ]
+        return [h for h in lg.handlers if not isinstance(h, logging.NullHandler)]
 
     if _non_null_handlers() and not force:
         lg.setLevel(level)
@@ -48,4 +47,3 @@ def configure_logging(
     lg.addHandler(handler)
     lg.setLevel(level)
     lg.propagate = False
-

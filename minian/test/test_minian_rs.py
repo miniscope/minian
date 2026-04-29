@@ -23,6 +23,19 @@ def test_filt_fft_f64_matches_legacy_pyfftw_reference():
         np.testing.assert_allclose(got, want, rtol=0, atol=1e-3)
 
 
+def test_filt_fft_cutoff_above_nyquist_matches_legacy():
+    """When ``int(freq * T)`` exceeds ``len(rfft(x))``, match NumPy slice clipping (no panic)."""
+    rs = _rust()
+    rng = np.random.default_rng(42)
+    t = 1001
+    x = rng.standard_normal(t).astype(np.float64)
+    freq = 1.2  # freq * t > len(rfft(x)) ≈ t // 2 + 1
+    for btype in ("low", "high"):
+        want = legacy.filt_fft(x.copy(), freq, btype)
+        got = np.asarray(rs.filt_fft_f64(np.ascontiguousarray(x), float(freq), btype))
+        np.testing.assert_allclose(got, want, rtol=0, atol=1e-3)
+
+
 def test_filt_fft_vec_f64_matches_legacy_reference():
     """Rust row-major 2-D path agrees with looping legacy."""
     rs = _rust()
@@ -57,3 +70,13 @@ def test_empty_1d_returns_empty():
     rs = _rust()
     got = rs.filt_fft_f64(np.array([], dtype=np.float64), 0.05, "low")
     assert np.asarray(got).shape == (0,)
+
+
+def test_thread_allocation_matches_default_cluster_workers():
+    rs = _rust()
+    ta = rs.thread_allocation(2)
+    assert int(ta.cluster_workers) == int(rs.default_cluster_workers(2))
+    assert int(ta.logical_cpus) == int(rs.logical_parallelism())
+    assert int(ta.after_reserve_cpus) == max(
+        0, int(rs.logical_parallelism()) - 2
+    )

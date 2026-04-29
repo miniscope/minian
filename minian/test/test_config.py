@@ -7,7 +7,6 @@ import pytest
 
 from minian.config import (
     PipelineConfig,
-    default_cluster_workers_py,
     load_pipeline_config,
     pipeline_config_to_jsonable,
     resolve_n_workers,
@@ -30,6 +29,7 @@ def test_resolve_n_workers_respects_env(monkeypatch: pytest.MonkeyPatch) -> None
 def test_resolve_n_workers_reserve_forces_floor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    pytest.importorskip("minian.minian_rs")
     monkeypatch.delenv("MINIAN_NWORKERS", raising=False)
     assert resolve_n_workers(reserve=10_000) == 1
 
@@ -48,6 +48,7 @@ def test_get_minian_intermediate_path(
 def test_resolve_n_workers_invalid_env_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    pytest.importorskip("minian.minian_rs")
     monkeypatch.setenv("MINIAN_NWORKERS", "not-a-number")
     n = resolve_n_workers(reserve=0)
     assert n >= 1
@@ -74,6 +75,7 @@ def test_with_paths_resolved_absolutizes_intpath_and_save_dpath(
 
 
 def test_pipeline_config_to_jsonable_roundtrip() -> None:
+    pytest.importorskip("minian.minian_rs")
     cfg = PipelineConfig()
     d = pipeline_config_to_jsonable(cfg, include_resolved_workers=True)
     text = json.dumps(d)
@@ -164,12 +166,15 @@ def test_pipeline_config_json_roundtrip_key_fields() -> None:
     assert cfg2.thread_env == cfg.thread_env
 
 
-def test_rust_and_python_workers_loosely_agree() -> None:
-    """Rust uses ``available_parallelism``; Python uses affinity/cpu_count."""
-    pytest.importorskip("minian.minian_rs")
-    from minian.minian_rs import default_cluster_workers
+def test_rust_allocation_matches_resolve_n_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``thread_allocation``, ``default_cluster_workers``, and ``resolve_n_workers`` agree."""
+    rs = pytest.importorskip("minian.minian_rs")
+    from minian.minian_rs import default_cluster_workers, thread_allocation
 
-    py_w = default_cluster_workers_py(reserve=1)
-    rs_w = default_cluster_workers(1)
-    assert rs_w >= 1 and py_w >= 1
-    assert abs(int(rs_w) - int(py_w)) <= 2
+    monkeypatch.delenv("MINIAN_NWORKERS", raising=False)
+    ta = thread_allocation(1)
+    assert ta.cluster_workers == int(default_cluster_workers(1))
+    assert ta.logical_cpus == int(rs.logical_parallelism())
+    assert resolve_n_workers(reserve=1) == int(ta.cluster_workers)

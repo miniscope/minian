@@ -26,15 +26,22 @@ fn filt_fft_1d(
     }
     let mut spectrum = forward_real_fft(r2c, &mut row);
 
+    // Bin index from normalized cutoff (same as `legacy.filt_fft` / numpy rfft).
+    // `spectrum.len()` is `t/2 + 1` (real FFT); `freq * t` can exceed it — NumPy
+    // clips slices; we must not index past `spectrum.len()` or Rust panics.
     let k = (freq * t as f64) as usize;
+    let n_spec = spectrum.len();
     match btype {
         "low" => {
-            spectrum[k..]
-                .iter_mut()
-                .for_each(|c| *c = Complex::new(0.0, 0.0));
+            if k < n_spec {
+                spectrum[k..]
+                    .iter_mut()
+                    .for_each(|c| *c = Complex::new(0.0, 0.0));
+            }
         }
         "high" => {
-            spectrum[..k]
+            let end = k.min(n_spec);
+            spectrum[..end]
                 .iter_mut()
                 .for_each(|c| *c = Complex::new(0.0, 0.0));
         }

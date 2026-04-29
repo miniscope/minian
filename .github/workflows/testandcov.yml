@@ -1,90 +1,81 @@
 name: pytest
 
-# Run this workflow every time for pull requests and pushes to master and dev branch
 on:
   push:
-    branches:
-      - master
-      - dev
+    branches: [main, master]
   pull_request:
-    branches:
-      - master
-      - dev
+    branches: [main, master]
 
 jobs:
   test-and-coverage:
-    name: Test and Cov py ${{ matrix.python-version }}, ${{ matrix.os }}
+    name: py ${{ matrix.python-version }} · ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       max-parallel: 5
       matrix:
-        os: ["ubuntu-latest", "macos-latest", "windows-latest"]
-        python-version: ["3.8"]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.12"]
     defaults:
       run:
-        shell: bash -l {0}
+        shell: bash
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Set up conda environment
-        uses: conda-incubator/setup-miniconda@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: astral-sh/setup-uv@v5
         with:
-          auto-update-conda: true
+          enable-cache: true
           python-version: ${{ matrix.python-version }}
-          mamba-version: "*"
-          activate-environment: minian
-          environment-file: environment.yml
-      - name: Install test dependencies
-        run: |
-          conda install -c conda-forge black==20.8b1 click==8.0.4 pytest==7.0.1 pytest-cov pytest-rerunfailures coverage==6.3.3
+
+      - name: Install project (dev + docs)
+        run: uv sync --group dev --extra docs
+
       - name: Lint with black
-        run: |
-          black --check minian
-      - name: Set up n_workers
-        uses: haya14busa/action-cond@v1
-        id: n_workers
-        with:
-          cond: ${{ runner.os == 'macOS' }}
-          if_true: 3
-          if_false: 2
-      - name: Run doctest
-        run: |
-          pip install -r requirements/requirements-doc.txt
-          sphinx-build -M doctest docs/source docs/build
+        run: uv run black --check minian
+
+      - name: Run Sphinx doctest
+        if: runner.os == 'Linux'
+        run: uv run sphinx-build -M doctest docs/source docs/build
+
       - name: Run tests and collect coverage
         env:
-          MINIAN_NWORKERS: ${{ steps.n_workers.outputs.value }}
+          MINIAN_NWORKERS: ${{ runner.os == 'macOS' && '3' || '2' }}
         run: |
-          pytest -v --color=yes --exitfirst --cov=minian --pyargs minian
-          cp -r img artifact/img
-      - name: Generate xml coverage report
-        if: ${{ runner.os == 'Linux'}}
-        run: |
-          coverage xml
+          mkdir -p artifact
+          if [ -d img ]; then cp -R img artifact/; fi
+          uv run pytest -v --color=yes --cov=minian --cov-report=xml --cov-report=term --pyargs minian
+
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v1
-        if: ${{ runner.os == 'Linux'}}
+        if: runner.os == 'Linux'
+        uses: codecov/codecov-action@v4
         with:
-          fail_ci_if_error: true
-      - name: Set up conditional SHA value
-        uses: haya14busa/action-cond@v1
+          files: coverage.xml
+          fail_ci_if_error: false
+
+      - name: Artifact name suffix
         id: commit_sha
-        with:
-          cond: ${{ github.event_name == 'pull_request' }}
-          if_true: ${{ github.event.pull_request.head.sha }}
-          if_false: ${{ github.sha }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            echo "value=${{ github.event.pull_request.head.sha }}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "value=${{ github.sha }}" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Upload notebook artifacts
-        uses: actions/upload-artifact@v2
-        if: ${{ runner.os == 'Linux'}}
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
         with:
           name: notebooks-${{ steps.commit_sha.outputs.value }}
           path: artifact
+
       - name: Trigger RTDs build
         uses: dfm/rtds-action@v1
-        if: ${{ runner.os == 'Linux'}}
+        if: runner.os == 'Linux' && github.event_name == 'push'
         with:
           webhook_url: ${{ secrets.RTDS_WEBHOOK_URL }}
           webhook_token: ${{ secrets.RTDS_WEBHOOK_TOKEN }}

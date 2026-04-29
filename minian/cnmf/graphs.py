@@ -1,9 +1,10 @@
 """CNMF decomposition and helpers (combined module).
 """
 import logging
-from typing import List
+from typing import List, Union
 
 import dask as da
+from dask.diagnostics import ProgressBar
 import networkx as nx
 import numpy as np
 import pandas as pd
@@ -19,13 +20,15 @@ from .filters import filt_fft_vec
 log = logging.getLogger(__name__)
 
 
-def label_connected(adj: np.ndarray, only_connected=False) -> np.ndarray:
+def label_connected(
+    adj: Union[np.ndarray, scipy.sparse.spmatrix], only_connected=False
+) -> np.ndarray:
     """
     Label connected components given adjacency matrix.
 
     Parameters
     ----------
-    adj : np.ndarray
+    adj : np.ndarray or scipy.sparse.spmatrix
         Adjacency matrix. Should be 2d symmetric matrix.
     only_connected : bool, optional
         Whether to keep only the labels of connected components. If `True`, then
@@ -38,13 +41,18 @@ def label_connected(adj: np.ndarray, only_connected=False) -> np.ndarray:
     labels : np.ndarray
         The labels for each components. Should have length `adj.shape[0]`.
     """
-    try:
-        np.fill_diagonal(adj, 0)
-        adj = np.triu(adj)
-        g = nx.convert_matrix.from_numpy_matrix(adj)
-    except Exception:
-        g = nx.convert_matrix.from_scipy_sparse_matrix(adj)
-    labels = np.zeros(adj.shape[0], dtype=np.int)
+    n = int(adj.shape[0])
+    if scipy.sparse.issparse(adj):
+        adj_sp = adj.tocsr(copy=True)
+        adj_sp.setdiag(0)
+        adj_sp = scipy.sparse.triu(adj_sp, format="csr")
+        g = nx.from_scipy_sparse_array(adj_sp)
+    else:
+        adj_dn = np.asarray(adj, dtype=float)
+        np.fill_diagonal(adj_dn, 0)
+        adj_dn = np.triu(adj_dn)
+        g = nx.from_numpy_array(adj_dn)
+    labels = np.zeros(n, dtype=np.int64)
     for icomp, comp in enumerate(nx.connected_components(g)):
         comp = list(comp)
         if only_connected and len(comp) == 1:
@@ -160,8 +168,9 @@ def graph_optimize_corr(
     log.info(
         "pixel recompute ratio: {}".format(sum(npxs) / G.number_of_nodes())
     )
-    log.info("computing correlations")
-    corr_ls = da.compute(corr_ls)[0]
+    log.info("graph_optimize_corr: computing correlations (Dask ProgressBar)")
+    with ProgressBar():
+        corr_ls = da.compute(corr_ls)[0]
     corr = pd.Series(np.concatenate(corr_ls), index=np.concatenate(idx_ls), name="corr")
     eg_df["corr"] = corr
     return eg_df

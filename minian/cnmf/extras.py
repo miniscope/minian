@@ -15,6 +15,7 @@ import pandas as pd
 import scipy.sparse
 import sparse
 import xarray as xr
+from dask.diagnostics import ProgressBar
 
 from ..utilities import (
     custom_arr_optimize,
@@ -152,21 +153,27 @@ def unit_merge(
         List of additional merged variables. Only returned if input `add_list`
         is not `None`.
     """
+    log.info("unit_merge: started")
     log.info("computing spatial overlap")
     with da.config.set(
         array_optimize=darr.optimization.optimize,
         **{"optimization.fuse.subgraphs": False},
     ):
-        A_sps = (A.data.map_blocks(sparse.COO) > 0).rechunk(-1).persist()
-        A_inter = sparse.tril(
-            darr.tensordot(
-                A_sps.astype(np.float32),
-                A_sps.astype(np.float32),
-                axes=[(1, 2), (1, 2)],
-            ).compute(),
-            k=-1,
-        )
+        log.info("unit_merge: binarized footprints (persist)")
+        with ProgressBar():
+            A_sps = (A.data.map_blocks(sparse.COO) > 0).rechunk(-1).persist()
+        log.info("unit_merge: unit×unit spatial overlap (tensordot)")
+        with ProgressBar():
+            A_inter = sparse.tril(
+                darr.tensordot(
+                    A_sps.astype(np.float32),
+                    A_sps.astype(np.float32),
+                    axes=[(1, 2), (1, 2)],
+                ).compute(),
+                k=-1,
+            )
     log.info("computing temporal correlation")
+    log.info("unit_merge: overlap-graph temporal correlations")
     nod_df = pd.DataFrame({"unit_id": A.coords["unit_id"].values})
     adj = adj_corr(C, A_inter, nod_df, freq=noise_freq)
     log.info("labeling units to be merged")
@@ -200,9 +207,10 @@ def unit_merge(
                 .rename(unit_labels="unit_id")
             )
             add_list[ivar] = var_mrg
+        log.info("unit_merge: finished")
         return A_merge, C_merge, add_list
-    else:
-        return A_merge, C_merge
+    log.info("unit_merge: finished")
+    return A_merge, C_merge
 
 
 def update_temporal(
@@ -381,23 +389,23 @@ def update_temporal(
 
     .. math::
         \\begin{aligned}
-        & \\underset{\mathbf{c} \, \mathbf{b_0} \,
-        \mathbf{c_0}}{\\text{minimize}}
-        & & \\left \\lVert \mathbf{y} - \mathbf{c} - \mathbf{c_0} -
-        \mathbf{b_0} \\right \\rVert ^2 + \\alpha \\left \\lvert \mathbf{G}
-        \mathbf{c} \\right \\rvert \\\\
+        & \\underset{\\mathbf{c} \\, \\mathbf{b_0} \\,
+        \\mathbf{c_0}}{\\text{minimize}}
+        & & \\left \\lVert \\mathbf{y} - \\mathbf{c} - \\mathbf{c_0} -
+        \\mathbf{b_0} \\right \\rVert ^2 + \\alpha \\left \\lvert \\mathbf{G}
+        \\mathbf{c} \\right \\rvert \\\\
         & \\text{subject to}
-        & & \mathbf{c} \geq 0, \; \mathbf{G} \mathbf{c} \geq 0
+        & & \\mathbf{c} \\geq 0, \\; \\mathbf{G} \\mathbf{c} \\geq 0
         \\end{aligned}
 
-    Where :math:`\mathbf{y}` is the estimated residule trace (`YrA`) for the
-    cell, :math:`\mathbf{c}` is the calcium dynamic of the cell,
-    :math:`\mathbf{G}` is a "frame"x"frame" matrix constructed from the
+    Where :math:`\\mathbf{y}` is the estimated residule trace (`YrA`) for the
+    cell, :math:`\\mathbf{c}` is the calcium dynamic of the cell,
+    :math:`\\mathbf{G}` is a "frame"x"frame" matrix constructed from the
     estimated AR coefficients of cell, such that the deconvolved spikes of the
-    cell is given by :math:`\mathbf{G}\mathbf{c}`. If `bseg is None`, then
-    :math:`\mathbf{b_0}` is a single scalar, otherwise it is a 1d vector with
+    cell is given by :math:`\\mathbf{G}\\mathbf{c}`. If `bseg is None`, then
+    :math:`\\mathbf{b_0}` is a single scalar, otherwise it is a 1d vector with
     dimension "frame" constrained to have multiple independent values, each
-    corresponding to a segment of time specified in `bseg`. :math:`\mathbf{c_0}`
+    corresponding to a segment of time specified in `bseg`. :math:`\\mathbf{c_0}`
     is a 1d vector with dimension "frame" constrained to be the product of a
     scalar (representing initial calcium concentration) and the decay dynamic
     given by the estimated AR coefficients. The parameter :math:`\\alpha` is the

@@ -1,6 +1,18 @@
 import dask as da
 import os
 
+# When running under IPython/Jupyter, attach a stderr StreamHandler so
+# ``log.info`` from ``minian.*`` shows up without a separate setup cell.
+try:
+    from IPython import get_ipython
+
+    if get_ipython() is not None:
+        from .logger import configure_logging as _configure_logging
+
+        _configure_logging()
+except (ImportError, NameError):
+    pass
+
 from ._version import get_package_version
 from .constants import MINIAN, MINIAN_CONFIG_FILENAME
 from .logger import configure_logging

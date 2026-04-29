@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from .visualization import centroid
+from .visualization._numeric import centroid
 
 log = logging.getLogger(__name__)
 

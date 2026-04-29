@@ -3,6 +3,8 @@ ignorePaths: []
 dictionaryDefinitions: []
 dictionaries: []
 words:
+  - amax
+  - argwhere
   - ascontiguousarray
   - asscalar
   - Asum
@@ -17,6 +19,7 @@ words:
   - cdylib
   - celerybeat
   - cmap
+  - CMAPS
   - cnmf
   - cnmfviewer
   - colorcet
@@ -27,6 +30,7 @@ words:
   - darr
   - dask
   - datashade
+  - datashaded
   - datashader
   - datashading
   - Deconvolved
@@ -49,14 +53,19 @@ words:
   - fnames
   - getaffinity
   - haya
+  - Holo
+  - holostreams
   - holoviews
   - htmlcov
   - hvobj
+  - hvres
   - hvsum
   - idxs
   - imread
   - Internsity
+  - interp
   - intpath
+  - ipykernel
   - ipynb
   - isel
   - jnote
@@ -64,24 +73,40 @@ words:
   - kdim
   - kdims
   - ksize
+  - kstest
+  - libx
   - linalg
   - localcluster
+  - lsqr
+  - lstsq
   - maturin
+  - medpy
   - metas
   - minian
   - Miniscope
   - mkdocs
+  - nanmax
+  - nanmin
   - natsort
   - natsorted
   - nbfile
+  - nbsphinx
   - nbsplit
   - ndcurve
+  - ndimage
+  - networkx
   - nosetests
+  - Nsort
+  - numba
   - NWORKERS
   - OPENBLAS
   - outpath
+  - outputdict
+  - ovly
   - Pipfile
+  - pipmov
   - pjoin
+  - pnwgt
   - popd
   - pushd
   - pyargs
@@ -106,6 +131,7 @@ words:
   - Scrapy
   - sdist
   - setuptools
+  - skimage
   - skvideo
   - SOURCEDIR
   - SPHINXBUILD
@@ -115,16 +141,33 @@ words:
   - spyderproject
   - spyproject
   - srcpath
+  - strm
   - subsetting
+  - subviews
   - thres
   - tifffile
+  - timepoint
+  - timepoints
+  - toeplitz
   - tophat
+  - ultrafast
   - usub
+  - VARARRAY
   - varr
+  - varray
+  - vaviewer
+  - vcodec
+  - vdims
   - Viridis
+  - VLINE
   - vlist
+  - vname
+  - vpath
   - webassets
   - wgts
   - xarr
+  - xarray
+  - XLABEL
+  - YLABEL
 ignoreWords: []
 import: []

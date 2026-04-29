@@ -51,7 +51,7 @@ MiniAn currently follows this high-level flow:
 1. Seed/initial component setup from `minian/initialization.py`.
 1. CNMF iterations and component updates in `minian/cnmf.py`.
 1. Cross-session registration in `minian/cross_registration.py` (optional stage).
-1. Visualization/UI in `minian/visualization.py` through `minian/viz_backend.py`.
+1. Visualization/UI in the `minian/visualization/` package (HoloViews, Panel, Datashader).
 
 Notebook/asset bootstrap is handled by `minian/install.py` (`minian-install` CLI).
 
@@ -61,7 +61,7 @@ For the Python 3.12+ modernization, work in this order:
 
 1. Stabilize packaging/runtime baseline (`pyproject.toml`, `uv.lock`, CI build).
 1. Split and harden dependencies (core vs `viz` vs `docs`; keep optional features optional).
-1. Remove/replace fragile visualization dependencies behind `minian/viz_backend.py`.
+1. Keep the HoloViews/Bokeh/Panel stack aligned on supported versions (declared in `pyproject.toml`).
 1. Make notebook workflow optional and promote CLI-first pipeline execution.
 1. Refactor module internals (`preprocessing` -> `motion_correction` -> `initialization` -> `cnmf`) with tests after each step.
 1. Apply targeted performance work (Rust candidates only after profiling confirms bottlenecks).

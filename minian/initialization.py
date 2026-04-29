@@ -1,11 +1,10 @@
 import functools as fct
-import logging
 import itertools as itt
+import logging
 import os
 from typing import Optional, Tuple, Union
 
 import cv2
-import dask as da
 import dask.array as darr
 import networkx as nx
 import numpy as np
@@ -13,7 +12,6 @@ import pandas as pd
 import sparse
 import xarray as xr
 from scipy.ndimage.measurements import label
-from scipy.signal import butter, lfilter
 from scipy.sparse import csc_matrix
 from scipy.stats import kstest, zscore
 from skimage.morphology import disk
@@ -105,6 +103,9 @@ def seeds_init(
     max_res = xr.concat(res, "sample")
     max_res = save_minian(max_res.rename("max_res"), int_path, overwrite=True)
     log.info("calculating local maximum")
+    # apply_ufunc(..., dask="parallelized") requires one chunk per core dim.
+    if getattr(max_res.data, "chunks", None):
+        max_res = max_res.chunk({"height": -1, "width": -1})
     loc_max = xr.apply_ufunc(
         local_max_roll,
         max_res,
@@ -728,8 +729,21 @@ def initA(
             tgt_nods["height"].values,
             tgt_nods["width"].values,
         )
-        cur_corr = pd.concat([src_corr, tgt_corr]).append(
-            {"corr": 1, "height": sd["height"], "width": sd["width"]}, ignore_index=True
+        cur_corr = pd.concat(
+            [
+                tgt_corr,
+                src_corr,
+                pd.DataFrame(
+                    [
+                        {
+                            "corr": 1,
+                            "height": sd["height"],
+                            "width": sd["width"],
+                        }
+                    ]
+                ),
+            ],
+            ignore_index=True,
         )
         cur_corr["iheight"] = cur_corr["height"].map(ih_dict)
         cur_corr["iwidth"] = cur_corr["width"].map(iw_dict)
@@ -780,7 +794,6 @@ def initC(varr: xr.DataArray, A: xr.DataArray) -> xr.DataArray:
         .transpose("spatial", "unit_id")
         .data.map_blocks(csc_matrix)
         .rechunk(-1)
-        .persist()
     )
     varr = varr.stack(spatial=["height", "width"]).transpose("frame", "spatial").data
     C = sps_lstsq(A, varr, iter_lim=10)

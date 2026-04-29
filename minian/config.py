@@ -1,8 +1,7 @@
 """Pipeline defaults: paths, Dask ``n_workers``, and BLAS thread caps.
 
-``n_workers`` resolution uses :func:`default_cluster_workers` from
-``minian.minian_rs`` when the extension is built; otherwise a small Python
-fallback (``sched_getaffinity`` / ``cpu_count``).
+CPU-based ``n_workers`` defaults come only from ``minian.minian_rs`` — see
+:func:`minian.minian_rs.thread_allocation` (logical CPUs and derived worker count).
 """
 
 from __future__ import annotations
@@ -29,7 +28,6 @@ __all__ = [
     "apply_blas_thread_env",
     "apply_minian_intermediate",
     "apply_thread_env",
-    "default_cluster_workers_py",
     "load_pipeline_config",
     "main",
     "pipeline_config_to_jsonable",
@@ -52,20 +50,6 @@ def _env_nonempty_positive_int(var: str) -> Optional[int]:
         return None
 
 
-def default_cluster_workers_py(reserve: int = 1) -> int:
-    """
-    Pure-Python CPU count minus ``reserve``, at least 1.
-
-    Usually agrees with :func:`minian.minian_rs.default_cluster_workers` when
-    the Rust extension is available.
-    """
-    if hasattr(os, "sched_getaffinity"):
-        n = len(os.sched_getaffinity(0))
-    else:
-        n = os.cpu_count() or 1
-    return max(1, int(n) - int(reserve))
-
-
 def resolve_n_workers(
     *,
     reserve: int = 1,
@@ -74,19 +58,21 @@ def resolve_n_workers(
     """
     Worker count for ``dask.distributed.LocalCluster(..., n_workers=...)``.
 
-    If ``env_var`` is set to an integer string, that value is used (minimum 1).
-    Otherwise uses :func:`default_cluster_workers_py`, or the Rust implementation
-    when ``import minian.minian_rs`` succeeds.
+    If ``env_var`` is set to a positive integer string, that value is used (minimum 1).
+    Otherwise defers to :func:`minian.minian_rs.thread_allocation` (requires the
+    Rust extension).
     """
     from_env = _env_nonempty_positive_int(env_var)
     if from_env is not None:
         return from_env
     try:
-        from minian.minian_rs import default_cluster_workers as _rs_workers
-
-        return int(_rs_workers(reserve))
-    except ImportError:
-        return default_cluster_workers_py(reserve)
+        from minian.minian_rs import thread_allocation as _thread_allocation
+    except ImportError as e:
+        raise ImportError(
+            "minian.minian_rs is required to resolve CPU-based n_workers "
+            "(install / build the package so the Rust extension is present)."
+        ) from e
+    return int(_thread_allocation(reserve).cluster_workers)
 
 
 def apply_thread_env(env: Mapping[str, Any]) -> None:

@@ -515,12 +515,13 @@ def est_motion_perframe(
     --------
     estimate_motion : for detailed explanation of parameters
     """
-    sh = phase_cross_correlation(
+    # scikit-image >= 0.24: return_error removed; shift is first element of tuple.
+    pcc_result = phase_cross_correlation(
         src,
         dst,
         upsample_factor=upsample,
-        return_error=False,
     )
+    sh = pcc_result[0] if isinstance(pcc_result, tuple) else pcc_result
     if mesh_size is None:
         return -sh
     src = sitk.GetImageFromArray(src.astype(np.float32))
