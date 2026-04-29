@@ -25,11 +25,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      # load_videos / ffmpeg.probe need ffprobe on PATH; nbconvert tests need it too.
-      - name: Set up FFmpeg (ffprobe)
-        uses: FedericoCarboni/setup-ffmpeg@v3
-        with:
-          ffmpeg-version: release
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install ffmpeg -y --no-progress
 
       - uses: dtolnay/rust-toolchain@stable
 
