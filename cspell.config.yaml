@@ -95,6 +95,7 @@ words:
   - ndcurve
   - ndimage
   - networkx
+  - nextdir
   - nosetests
   - Nsort
   - numba
@@ -149,6 +150,7 @@ words:
   - timepoint
   - timepoints
   - toeplitz
+  - topdown
   - tophat
   - ultrafast
   - usub

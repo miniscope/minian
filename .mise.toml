@@ -9,3 +9,7 @@ run = "uv run maturin develop --manifest-path src-rust/Cargo.toml"
 [tasks.mypy]
 description = "Type-check Python with mypy ([tool.mypy] in pyproject.toml)"
 run = "uv run mypy minian"
+
+[tasks.format]
+description = "Run pre-commit (Black on minian/) — needs: uv sync --group dev"
+run = "uv run pre-commit run --all-files"

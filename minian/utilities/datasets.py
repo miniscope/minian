@@ -28,7 +28,7 @@ from natsort import natsorted
 from tifffile import TiffFile, imread
 
 from ..constants import MINIAN
-from ..visualization._ffmpeg_constants import RawGray
+from .._ffmpeg_constants import RawGray
 from .dask_graph import custom_arr_optimize
 
 log = logging.getLogger(__name__)
@@ -110,6 +110,43 @@ def _eager_load_for_zarr(var: xr.DataArray, nbytes: int) -> xr.DataArray:
             return var.load()
     with da.config.set(scheduler="synchronous", **_EAGER_LOAD_DASK):
         return var.load()
+
+
+def _dask_chunks_zarr_compatible(axis_chunks: tuple) -> bool:
+    """Mirror xarray's check in ``extract_zarr_variable_encoding``: uniform slabs per axis."""
+    ch = tuple(int(x) for x in axis_chunks)
+    if len(ch) <= 1:
+        return True
+    # All chunks except the last must agree; final chunk cannot be larger than the first.
+    if len(set(ch[:-1])) > 1:
+        return False
+    if len(ch) > 1 and ch[-1] > ch[0]:
+        return False
+    return True
+
+
+def _uniformize_chunks_for_zarr(var: xr.DataArray) -> xr.DataArray:
+    """Rechunk ``var`` when Dask partitioning is incompatible with ``Dataset.to_zarr``.
+
+    Subtract/clip stackups (e.g. ``Y - compute_AtC(A, C).clip(...)``) can leave
+    irregular chunk sizes along a dimension; Zarr rejects that.
+    """
+    if not getattr(var.data, "chunks", None):
+        return var
+    rechunk_kw: dict[str, int] = {}
+    for dim in var.dims:
+        ch = tuple(var.chunksizes[dim])
+        if _dask_chunks_zarr_compatible(ch):
+            continue
+        rechunk_kw[dim] = -1
+    if not rechunk_kw:
+        return var
+    log.info(
+        "save_minian: rechunking %r along %s so zarr can write uniformly sized chunks",
+        var.name,
+        list(rechunk_kw.keys()),
+    )
+    return var.chunk(rechunk_kw)
 
 
 def load_videos(
@@ -561,6 +598,9 @@ def save_minian(
         default `None`.
     compute : bool, optional
         Whether to compute `var` and save it immediately. By default `True`.
+        Dask-backed inputs with incompatible chunk sizes for Zarr are rechunked
+        along affected dimensions before writing (typically after ``clip`` /
+        arithmetic fusion).
     mem_limit : str, optional
         The memory limit for the on-disk rechunking algorithm, passed to
         :func:`rechunker.rechunk`. Only used if `chunks` is not `None`. By
@@ -597,6 +637,7 @@ def save_minian(
     """
     dpath = os.path.normpath(dpath)
     Path(dpath).mkdir(parents=True, exist_ok=True)
+    var = _uniformize_chunks_for_zarr(var)
     ds = var.to_dataset()
     if meta_dict is not None:
         pathlist = os.path.split(os.path.abspath(dpath))[0].split(os.sep)
