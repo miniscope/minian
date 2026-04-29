@@ -15,7 +15,6 @@ import pandas as pd
 import scipy.sparse
 import sparse
 import xarray as xr
-from dask.diagnostics import ProgressBar
 
 from ..utilities import (
     custom_arr_optimize,
@@ -160,18 +159,16 @@ def unit_merge(
         **{"optimization.fuse.subgraphs": False},
     ):
         log.info("unit_merge: binarized footprints (persist)")
-        with ProgressBar():
-            A_sps = (A.data.map_blocks(sparse.COO) > 0).rechunk(-1).persist()
+        A_sps = (A.data.map_blocks(sparse.COO) > 0).rechunk(-1).persist()
         log.info("unit_merge: unit×unit spatial overlap (tensordot)")
-        with ProgressBar():
-            A_inter = sparse.tril(
-                darr.tensordot(
-                    A_sps.astype(np.float32),
-                    A_sps.astype(np.float32),
-                    axes=[(1, 2), (1, 2)],
-                ).compute(),
-                k=-1,
-            )
+        A_inter = sparse.tril(
+            darr.tensordot(
+                A_sps.astype(np.float32),
+                A_sps.astype(np.float32),
+                axes=[(1, 2), (1, 2)],
+            ).compute(),
+            k=-1,
+        )
     log.info("computing temporal correlation")
     log.info("unit_merge: overlap-graph temporal correlations")
     nod_df = pd.DataFrame({"unit_id": A.coords["unit_id"].values})

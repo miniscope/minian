@@ -24,11 +24,11 @@ import rechunker
 import xarray as xr
 import zarr as zr
 from dask.delayed import optimize as default_delay_optimize
-from dask.diagnostics import ProgressBar
 from natsort import natsorted
 from tifffile import TiffFile, imread
 
 from ..constants import MINIAN
+from ..visualization._ffmpeg_constants import RawGray
 from .dask_graph import custom_arr_optimize
 
 log = logging.getLogger(__name__)
@@ -56,17 +56,39 @@ def _has_distributed_client() -> bool:
         return False
 
 
+def _dataset_to_zarr_compute(ds: xr.Dataset, fp: str, mode: str):
+    """``Dataset.to_zarr(compute=True)`` avoiding worker OOM when a Client is active.
+
+    Uses the threaded scheduler plus default optimizers so the write does not
+    fan out entirely on low-RAM workers. Falls back to the distributed scheduler
+    if the graph raises ``Missing dependency`` (e.g. after ``persist()``).
+    """
+    if not _has_distributed_client():
+        return ds.to_zarr(fp, compute=True, mode=mode)
+    try:
+        with da.config.set(scheduler="threads", **_EAGER_LOAD_DASK):
+            return ds.to_zarr(fp, compute=True, mode=mode)
+    except ValueError as err:
+        if "Missing dependency" not in str(err):
+            raise
+        log.warning(
+            "save_minian: threads to_zarr failed (%s); retrying distributed", err
+        )
+        return ds.to_zarr(fp, compute=True, mode=mode)
+
+
 def _eager_load_for_zarr(var: xr.DataArray, nbytes: int) -> xr.DataArray:
     """
     Load ``var`` into memory so ``to_zarr`` does not ship a heavy upstream graph.
 
     Uses Dask's **default** array/delayed optimizers for this step only (not
-    :func:`~minian.utilities.custom_arr_optimize`), which avoids
-    ``ValueError: Missing dependency`` under local schedulers.
+    :func:`~minian.utilities.custom_arr_optimize`). With a ``Client``, first
+    tries **threads** on the client (avoids heavy zarr-backed work on workers
+    for small outputs); on ``Missing dependency``, retries a normal ``load()``
+    on the cluster (same pattern as :func:`_dataset_to_zarr_compute`).
 
-    Without a distributed ``Client``, uses the **synchronous** scheduler. With
-    a ``Client``, uses **threads** on the client so heavy zarr reads for small
-    outputs (e.g. ``motion``) do not exhaust worker ``memory_limit``.
+    Without a distributed ``Client``, uses the **synchronous** scheduler with
+    the same default optimizers.
     """
     log.info(
         "save_minian: loading %r into memory before zarr write (%d bytes)",
@@ -74,12 +96,20 @@ def _eager_load_for_zarr(var: xr.DataArray, nbytes: int) -> xr.DataArray:
         nbytes,
     )
     log.info("save_minian: computing %r before zarr write", var.name)
-    with ProgressBar():
-        if _has_distributed_client():
+    if _has_distributed_client():
+        try:
             with da.config.set(scheduler="threads", **_EAGER_LOAD_DASK):
                 return var.load()
-        with da.config.set(scheduler="synchronous", **_EAGER_LOAD_DASK):
+        except ValueError as err:
+            if "Missing dependency" not in str(err):
+                raise
+            log.warning(
+                "save_minian: threads preload failed (%s); retrying distributed",
+                err,
+            )
             return var.load()
+    with da.config.set(scheduler="synchronous", **_EAGER_LOAD_DASK):
+        return var.load()
 
 
 def load_videos(
@@ -305,7 +335,7 @@ def load_avi_ffmpeg(fname: str, h: int, w: int, f: int) -> np.ndarray:
     """
     out_bytes, err = (
         ffmpeg.input(fname)
-        .video.output("pipe:", format="rawvideo", pix_fmt="gray")
+        .video.output(RawGray.PIPE, format=RawGray.FORMAT, pix_fmt=RawGray.PIX_FMT)
         .run(capture_stdout=True)
     )
     return np.frombuffer(out_bytes, np.uint8).reshape(f, h, w)
@@ -539,8 +569,9 @@ def save_minian(
         If ``compute`` is ``True`` and the array's ``nbytes`` is at most this
         value, load it into memory before calling ``to_zarr``: **synchronous**
         when no ``Client`` is active; with a ``Client``, **threads** on the
-        client (default Dask optimizers for that step only, avoiding worker OOM
-        on heavy zarr reads). Set to ``0`` to disable. By default 256 MiB.
+        client first (default Dask optimizers for that step only), falling back
+        to distributed compute if ``Missing dependency`` occurs. Set to ``0``
+        to disable. By default 256 MiB.
 
     Returns
     -------
@@ -601,25 +632,15 @@ def save_minian(
                     **dict([(dn, pathlist[di]) for dn, di in meta_dict.items()])
                 )
     if compute:
-        _fp_abs = os.path.abspath(fp)
         try:
-            # Dask's ProgressBar does not track work run on a distributed cluster.
-            if _has_distributed_client():
-                arr = ds.to_zarr(fp, compute=True, mode=md)
-            else:
-                with ProgressBar():
-                    arr = ds.to_zarr(fp, compute=True, mode=md)
+            log.info("save_minian: computing + writing zarr %s", _fp_abs)
+            arr = _dataset_to_zarr_compute(ds, fp, md)
         except Exception:
             log.exception(
                 "save_minian: zarr write failed; %r may be incomplete", _fp_abs
             )
-            print(
-                f"save_minian: FAILED (e.g. OOM); {_fp_abs!r} may be missing or incomplete.",
-                flush=True,
-            )
             raise
         log.info("save_minian: finished %s", _fp_abs)
-        print(f"save_minian: finished {var.name!r}", flush=True)
     else:
         arr = ds.to_zarr(fp, compute=False, mode=md)
     if (chunks is not None) and compute:
@@ -632,10 +653,6 @@ def save_minian(
             chunks,
             mem_limit,
         )
-        print(
-            f"save_minian: on-disk rechunk {var.name!r} chunks={chunks!r} …",
-            flush=True,
-        )
         with da.config.set(
             array_optimize=darr.optimization.optimize,
             delayed_optimize=default_delay_optimize,
@@ -644,8 +661,7 @@ def save_minian(
             rechk = rechunker.rechunk(
                 zstore[var.name], chunks, mem_limit, dst_path, temp_store=temp_path
             )
-            with ProgressBar():
-                rechk.execute()
+            rechk.execute()
         try:
             shutil.rmtree(temp_path)
         except FileNotFoundError:

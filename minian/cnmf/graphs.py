@@ -4,13 +4,16 @@ import logging
 from typing import List, Union
 
 import dask as da
-from dask.diagnostics import ProgressBar
 import networkx as nx
 import numpy as np
 import pandas as pd
-import pymetis
 import scipy.sparse
 import xarray as xr
+
+try:
+    import pymetis as _pymetis
+except ImportError:  # pragma: no cover - wheels missing on Windows
+    _pymetis = None
 
 
 
@@ -18,6 +21,22 @@ import xarray as xr
 from .filters import filt_fft_vec
 
 log = logging.getLogger(__name__)
+
+
+def _fallback_partition(sorted_nodes: list, nparts: int) -> list[int]:
+    """Deterministic contiguous partitions when pymetis/METIS is unavailable."""
+    n = len(sorted_nodes)
+    nparts = max(int(nparts), 1)
+    if n == 0:
+        return []
+    membership = [0] * n
+    base, rem = divmod(n, nparts)
+    idx = 0
+    for p in range(nparts):
+        for _ in range(base + (1 if p < rem else 0)):
+            membership[idx] = p
+            idx += 1
+    return membership
 
 
 def label_connected(
@@ -112,10 +131,13 @@ def graph_optimize_corr(
         representing the node index of the edge (correlation), and column "corr"
         with computed value of correlation.
     """
-    # a heuristic to make number of partitions scale with nodes
-    n_cuts, membership = pymetis.part_graph(
-        max(int(np.ceil(G.number_of_nodes() / chunk)), 1), adjacency=adj_list(G)
-    )
+    nparts = max(int(np.ceil(G.number_of_nodes() / chunk)), 1)
+    if _pymetis is not None:
+        _cuts, membership = _pymetis.part_graph(
+            nparts, adjacency=adj_list(G)
+        )
+    else:
+        membership = _fallback_partition(sorted(G.nodes()), nparts)
     nx.set_node_attributes(
         G, {k: {"part": v} for k, v in zip(sorted(G.nodes), membership)}
     )
@@ -168,9 +190,8 @@ def graph_optimize_corr(
     log.info(
         "pixel recompute ratio: {}".format(sum(npxs) / G.number_of_nodes())
     )
-    log.info("graph_optimize_corr: computing correlations (Dask ProgressBar)")
-    with ProgressBar():
-        corr_ls = da.compute(corr_ls)[0]
+    log.info("graph_optimize_corr: computing correlations")
+    corr_ls = da.compute(corr_ls)[0]
     corr = pd.Series(np.concatenate(corr_ls), index=np.concatenate(idx_ls), name="corr")
     eg_df["corr"] = corr
     return eg_df

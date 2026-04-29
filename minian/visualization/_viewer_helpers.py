@@ -7,18 +7,14 @@ from typing import Any
 
 from panel import widgets as pnwgt
 
-from ._constants import (
-    ImagePalette,
-    META_SELECT_WIDGET_HEIGHT,
-    META_SELECT_WIDGET_WIDTH,
-)
+from ._viz_constants import ImagePalette, MetaSelect
 
 
 def build_meta_select_widgets(
     meta_dicts: Mapping[str, Sequence[Any]],
     *,
-    height: int = META_SELECT_WIDGET_HEIGHT,
-    width: int = META_SELECT_WIDGET_WIDTH,
+    height: int = MetaSelect.WIDGET_HEIGHT,
+    width: int = MetaSelect.WIDGET_WIDTH,
 ) -> dict[str, pnwgt.Select]:
     """One ``Select`` per metadata dimension (name + options from ``meta_dicts``)."""
     return {

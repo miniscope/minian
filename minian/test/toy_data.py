@@ -33,7 +33,7 @@ def gauss_cell(
             break  # ensure cov is positive definite
     # generate samples of coordinates
     crds = np.clip(
-        np.round(random.multivariate_normal(cent, cov, size=nsamp)).astype(np.int),
+        np.round(random.multivariate_normal(cent, cov, size=nsamp)).astype(np.int64),
         0,
         None,
     )
@@ -56,7 +56,7 @@ def apply_arcoef(s: np.ndarray, g: np.ndarray):
 
 
 def ar_trace(frame: int, pfire: float, g: np.ndarray):
-    S = random.binomial(n=1, p=pfire, size=frame).astype(np.float)
+    S = random.binomial(n=1, p=pfire, size=frame).astype(np.float64)
     C = apply_arcoef(S, g)
     return C, S
 

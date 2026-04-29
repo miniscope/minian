@@ -110,25 +110,13 @@ def update_spatial(
     norm_fac : xr.DataArray
         Normalizing factor. Userful to scale temporal activity of cells. Only
         returned if `normalize` is `True`.
+
     Notes
-    -------
-    During spatial update, the algorithm solve the following optimization
-    problem for each pixel:
-
-    .. math::
-        \\begin{aligned}
-        & \\underset{\mathbf{a}}{\\text{minimize}}
-        & & \\left \\lVert \mathbf{y} - \mathbf{a}^T \mathbf{C} \\right \\rVert
-        ^2 + \\alpha \\left \\lvert \mathbf{a} \\right \\rvert \\\\
-        & \\text{subject to} & & \mathbf{a} \geq 0
-        \\end{aligned}
-
-    Where :math:`\mathbf{y}` is the fluorescent dynamic of the pixel,
-    :math:`\mathbf{a}` is spatial footprint values across all cells on that
-    pixel, :math:`\mathbf{C}` is temporal component matrix across all cells. The
-    parameter :math:`\\alpha` is the product of the noise level on each pixel
-    `sn` and the global scalar `sparse_penal`. Higher value of :math:`\\alpha`
-    will result in more sparse estimation of spatial footprints.
+    -----
+    For each pixel, the solver fits non-negative temporal traces against cells
+    selected by ``sub``, with sparsity controlled by noise times ``sparse_penal``
+    (matching the original NNLS / Lasso form in the citation). Larger
+    ``sparse_penal`` yields sparser footprints.
     """
     intpath = os.environ["MINIAN_INTERMEDIATE"]
     if in_memory:
@@ -138,7 +126,7 @@ def update_spatial(
         C_store = zarr.open_array(C_path)
     log.info("estimating penalty parameter")
     alpha = sparse_penal * sn
-    alpha = rechunk_like(alpha.compute(), sn)
+    alpha = rechunk_like(alpha.compute(), Y)
     log.info("computing subsetting matrix")
     selem = moph.disk(dl_wnd)
     sub = xr.apply_ufunc(
@@ -355,6 +343,12 @@ def update_spatial_block(
     """
     C_store = kwargs.get("C_store")
     f = kwargs.get("f")
+    if isinstance(y, darr.Array):
+        y = y.compute()
+    if isinstance(alpha, darr.Array):
+        alpha = alpha.compute()
+    if isinstance(sub, darr.Array):
+        sub = sub.compute()
     crd_ls = []
     data_ls = []
     for h, w in zip(*sub.any(axis=-1).nonzero()):

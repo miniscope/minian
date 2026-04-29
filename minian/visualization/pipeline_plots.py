@@ -14,7 +14,7 @@ from datashader import count_cat
 from holoviews.operation.datashader import datashade, dynspread
 from holoviews.util import Dynamic
 
-from ._constants import *
+from ._viz_constants import Datashade, Gmm, ImagePalette, Motion, Preprocess, Seeds, Spatial, Temporal
 from ._numeric import centroid, construct_pulse_response, normalize
 
 
@@ -51,7 +51,7 @@ def datashade_ndcurve(
         ovly,
         aggregator=count_cat(kdim),
         color_key=dict(color_key),
-        min_alpha=DATASHADE_NDCURVE_MIN_ALPHA,
+        min_alpha=Datashade.NDCURVE_MIN_ALPHA,
     )
     if spread:
         ds_ovly = dynspread(ds_ovly)
@@ -94,21 +94,21 @@ def visualize_preprocess(
     # Type-scoped opts so a Layout with Image + datashaded RGB does not merge ``cmap``
     # onto ``hv.RGB`` (RGB has no cmap; flat ``.opts(cmap=...)`` on the layout does).
     opts_im = hv.opts.Image(
-        frame_width=PREPROCESS_FRAME_WIDTH,
+        frame_width=Preprocess.FRAME_WIDTH,
         aspect=asp,
-        title=PREPROCESS_IMAGE_TITLE,
+        title=Preprocess.IMAGE_TITLE,
         cmap=ImagePalette.VIRIDIS_BOKEH,
     )
     opts_cnt_lines = hv.opts.Contours(
-        frame_width=PREPROCESS_FRAME_WIDTH,
+        frame_width=Preprocess.FRAME_WIDTH,
         aspect=asp,
-        title=PREPROCESS_CONTOURS_TITLE,
+        title=Preprocess.CONTOURS_TITLE,
         cmap=ImagePalette.VIRIDIS_BOKEH,
     )
     opts_cnt_rgb = hv.opts.RGB(
-        frame_width=PREPROCESS_FRAME_WIDTH,
+        frame_width=Preprocess.FRAME_WIDTH,
         aspect=asp,
-        title=PREPROCESS_CONTOURS_TITLE,
+        title=Preprocess.CONTOURS_TITLE,
     )
 
     def _vis(f):
@@ -181,14 +181,14 @@ def visualize_seeds(
     """
     h, w = max_proj.sizes["height"], max_proj.sizes["width"]
     asp = w / h
-    pt_cmap = {True: SEEDS_POINTS_UNMASKED_COLOR, False: SEEDS_MASK_FALSE_COLOR}
+    pt_cmap = {True: Seeds.POINTS_UNMASKED_COLOR, False: Seeds.MASK_FALSE_COLOR}
     opts_im = dict(
-        frame_width=SEEDS_FRAME_WIDTH,
+        frame_width=Seeds.FRAME_WIDTH,
         aspect=asp,
         cmap=ImagePalette.VIRIDIS_DISPLAY,
     )
     opts_pts = dict(
-        frame_width=SEEDS_FRAME_WIDTH,
+        frame_width=Seeds.FRAME_WIDTH,
         aspect=asp,
         size=dim("seeds") * 6 + 8,
         tools=["hover"],
@@ -201,7 +201,7 @@ def visualize_seeds(
         opts_pts["cmap"] = pt_cmap
     else:
         vdims = ["seeds"]
-        opts_pts["color"] = SEEDS_POINTS_UNMASKED_COLOR
+        opts_pts["color"] = Seeds.POINTS_UNMASKED_COLOR
     im = hv.Image(max_proj, kdims=["width", "height"])
     pts = hv.Points(seeds, kdims=["width", "height"], vdims=vdims)
     return im.opts(**opts_im) * pts.opts(**opts_pts)
@@ -245,10 +245,10 @@ def visualize_gmm_fit(
         gss_dict[igss] = hv.Curve((hist[1], gss))
     return (
         hv.Histogram(((hist[0] - hist[0].min()) / np.ptp(hist[0]), hist[1])).opts(
-            fill_alpha=GMM_HIST_FILL_ALPHA, fill_color=GMM_HIST_FILL_COLOR
+            fill_alpha=Gmm.HIST_FILL_ALPHA, fill_color=Gmm.HIST_FILL_COLOR
         )
         * hv.NdOverlay(gss_dict)
-    ).opts(height=GMM_FIG_HEIGHT, width=GMM_FIG_WIDTH)
+    ).opts(height=Gmm.FIG_HEIGHT, width=Gmm.FIG_WIDTH)
 
 
 def visualize_spatial_update(
@@ -323,9 +323,9 @@ def visualize_spatial_update(
             cents_df, kdims=["width", "height"], vdims=["unit_id"]
         ).opts(
             tools=["hover"],
-            fill_alpha=SPATIAL_POINTS_FILL_ALPHA,
+            fill_alpha=Spatial.POINTS_FILL_ALPHA,
             line_alpha=0,
-            size=SPATIAL_POINTS_SIZE,
+            size=Spatial.POINTS_SIZE,
         )
         hv_A_dict[key] = hv.Image(
             A.sum("unit_id").rename("A"), kdims=["width", "height"]
@@ -348,21 +348,21 @@ def visualize_spatial_update(
     else:
         hv_C = Dynamic(hv_C)
     hv_A = hv_A.opts(
-        frame_width=SPATIAL_IMAGE_FRAME_WIDTH,
+        frame_width=Spatial.IMAGE_FRAME_WIDTH,
         aspect=w / h,
         colorbar=True,
         cmap=ImagePalette.VIRIDIS_BOKEH,
     )
     hv_Ab = hv_Ab.opts(
-        frame_width=SPATIAL_IMAGE_FRAME_WIDTH,
+        frame_width=Spatial.IMAGE_FRAME_WIDTH,
         aspect=w / h,
         colorbar=True,
         cmap=ImagePalette.VIRIDIS_BOKEH,
     )
     hv_C = hv_C.map(
         lambda cr: cr.opts(
-            frame_width=SPATIAL_TEMPORAL_CURVE_FRAME_WIDTH,
-            frame_height=SPATIAL_TEMPORAL_CURVE_FRAME_HEIGHT,
+            frame_width=Spatial.TEMPORAL_CURVE_FRAME_WIDTH,
+            frame_height=Spatial.TEMPORAL_CURVE_FRAME_HEIGHT,
         ),
         hv.RGB if datashading else hv.Curve,
     )
@@ -465,7 +465,7 @@ def visualize_temporal_update(
         ins[:] = [i.compute() for i in ins]
         ya, c, s, sig, g = ins
         f_crd = ya.coords["frame"]
-        pul_crd = f_crd.values[:TEMPORAL_PULSE_PREVIEW_LEN]
+        pul_crd = f_crd.values[:Temporal.PULSE_PREVIEW_LEN]
         s_pul, c_pul = xr.apply_ufunc(
             construct_pulse_response,
             g,
@@ -528,15 +528,15 @@ def visualize_temporal_update(
     hv_pul = Dynamic(hv_pul)
     hv_unit = hv_unit.map(
         lambda p: p.opts(
-            frame_height=TEMPORAL_UNIT_MAP_FRAME_HEIGHT,
-            frame_width=TEMPORAL_UNIT_MAP_FRAME_WIDTH,
+            frame_height=Temporal.UNIT_MAP_FRAME_HEIGHT,
+            frame_width=Temporal.UNIT_MAP_FRAME_WIDTH,
         )
     )
     hv_pul = hv_pul.opts(
-        frame_width=TEMPORAL_SPATIAL_FOOTPRINT_FRAME_WIDTH, aspect=w / h
+        frame_width=Temporal.SPATIAL_FOOTPRINT_FRAME_WIDTH, aspect=w / h
     ).redim(t=hv.Dimension("t", soft_range=pul_range))
     hv_A = hv_A.opts(
-        frame_width=TEMPORAL_SPATIAL_FOOTPRINT_FRAME_WIDTH,
+        frame_width=Temporal.SPATIAL_FOOTPRINT_FRAME_WIDTH,
         aspect=w / h,
         cmap=ImagePalette.VIRIDIS_DISPLAY,
     )
@@ -577,9 +577,9 @@ def visualize_motion(motion: xr.DataArray) -> Union[hv.Layout, hv.NdOverlay]:
     """
     if motion.ndim > 2:
         opts_im = {
-            "frame_width": MOTION_IMAGE_FRAME_WIDTH,
-            "aspect": MOTION_IMAGE_ASPECT,
-            "cmap": MOTION_DIVERGING_CMAP,
+            "frame_width": Motion.IMAGE_FRAME_WIDTH,
+            "aspect": Motion.IMAGE_ASPECT,
+            "cmap": Motion.DIVERGING_CMAP,
             "symmetric": True,
             "colorbar": True,
         }
@@ -601,9 +601,9 @@ def visualize_motion(motion: xr.DataArray) -> Union[hv.Layout, hv.NdOverlay]:
         )
     else:
         opts_cv = {
-            "frame_width": MOTION_CURVE_FRAME_WIDTH,
+            "frame_width": Motion.CURVE_FRAME_WIDTH,
             "tools": ["hover"],
-            "aspect": MOTION_CURVE_ASPECT,
+            "aspect": Motion.CURVE_ASPECT,
         }
         return hv.NdOverlay(
             dict(

@@ -7,7 +7,6 @@ import dask.array as da
 import numpy as np
 import pandas as pd
 import xarray as xr
-from dask.diagnostics import ProgressBar
 from scipy import linalg
 from scipy.ndimage.measurements import center_of_mass
 from scipy.spatial import cKDTree
@@ -213,8 +212,7 @@ def centroid(A: xr.DataArray, verbose=False) -> pd.DataFrame:
     ).assign_coords(dim=["height", "width"])
     if verbose:
         log.info("computing centroids")
-        with ProgressBar():
-            cents = cents.compute()
+        cents = cents.compute()
     cents_df = (
         cents.rename("cents")
         .to_series()

@@ -13,26 +13,7 @@ import xarray as xr
 from holoviews.streams import BoxEdit, RangeXY, Stream
 from panel import widgets as pnwgt
 
-from ._constants import (
-    ImagePalette,
-    PANEL_SIZING_STRETCH_WIDTH,
-    PLAYER_HEIGHT,
-    PLAYER_INTERVAL_MS,
-    PLAYER_WIDTH,
-    SummaryStat,
-    UPDATE_MASK_BUTTON_HEIGHT,
-    UPDATE_MASK_BUTTON_WIDTH,
-    VARARRAY_FRAME_WIDTH,
-    VARARRAY_HIST_NUM_BINS,
-    VARARRAY_HIST_SIDE_WIDTH,
-    VARARRAY_HIST_XLABEL,
-    VARARRAY_HIST_YLABEL,
-    VARARRAY_POLYGON_FILL_ALPHA,
-    VARARRAY_POLYGON_LINE_COLOR,
-    VARARRAY_SUMMARY_ASPECT,
-    VARARRAY_SUMMARY_RGB_HEIGHT_FLOOR,
-    VARARRAY_VLINE_COLOR,
-)
+from ._viz_constants import ImagePalette, PanelLayout, Player, SummaryStat, VArray
 from ._viewer_helpers import (
     build_meta_select_widgets,
     wire_frame_player_index,
@@ -197,12 +178,12 @@ class VArrayViewer:
             except AttributeError:
                 self.sum_sub = self.summary
         ims, summ_hv = self._build_movie_summary()
-        self._pane_movie = pn.pane.HoloViews(ims, sizing_mode=PANEL_SIZING_STRETCH_WIDTH)
+        self._pane_movie = pn.pane.HoloViews(ims, sizing_mode=PanelLayout.SIZING_STRETCH_WIDTH)
         if summ_hv is None:
             self.pnplot = pn.Column(self._pane_movie)
         else:
             self._pane_summ = pn.pane.HoloViews(
-                summ_hv, sizing_mode=PANEL_SIZING_STRETCH_WIDTH
+                summ_hv, sizing_mode=PanelLayout.SIZING_STRETCH_WIDTH
             )
             self.pnplot = pn.Column(self._pane_movie, self._pane_summ)
 
@@ -217,15 +198,15 @@ class VArrayViewer:
                 curds = self.ds_sub
             fim = fct.partial(img, ds=curds)
             im = hv.DynamicMap(fim, streams=[self.strm_f]).opts(
-                frame_width=VARARRAY_FRAME_WIDTH,
+                frame_width=VArray.FRAME_WIDTH,
                 aspect=self._w / self._h,
                 cmap=ImagePalette.VIRIDIS_DISPLAY,
             )
             self.xyrange = RangeXY(source=im).rename(x_range="w", y_range="h")
             if not self._layout:
                 hv_box = hv.Polygons([]).opts(
-                    fill_alpha=VARARRAY_POLYGON_FILL_ALPHA,
-                    line_color=VARARRAY_POLYGON_LINE_COLOR,
+                    fill_alpha=VArray.POLYGON_FILL_ALPHA,
+                    line_color=VArray.POLYGON_LINE_COLOR,
                 )
                 self.str_box = BoxEdit(source=hv_box)
                 im_ovly = im * hv_box
@@ -242,13 +223,13 @@ class VArrayViewer:
                         ds.sel(frame=f).compute(), kdims=["width", "height"]
                     )
                 return hv.operation.histogram(
-                    cur_im, num_bins=VARARRAY_HIST_NUM_BINS
-                ).opts(xlabel=VARARRAY_HIST_XLABEL, ylabel=VARARRAY_HIST_YLABEL)
+                    cur_im, num_bins=VArray.HIST_NUM_BINS
+                ).opts(xlabel=VArray.HIST_XLABEL, ylabel=VArray.HIST_YLABEL)
 
             fhist = fct.partial(hist, ds=curds)
             his = hv.DynamicMap(fhist, streams=[self.strm_f, self.xyrange]).opts(
-                frame_height=int(VARARRAY_FRAME_WIDTH * self._h / self._w),
-                width=VARARRAY_HIST_SIDE_WIDTH,
+                frame_height=int(VArray.FRAME_WIDTH * self._h / self._w),
+                width=VArray.HIST_SIDE_WIDTH,
                 cmap=ImagePalette.VIRIDIS_DISPLAY,
             )
             # Image and histogram already set cmap; do not .map cmap onto AdjointLayout/Overlay.
@@ -276,24 +257,24 @@ class VArrayViewer:
             except Exception:
                 pass
             vl = hv.DynamicMap(lambda f: hv.VLine(f), streams=[self.strm_f]).opts(
-                color=VARARRAY_VLINE_COLOR
+                color=VArray.VLINE_COLOR
             )
             summ_plot = hvsum * vl
             if self._datashade:
                 summ = summ_plot.opts(
                     hv.opts.RGB(
-                        frame_width=VARARRAY_FRAME_WIDTH,
+                        frame_width=VArray.FRAME_WIDTH,
                         frame_height=max(
-                            VARARRAY_SUMMARY_RGB_HEIGHT_FLOOR,
-                            int(VARARRAY_FRAME_WIDTH / VARARRAY_SUMMARY_ASPECT),
+                            VArray.SUMMARY_RGB_HEIGHT_FLOOR,
+                            int(VArray.FRAME_WIDTH / VArray.SUMMARY_ASPECT),
                         ),
                     ),
                 )
             else:
                 summ = summ_plot.opts(
                     hv.opts.Curve(
-                        frame_width=VARARRAY_FRAME_WIDTH,
-                        aspect=VARARRAY_SUMMARY_ASPECT,
+                        frame_width=VArray.FRAME_WIDTH,
+                        aspect=VArray.SUMMARY_ASPECT,
                     )
                 )
             # Two separate Panel HoloViews panes (see __init__): do not use
@@ -316,10 +297,10 @@ class VArrayViewer:
     def _widgets(self):
         w_play = pnwgt.Player(
             length=len(self._f),
-            interval=PLAYER_INTERVAL_MS,
+            interval=Player.INTERVAL_MS,
             value=0,
-            width=PLAYER_WIDTH,
-            height=PLAYER_HEIGHT,
+            width=Player.WIDTH,
+            height=Player.HEIGHT,
         )
         wire_frame_player_index(
             w_play, lambda i: self.strm_f.event(f=int(self._f[i]))
@@ -327,8 +308,8 @@ class VArrayViewer:
         w_box = pnwgt.Button(
             name="Update Mask",
             button_type="primary",
-            width=UPDATE_MASK_BUTTON_WIDTH,
-            height=UPDATE_MASK_BUTTON_HEIGHT,
+            width=Player.UPDATE_MASK_BUTTON_WIDTH,
+            height=Player.UPDATE_MASK_BUTTON_HEIGHT,
         )
         w_box.param.watch(self._update_box, "clicks")
         if not self._layout:

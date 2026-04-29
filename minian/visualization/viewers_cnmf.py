@@ -12,7 +12,6 @@ import pandas as pd
 import panel as pn
 import param
 import xarray as xr
-from dask.diagnostics import ProgressBar
 from holoviews.streams import DoubleTap, Pipe, Selection1D, Stream
 from panel import widgets as pnwgt
 
@@ -184,8 +183,7 @@ class CNMFViewer:
     def _init_spatial_aggregates(self) -> None:
         self.cents = centroid(self._A, verbose=True)
         log.info("computing sum projection")
-        with ProgressBar():
-            self.Asum = self._A.sum("unit_id").compute()
+        self.Asum = self._A.sum("unit_id").compute()
 
     def _init_view_flags(self, sortNN: bool) -> None:
         self._NNsort = sortNN

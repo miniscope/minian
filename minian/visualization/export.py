@@ -14,11 +14,13 @@ import xarray as xr
 
 from ..cnmf import compute_AtC
 from ..constants import MINIAN
+from ._ffmpeg_constants import H264, RawGray, Uint8, VideoExport
 
 log = logging.getLogger(__name__)
 
-RGB_MAX = 255
-RGB_MIN = 0
+# Back-compat for callers that imported ``RGB_MAX`` / ``RGB_MIN`` from this module.
+RGB_MAX = Uint8.MAX
+RGB_MIN = Uint8.MIN
 
 
 def _stats_chunked_for_reduce(arr: xr.DataArray) -> xr.DataArray:
@@ -31,7 +33,7 @@ def _stats_chunked_for_reduce(arr: xr.DataArray) -> xr.DataArray:
     if not getattr(arr.data, "chunks", None):
         return arr
     nf = max(1, int(arr.sizes["frame"]))
-    frame_chunk = min(32, nf)
+    frame_chunk = min(VideoExport.STATS_REDUCE_FRAME_CHUNK_CAP, nf)
     return arr.chunk({"frame": frame_chunk, "height": -1, "width": -1})
 
 
@@ -55,7 +57,7 @@ def write_video(
     vname: Optional[str] = None,
     vpath: Optional[str] = ".",
     norm=True,
-    options={"crf": "18", "preset": "ultrafast"},
+    options=H264.OUTPUT_OPTIONS,
 ) -> str:
     """
     Write a video from a movie array using `python-ffmpeg`.
@@ -74,8 +76,8 @@ def write_video(
         Whether to normalize the values of the input array such that they span
         the full pixel depth range (RGB_MIN, RGB_MAX). By default `True`.
     options : dict, optional
-        Optional output arguments passed to `ffmpeg`. By default `{"crf": "18",
-        "preset": "ultrafast"}`.
+        Optional output arguments passed to ``ffmpeg``. By default uses
+        :attr:`~minian.visualization._ffmpeg_constants.H264.OUTPUT_OPTIONS`.
 
     Returns
     -------
@@ -101,15 +103,26 @@ def write_video(
             den = arr_max - arr_min
             arr -= arr_min
             arr /= den
-            arr *= RGB_MAX
-        arr = arr.clip(RGB_MIN, RGB_MAX).astype(np.uint8)
+            arr *= Uint8.MAX
+        arr = arr.clip(Uint8.MIN, Uint8.MAX).astype(np.uint8)
         w, h = arr.sizes["width"], arr.sizes["height"]
         process = (
             ffmpeg.input(
-                "pipe:", format="rawvideo", pix_fmt="gray", s="{}x{}".format(w, h)
+                RawGray.PIPE,
+                format=RawGray.FORMAT,
+                pix_fmt=RawGray.PIX_FMT,
+                s="{}x{}".format(w, h),
             )
-            .filter("pad", int(np.ceil(w / 2) * 2), int(np.ceil(h / 2) * 2))
-            .output(fname, pix_fmt="yuv420p", vcodec="libx264", r=30, **options)
+            .filter(
+                H264.PAD_FILTER, int(np.ceil(w / 2) * 2), int(np.ceil(h / 2) * 2)
+            )
+            .output(
+                fname,
+                pix_fmt=H264.OUTPUT_PIX_FMT,
+                vcodec=H264.VCODEC,
+                r=H264.FRAME_RATE,
+                **options,
+            )
             .overwrite_output()
             .run_async(pipe_stdin=True)
         )
@@ -123,8 +136,8 @@ def write_video(
 def concat_video_recursive(vlist, vname=None):
     if not len(vlist) > 1:
         return vlist[0]
-    if len(vlist) > 256:
-        vlist = np.array_split(vlist, 256)
+    if len(vlist) > VideoExport.CONCAT_LIST_CHUNK:
+        vlist = np.array_split(vlist, VideoExport.CONCAT_LIST_CHUNK)
         vlist = [concat_video_recursive(list(v)) for v in vlist]
     vpath = os.path.dirname(vlist[0])
     streams = [ffmpeg.input(p) for p in vlist]
@@ -147,7 +160,7 @@ def generate_videos(
     gain=1.5,
     vpath=".",
     vname=f"{MINIAN}.mp4",
-    options={"crf": "18", "preset": "ultrafast"},
+    options=H264.OUTPUT_OPTIONS,
 ) -> str:
     """
     Generate a video visualizing the result of the minian pipeline.
@@ -193,8 +206,8 @@ def generate_videos(
     vname : str, optional
         Desired name of the video (default basename ``minian.mp4`` from :data:`~minian.constants.MINIAN`).
     options : dict, optional
-        Output options for `ffmpeg`, passed directly to :func:`write_video`. By
-        default `{"crf": "18", "preset": "ultrafast"}`.
+        Output options for ``ffmpeg``, passed directly to :func:`write_video`.
+        By default uses :attr:`~minian.visualization._ffmpeg_constants.H264.OUTPUT_OPTIONS`.
 
     Returns
     -------
@@ -205,7 +218,7 @@ def generate_videos(
         log.info("generating traces")
         AC = compute_AtC(A, C)
     log.info("normalizing")
-    gain = RGB_MAX / Y.max().compute().values * gain
+    gain = Uint8.MAX / Y.max().compute().values * gain
     Y = Y * gain
     if nfm_norm is not None:
         norm_idx = np.sort(
