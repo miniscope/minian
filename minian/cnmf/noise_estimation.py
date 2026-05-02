@@ -18,7 +18,7 @@ def get_noise_fft(
     dimension in a vectorized fashion, and estimate noise by aggregating its
     power spectral density (PSD). Note that `noise_range` is specified relative
     to the sampling frequency, so 0.5 represents the Nyquist frequency. Three
-    `noise_method` are availabe for aggregating the psd: "mean" and "median"
+    `noise_method` are available for aggregating the psd: "mean" and "median"
     will use the mean and median across all frequencies as the estimation of
     noise. "logmexp" takes the mean of the logarithmic psd, then transform it
     back with an exponential function.
@@ -47,7 +47,7 @@ def get_noise_fft(
         threads = 1
     sn = xr.apply_ufunc(
         noise_fft,
-        varr,
+        varr.chunk(dict(frame=-1)),
         input_core_dims=[["frame"]],
         output_core_dims=[[]],
         dask="parallelized",
@@ -95,14 +95,15 @@ def noise_fft(
     nr = np.around(np.array(noise_range) * _T).astype(int)
     px = 1 / _T * np.abs(numpy_fft.rfft(px, threads=threads)[nr[0] : nr[1]]) ** 2
     if noise_method == "mean":
-        return np.sqrt(px.mean())
-    elif noise_method == "median":
-        return np.sqrt(px.median())
-    elif noise_method == "logmexp":
+        return float(np.sqrt(px.mean()))
+    if noise_method == "median":
+        return float(np.sqrt(np.median(px)))
+    if noise_method == "logmexp":
         eps = np.finfo(px.dtype).eps
-        return np.sqrt(np.exp(np.log(px + eps).mean()))
-    elif noise_method == "sum":
-        return np.sqrt(px.sum())
+        return float(np.sqrt(np.exp(np.log(px + eps).mean())))
+    if noise_method == "sum":
+        return float(np.sqrt(px.sum()))
+    raise ValueError(f"noise_method {noise_method!r} not understood")
 
 
 def get_noise_welch(

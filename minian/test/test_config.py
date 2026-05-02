@@ -6,6 +6,7 @@ import os
 import pytest
 
 from minian.config import (
+    DEFAULT_WORKER_CPU_RATIO,
     PipelineConfig,
     load_pipeline_config,
     pipeline_config_to_jsonable,
@@ -34,6 +35,15 @@ def test_resolve_n_workers_reserve_forces_floor(
     assert resolve_n_workers(reserve=10_000) == 1
 
 
+def test_algorithm_param_dicts_excludes_save_minian() -> None:
+    cfg = PipelineConfig()
+    d = cfg.algorithm_param_dicts()
+    assert "param_save_minian" not in d
+    assert "param_load_videos" in d
+    assert d["param_load_videos"]["pattern"] == r"msCam[0-9]+\.avi$"
+    assert "param_second_temporal" in d
+
+
 def test_get_minian_intermediate_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
@@ -52,6 +62,29 @@ def test_resolve_n_workers_invalid_env_fallback(
     monkeypatch.setenv("MINIAN_NWORKERS", "not-a-number")
     n = resolve_n_workers(reserve=0)
     assert n >= 1
+
+
+def test_resolve_n_workers_explicit_ratio_overrides_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("minian.minian_rs")
+    from minian.minian_rs import thread_allocation
+
+    monkeypatch.delenv("MINIAN_NWORKERS", raising=False)
+    monkeypatch.setenv("MINIAN_WORKER_CPU_RATIO", "0.25")
+    want = int(thread_allocation(1, 1.0 / 3.0).cluster_workers)
+    assert resolve_n_workers(reserve=1, worker_cpu_ratio=1.0 / 3.0) == want
+
+
+def test_resolve_n_workers_env_ratio(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("minian.minian_rs")
+    from minian.minian_rs import thread_allocation
+
+    monkeypatch.delenv("MINIAN_NWORKERS", raising=False)
+    monkeypatch.setenv("MINIAN_WORKER_CPU_RATIO", "0.5")
+    assert resolve_n_workers(reserve=1) == int(
+        thread_allocation(1, 0.5).cluster_workers
+    )
 
 
 def test_with_paths_resolved_absolutizes_intpath_and_save_dpath(
@@ -82,6 +115,8 @@ def test_pipeline_config_to_jsonable_roundtrip() -> None:
     assert "param_first_temporal" in text
     assert "resolved_n_workers" in d
     assert d["resolved_n_workers"] >= 1
+    assert "resolved_worker_cpu_ratio" in d
+    assert abs(d["resolved_worker_cpu_ratio"] - DEFAULT_WORKER_CPU_RATIO) < 1e-9
     loads = json.loads(text)
     assert loads["subset"]["frame"]["__slice__"] == [0, None, None]
 
@@ -123,7 +158,7 @@ def test_load_pipeline_config_explicit_path(tmp_path) -> None:
 def test_apply_environment_uses_thread_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    env = {}
+    env: dict[str, str] = {}
     monkeypatch.setattr(os, "environ", env)
     cfg = PipelineConfig(
         intpath="/tmp/im",
@@ -145,7 +180,7 @@ def test_apply_environment_uses_thread_env(
 def test_apply_environment_blas_threads_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    env = {}
+    env: dict[str, str] = {}
     monkeypatch.setattr(os, "environ", env)
     cfg = PipelineConfig(
         thread_env={"OMP_NUM_THREADS": "99"},
@@ -174,7 +209,9 @@ def test_rust_allocation_matches_resolve_n_workers(
     from minian.minian_rs import default_cluster_workers, thread_allocation
 
     monkeypatch.delenv("MINIAN_NWORKERS", raising=False)
+    monkeypatch.delenv("MINIAN_WORKER_CPU_RATIO", raising=False)
     ta = thread_allocation(1)
     assert ta.cluster_workers == int(default_cluster_workers(1))
     assert ta.logical_cpus == int(rs.logical_parallelism())
+    assert abs(float(ta.worker_cpu_ratio) - DEFAULT_WORKER_CPU_RATIO) < 1e-9
     assert resolve_n_workers(reserve=1) == int(ta.cluster_workers)

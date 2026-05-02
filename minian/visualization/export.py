@@ -90,7 +90,8 @@ def write_video(
     """
     if not vname:
         vname = "{}.mp4".format(uuid4())
-    fname = os.path.join(vpath, vname)
+    vdir = "." if vpath is None else vpath
+    fname = os.path.join(vdir, vname)
     # Thread scheduler: avoids tiny distributed workers OOMing on rechunk-merge
     # during full-array reductions and per-block reads for ffmpeg.
     with dask.config.set(scheduler="threads"):
@@ -154,7 +155,7 @@ def generate_videos(
     A: Optional[xr.DataArray] = None,
     C: Optional[xr.DataArray] = None,
     AC: Optional[xr.DataArray] = None,
-    nfm_norm: int = None,
+    nfm_norm: Optional[int] = None,
     gain=1.5,
     vpath=".",
     vname=f"{MINIAN}.mp4",
@@ -214,6 +215,8 @@ def generate_videos(
     """
     if AC is None:
         log.info("generating traces")
+        if A is None or C is None:
+            raise TypeError("generate_videos requires A and C when AC is not passed")
         AC = compute_AtC(A, C)
     log.info("normalizing")
     gain = Uint8.MAX / Y.max().compute().values * gain

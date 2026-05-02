@@ -2,6 +2,7 @@
 
 import functools as fct
 import logging
+import math
 import os
 import re
 import shutil
@@ -11,12 +12,14 @@ from os import listdir
 from os.path import isdir, isfile
 from os.path import join as pjoin
 from pathlib import Path
-from typing import Callable, List, Optional, Union
+from collections.abc import Hashable
+from typing import Any, Callable, List, Literal, Optional, Tuple, Union, cast
 from uuid import uuid4
 
 import cv2
 import dask as da
 import dask.array as darr
+from dask.array.core import Array as DaskArray
 import ffmpeg
 import numpy as np
 import pandas as pd
@@ -27,8 +30,8 @@ from dask.delayed import optimize as default_delay_optimize
 from natsort import natsorted
 from tifffile import TiffFile, imread
 
-from ..constants import MINIAN
 from .._ffmpeg_constants import RawGray
+from ..constants import MINIAN
 from .dask_graph import custom_arr_optimize
 
 log = logging.getLogger(__name__)
@@ -38,12 +41,28 @@ log = logging.getLogger(__name__)
 # on-disk array but still depend on large zarr-backed movies (e.g. ``motion``).
 _SAVE_MATERIALIZE_NBYTES_DEFAULT = 256 * 1024 * 1024
 
+# numcodecs Blosc rejects contiguous buffers larger than ``2 ** 31 - 1`` bytes.
+_ZARR_CODEC_MAX_CHUNK_NBYTES = 1500 * 1024 * 1024
+
+
 # Minian's global ``custom_arr_optimize`` can confuse local schedulers during
 # ``load()`` (``ValueError: Missing dependency`` on ``rechunk-merge`` / gufuncs).
-_EAGER_LOAD_DASK = {
-    "array_optimize": darr.optimization.optimize,
-    "delayed_optimize": default_delay_optimize,
-}
+def _eager_load_dask_mapping(
+    scheduler: Literal["threads", "synchronous"],
+) -> dict[str, Any]:
+    """Single mapping for :func:`dask.config.set` (stubs mispick ``set`` overloads on ``**``)."""
+    return {
+        "scheduler": scheduler,
+        "array_optimize": darr.optimization.optimize,
+        "delayed_optimize": default_delay_optimize,
+    }
+
+
+_ZarrSaveMode = Literal["a", "w-"]
+
+
+def _zarr_save_mode(overwrite: bool) -> _ZarrSaveMode:
+    return "a" if overwrite else "w-"
 
 
 def _has_distributed_client() -> bool:
@@ -56,25 +75,51 @@ def _has_distributed_client() -> bool:
         return False
 
 
-def _dataset_to_zarr_compute(ds: xr.Dataset, fp: str, mode: str):
+def _dataset_assign_parent_path_coords(
+    ds: xr.Dataset, dpath: str, meta_dict: Optional[dict]
+) -> xr.Dataset:
+    """Coordinates from ancestor directory segments (same convention as ``save_minian``)."""
+    if meta_dict is None:
+        return ds
+    pathlist = os.path.split(os.path.abspath(dpath))[0].split(os.sep)
+    return ds.assign_coords(**dict((dn, pathlist[di]) for dn, di in meta_dict.items()))
+
+
+def _orthogonal_chunk_nbytes(chunk_elems: Tuple[int, ...], itemsize: int) -> int:
+    """Bytes in one orthogonal chunk given per-axis max partition sizes."""
+    return int(math.prod(chunk_elems)) * int(itemsize)
+
+
+def _dataset_to_zarr_compute(ds: xr.Dataset, fp: str, mode: _ZarrSaveMode):
     """``Dataset.to_zarr(compute=True)`` avoiding worker OOM when a Client is active.
 
     Uses the threaded scheduler plus default optimizers so the write does not
-    fan out entirely on low-RAM workers. Falls back to the distributed scheduler
-    if the graph raises ``Missing dependency`` (e.g. after ``persist()``).
+    fan out entirely on low-RAM workers. On ``Missing dependency``, retries
+    synchronous then distributed (e.g. graphs built under a custom
+    ``array_optimize`` or after ``persist()``).
     """
     if not _has_distributed_client():
-        return ds.to_zarr(fp, compute=True, mode=mode)
+        return ds.to_zarr(store=fp, mode=mode, compute=True)
     try:
-        with da.config.set(scheduler="threads", **_EAGER_LOAD_DASK):
-            return ds.to_zarr(fp, compute=True, mode=mode)
+        with da.config.set(_eager_load_dask_mapping("threads")):
+            return ds.to_zarr(store=fp, mode=mode, compute=True)
     except ValueError as err:
         if "Missing dependency" not in str(err):
             raise
         log.warning(
-            "save_minian: threads to_zarr failed (%s); retrying distributed", err
+            "save_minian: threads to_zarr failed (%s); retrying synchronous", err
         )
-        return ds.to_zarr(fp, compute=True, mode=mode)
+        try:
+            with da.config.set(_eager_load_dask_mapping("synchronous")):
+                return ds.to_zarr(store=fp, mode=mode, compute=True)
+        except ValueError as err2:
+            if "Missing dependency" not in str(err2):
+                raise
+            log.warning(
+                "save_minian: synchronous to_zarr failed (%s); retrying distributed",
+                err2,
+            )
+            return ds.to_zarr(store=fp, mode=mode, compute=True)
 
 
 def _eager_load_for_zarr(var: xr.DataArray, nbytes: int) -> xr.DataArray:
@@ -84,8 +129,13 @@ def _eager_load_for_zarr(var: xr.DataArray, nbytes: int) -> xr.DataArray:
     Uses Dask's **default** array/delayed optimizers for this step only (not
     :func:`~minian.utilities.custom_arr_optimize`). With a ``Client``, first
     tries **threads** on the client (avoids heavy zarr-backed work on workers
-    for small outputs); on ``Missing dependency``, retries a normal ``load()``
-    on the cluster (same pattern as :func:`_dataset_to_zarr_compute`).
+    for small outputs). If that raises ``Missing dependency``, retries
+    **synchronous** on the client. If that also fails — common after ``persist``
+    graphs built beside ``concatenate`` (e.g. ``update_temporal``) —
+    then gathers via :func:`dask.compute` on ``var.data`` with the active
+    **distributed** client and ``optimize_graph=False`` (avoids a second brittle
+    merge pass after ``persist()`` / ``concatenate``). That path runs only after
+    local schedulers failed.
 
     Without a distributed ``Client``, uses the **synchronous** scheduler with
     the same default optimizers.
@@ -98,17 +148,41 @@ def _eager_load_for_zarr(var: xr.DataArray, nbytes: int) -> xr.DataArray:
     log.info("save_minian: computing %r before zarr write", var.name)
     if _has_distributed_client():
         try:
-            with da.config.set(scheduler="threads", **_EAGER_LOAD_DASK):
+            with da.config.set(_eager_load_dask_mapping("threads")):
                 return var.load()
         except ValueError as err:
             if "Missing dependency" not in str(err):
                 raise
             log.warning(
-                "save_minian: threads preload failed (%s); retrying distributed",
+                "save_minian: threads preload failed (%s); retrying synchronous",
                 err,
             )
-            return var.load()
-    with da.config.set(scheduler="synchronous", **_EAGER_LOAD_DASK):
+            try:
+                with da.config.set(_eager_load_dask_mapping("synchronous")):
+                    return var.load()
+            except ValueError as err2:
+                if "Missing dependency" not in str(err2):
+                    raise
+                log.warning(
+                    "save_minian: synchronous preload failed (%s); "
+                    "gathering via distributed scheduler (optimize_graph=False)",
+                    err2,
+                )
+                from distributed import default_client
+
+                (computed,) = da.compute(
+                    var.data,
+                    scheduler=default_client(),
+                    optimize_graph=False,
+                )
+                return xr.DataArray(
+                    computed,
+                    dims=var.dims,
+                    coords=var.coords,
+                    attrs=var.attrs,
+                    name=var.name,
+                )
+    with da.config.set(_eager_load_dask_mapping("synchronous")):
         return var.load()
 
 
@@ -133,7 +207,7 @@ def _uniformize_chunks_for_zarr(var: xr.DataArray) -> xr.DataArray:
     """
     if not getattr(var.data, "chunks", None):
         return var
-    rechunk_kw: dict[str, int] = {}
+    rechunk_kw: dict[Hashable, int] = {}
     for dim in var.dims:
         ch = tuple(var.chunksizes[dim])
         if _dask_chunks_zarr_compatible(ch):
@@ -147,6 +221,64 @@ def _uniformize_chunks_for_zarr(var: xr.DataArray) -> xr.DataArray:
         list(rechunk_kw.keys()),
     )
     return var.chunk(rechunk_kw)
+
+
+def _max_dask_chunk_nbytes(var: xr.DataArray) -> Optional[int]:
+    """Worst-case number of bytes in a single orthogonal Dask chunk."""
+    arr = getattr(var, "data", None)
+    if arr is None or not getattr(arr, "chunks", None):
+        return None
+    chunk_max = tuple(max(var.chunksizes[d]) for d in var.dims)
+    return _orthogonal_chunk_nbytes(chunk_max, int(np.dtype(var.dtype).itemsize))
+
+
+def _cap_dask_chunks_for_zarr(
+    var: xr.DataArray, max_chunk_nbytes: int = _ZARR_CODEC_MAX_CHUNK_NBYTES
+) -> xr.DataArray:
+    """Shrink Dask partitioning so each chunk stays under codec buffer limits."""
+    nbytes = _max_dask_chunk_nbytes(var)
+    if nbytes is None or nbytes <= max_chunk_nbytes:
+        return var
+    log.info(
+        "save_minian: capping Dask chunks (worst chunk ~%.2f MiB) for Blosc codec limit",
+        nbytes / (1024 * 1024),
+    )
+    dims = list(var.dims)
+    max_sizes = [max(var.chunksizes[d]) for d in dims]
+    itemsize = int(np.dtype(var.dtype).itemsize)
+    nbytes_loop = _orthogonal_chunk_nbytes(tuple(max_sizes), itemsize)
+    for _ in range(1024):
+        if nbytes_loop <= max_chunk_nbytes:
+            break
+        candidates = [i for i, s in enumerate(max_sizes) if s > 1]
+        if not candidates:
+            raise ValueError(
+                "cannot cap Dask chunks to fit zarr compressor limit; "
+                "each dimension uses a single-element chunk yet the chunk exceeds the limit "
+                "(check dtype or pass smaller ``chunks=`` to save_minian)"
+            )
+        if "frame" in dims:
+            fi = dims.index("frame")
+            i = (
+                fi
+                if fi in candidates
+                else max(candidates, key=lambda idx: max_sizes[idx])
+            )
+        else:
+            i = max(candidates, key=lambda idx: max_sizes[idx])
+        prod_rest = int(math.prod(max_sizes[k] for k in range(len(dims)) if k != i))
+        target = max(1, max_chunk_nbytes // (prod_rest * itemsize))
+        if target >= max_sizes[i]:
+            target = max(1, max_sizes[i] // 2)
+        max_sizes[i] = target
+        nbytes_loop = _orthogonal_chunk_nbytes(tuple(max_sizes), itemsize)
+    else:
+        raise ValueError(
+            "failed to cap Dask chunks below zarr compressor buffer limit (~"
+            f"{nbytes_loop} bytes); try passing ``chunks=`` to save_minian"
+        )
+    chunk_dict = {dims[j]: max_sizes[j] for j in range(len(dims))}
+    return var.chunk(chunk_dict)
 
 
 def load_videos(
@@ -246,9 +378,11 @@ def load_videos(
         varr = varr.astype(dtype)
     if downsample:
         if downsample_strategy == "mean":
-            varr = varr.coarsen(**downsample, boundary="trim", coord_func="min").mean()
+            coarsened = varr.coarsen(**downsample, boundary="trim", coord_func="min")
+            varr = cast(Any, coarsened).mean()
         elif downsample_strategy == "subset":
-            varr = varr.isel(**{d: slice(None, None, w) for d, w in downsample.items()})
+            idx = {d: slice(None, None, w) for d, w in downsample.items()}
+            varr = varr.isel(idx)
         else:
             raise NotImplementedError("unrecognized downsampling strategy")
     varr = varr.rename("fluorescence")
@@ -260,7 +394,7 @@ def load_videos(
     return varr
 
 
-def load_tif_lazy(fname: str) -> darr.array:
+def load_tif_lazy(fname: str) -> DaskArray:
     """
     Lazy load a tif stack of images.
 
@@ -307,7 +441,7 @@ def load_tif_perframe(fname: str, fid: int) -> np.ndarray:
     return imread(fname, key=fid)
 
 
-def load_avi_lazy_framewise(fname: str) -> darr.array:
+def load_avi_lazy_framewise(fname: str) -> DaskArray:
     cap = cv2.VideoCapture(fname)
     f = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fmread = da.delayed(load_avi_perframe)
@@ -320,7 +454,7 @@ def load_avi_lazy_framewise(fname: str) -> darr.array:
     return da.array.stack(arr, axis=0)
 
 
-def load_avi_lazy(fname: str) -> darr.array:
+def load_avi_lazy(fname: str) -> DaskArray:
     """
     Lazy load an avi video.
 
@@ -393,7 +527,7 @@ def load_avi_perframe(fname: str, fid: int) -> np.ndarray:
 
 def open_minian(
     dpath: str, post_process: Optional[Callable] = None, return_dict=False
-) -> Union[dict, xr.Dataset]:
+) -> Union[dict[str, xr.DataArray], xr.Dataset]:
     """
     Load an existing minian dataset.
 
@@ -439,22 +573,28 @@ def open_minian(
     xarray.open_zarr : for how each directory will be loaded as `xr.DataArray`
     xarray.merge : for how the `xr.DataArray` will be merged as `xr.Dataset`
     """
+    ds: Union[dict[str, xr.DataArray], xr.Dataset]
     if isfile(dpath):
         ds = xr.open_dataset(dpath).chunk()
     elif isdir(dpath):
         dslist = []
         for d in listdir(dpath):
             arr_path = pjoin(dpath, d)
-            if isdir(arr_path):
-                arr = list(xr.open_zarr(arr_path).values())[0]
-                arr.data = darr.from_zarr(
-                    os.path.join(arr_path, arr.name), inline_array=True
-                )
-                dslist.append(arr)
+            # ``save_minian`` on-disk rechunk uses UUID dirs under ``dpath``; only
+            # open ``*.zarr`` stores produced by ``save_minian``.
+            if not (isdir(arr_path) and d.endswith(".zarr")):
+                continue
+            arr = list(xr.open_zarr(arr_path).values())[0]
+            arr.data = darr.from_zarr(
+                os.path.join(arr_path, str(arr.name)), inline_array=True
+            )
+            dslist.append(arr)
         if return_dict:
-            ds = {d.name: d for d in dslist}
+            ds = {str(x.name): x for x in dslist}
         else:
             ds = xr.merge(dslist, compat="no_conflicts")
+    else:
+        raise FileNotFoundError(dpath)
     if (not return_dict) and post_process:
         ds = post_process(ds, dpath)
     return ds
@@ -554,6 +694,61 @@ def open_minian_mf(
         raise NotImplementedError("format {} not understood".format(result_format))
 
 
+def _zarr_store_chunks_match_target(z_arr, target_chunks: dict[str, int]) -> bool:
+    """True when zarr ``chunks`` already match resolved ``target_chunks`` (uniform layout)."""
+    dims = z_arr.attrs.get("_ARRAY_DIMENSIONS")
+    if not dims:
+        return False
+    zc = getattr(z_arr, "chunks", None)
+    if zc is None or len(zc) != len(dims):
+        return False
+    try:
+        for i, d in enumerate(dims):
+            if int(zc[i]) != int(target_chunks[str(d)]):
+                return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _rechunker_effective_max_mem_bytes(z_arr, target_chunks: dict, requested) -> int:
+    """
+    Rechunker rejects plans when ``max_mem`` is smaller than either the full
+    source chunk or the full target chunk (:func:`rechunker.algorithm.rechunking_plan`).
+    Bump the user/env limit to at least that minimum (bytes).
+    """
+    from math import prod
+
+    import dask.utils as du
+
+    req_b = int(du.parse_bytes(requested))
+    itemsize = int(np.dtype(z_arr.dtype).itemsize)
+    schunks = z_arr.chunks
+    if schunks is None:
+        src_mem = itemsize * int(np.prod(z_arr.shape, dtype=np.int64))
+    else:
+        src_mem = itemsize * prod(int(c) for c in schunks)
+
+    dims = z_arr.attrs.get("_ARRAY_DIMENSIONS")
+    if dims is None:
+        tgt_mem = 0
+    else:
+        tc = tuple(int(target_chunks[str(d)]) for d in dims)
+        tgt_mem = itemsize * prod(tc)
+
+    need = max(req_b, src_mem, tgt_mem)
+    if need > req_b:
+        log.info(
+            "save_minian: rechunker max_mem raised to %s bytes (requested %s; "
+            "source_chunk=%s target_chunk=%s — rechunker needs at least the larger slab)",
+            need,
+            req_b,
+            src_mem,
+            tgt_mem,
+        )
+    return need
+
+
 def save_minian(
     var: xr.DataArray,
     dpath: str,
@@ -561,7 +756,7 @@ def save_minian(
     overwrite=False,
     chunks: Optional[dict] = None,
     compute=True,
-    mem_limit="500MB",
+    mem_limit="200MB",
     materialize_nbytes: int = _SAVE_MATERIALIZE_NBYTES_DEFAULT,
 ) -> xr.DataArray:
     """
@@ -593,7 +788,7 @@ def save_minian(
     chunks : dict, optional
         A dictionary specifying the desired chunk size. The chunk size should be
         specified using :doc:`dask:array-chunks` convention, except the "auto"
-        specifiication is not supported. The rechunking operation will be
+        specification is not supported. The rechunking operation will be
         carried out with on-disk algorithms using :func:`rechunker.rechunk`. By
         default `None`.
     compute : bool, optional
@@ -603,8 +798,11 @@ def save_minian(
         arithmetic fusion).
     mem_limit : str, optional
         The memory limit for the on-disk rechunking algorithm, passed to
-        :func:`rechunker.rechunk`. Only used if `chunks` is not `None`. By
-        default `"500MB"`.
+        :func:`rechunker.rechunk`. Only used if ``chunks`` is not ``None``. By
+        default ``"200MB"``. Values **below** the minimum rechunker allows
+        (largest on-disk source chunk or target chunk, in bytes) are **raised
+        automatically** and logged at INFO. On-disk rechunk is **skipped**
+        when the zarr layout already matches ``chunks``.
     materialize_nbytes : int, optional
         If ``compute`` is ``True`` and the array's ``nbytes`` is at most this
         value, load it into memory before calling ``to_zarr``: **synchronous**
@@ -637,15 +835,8 @@ def save_minian(
     """
     dpath = os.path.normpath(dpath)
     Path(dpath).mkdir(parents=True, exist_ok=True)
-    var = _uniformize_chunks_for_zarr(var)
-    ds = var.to_dataset()
-    if meta_dict is not None:
-        pathlist = os.path.split(os.path.abspath(dpath))[0].split(os.sep)
-        ds = ds.assign_coords(
-            **dict([(dn, pathlist[di]) for dn, di in meta_dict.items()])
-        )
-    md = {True: "a", False: "w-"}[overwrite]
-    fp = os.path.join(dpath, var.name + ".zarr")
+    md = _zarr_save_mode(overwrite)
+    fp = os.path.join(dpath, str(var.name) + ".zarr")
     _fp_abs = os.path.abspath(fp)
     log.info(
         "save_minian: begin %r -> %s compute=%s chunks=%s",
@@ -659,6 +850,8 @@ def save_minian(
             shutil.rmtree(fp)
         except FileNotFoundError:
             pass
+    # Materialize small arrays *before* zarr-compat rechunks so we never fuse
+    # ``concatenate``/``persist`` with ``rechunk-merge`` (breaks threads/sync/compute).
     if compute and materialize_nbytes > 0:
         try:
             _nb = int(var.nbytes)
@@ -666,12 +859,9 @@ def save_minian(
             _nb = None
         if _nb is not None and _nb <= materialize_nbytes:
             var = _eager_load_for_zarr(var, _nb)
-            ds = var.to_dataset()
-            if meta_dict is not None:
-                pathlist = os.path.split(os.path.abspath(dpath))[0].split(os.sep)
-                ds = ds.assign_coords(
-                    **dict([(dn, pathlist[di]) for dn, di in meta_dict.items()])
-                )
+    var = _uniformize_chunks_for_zarr(var)
+    var = _cap_dask_chunks_for_zarr(var)
+    ds = _dataset_assign_parent_path_coords(var.to_dataset(), dpath, meta_dict)
     if compute:
         try:
             log.info("save_minian: computing + writing zarr %s", _fp_abs)
@@ -683,39 +873,66 @@ def save_minian(
             raise
         log.info("save_minian: finished %s", _fp_abs)
     else:
-        arr = ds.to_zarr(fp, compute=False, mode=md)
+        arr = ds.to_zarr(store=fp, mode=md, compute=False)
     if (chunks is not None) and compute:
         chunks = {d: var.sizes[d] if v <= 0 else v for d, v in chunks.items()}
-        dst_path = os.path.join(dpath, str(uuid4()))
-        temp_path = os.path.join(dpath, str(uuid4()))
-        log.info(
-            "save_minian: on-disk rechunk %r chunks=%s mem_limit=%s",
-            var.name,
-            chunks,
-            mem_limit,
-        )
         with da.config.set(
             array_optimize=darr.optimization.optimize,
             delayed_optimize=default_delay_optimize,
         ):
             zstore = zr.open(fp)
-            rechk = rechunker.rechunk(
-                zstore[var.name], chunks, mem_limit, dst_path, temp_store=temp_path
-            )
-            rechk.execute()
-        try:
-            shutil.rmtree(temp_path)
-        except FileNotFoundError:
-            pass
-        arr_path = os.path.join(fp, var.name)
-        for f in os.listdir(arr_path):
-            os.remove(os.path.join(arr_path, f))
-        for f in os.listdir(dst_path):
-            os.rename(os.path.join(dst_path, f), os.path.join(arr_path, f))
-        os.rmdir(dst_path)
+            z_arr = zstore[str(var.name)]
+            if _zarr_store_chunks_match_target(z_arr, chunks):
+                log.info(
+                    "save_minian: skip on-disk rechunk %r (zarr chunks already match %s)",
+                    var.name,
+                    chunks,
+                )
+            else:
+                dst_path = os.path.join(dpath, str(uuid4()))
+                temp_path = os.path.join(dpath, str(uuid4()))
+                max_mem_b = _rechunker_effective_max_mem_bytes(z_arr, chunks, mem_limit)
+                log.info(
+                    "save_minian: on-disk rechunk %r chunks=%s max_mem=%s (mem_limit=%r)",
+                    var.name,
+                    chunks,
+                    max_mem_b,
+                    mem_limit,
+                )
+                rechk = rechunker.rechunk(
+                    z_arr,
+                    chunks,
+                    max_mem_b,
+                    dst_path,
+                    temp_store=temp_path,
+                )
+                # ``rechunker`` uses ``dask.compute`` on many small delayed tasks. With a
+                # distributed ``Client`` as default scheduler that fans out to workers,
+                # each task maps zarr slices into RAM and workers hit their limit even when
+                # ``max_mem`` is modest. Run rechunk on the driver with a single-threaded
+                # scheduler so ``frame=-1`` (or any target) stays valid without worker OOM.
+                if _has_distributed_client():
+                    log.info(
+                        "save_minian: on-disk rechunk %r execute(scheduler=single-threaded) "
+                        "so rechunker does not use distributed workers",
+                        var.name,
+                    )
+                    rechk.execute(scheduler="single-threaded")
+                else:
+                    rechk.execute()
+                try:
+                    shutil.rmtree(temp_path)
+                except FileNotFoundError:
+                    pass
+                arr_path = os.path.join(fp, str(var.name))
+                for f in os.listdir(arr_path):
+                    os.remove(os.path.join(arr_path, f))
+                for f in os.listdir(dst_path):
+                    os.rename(os.path.join(dst_path, f), os.path.join(arr_path, f))
+                os.rmdir(dst_path)
     if compute:
-        arr = xr.open_zarr(fp)[var.name]
-        arr.data = darr.from_zarr(os.path.join(fp, var.name), inline_array=True)
+        arr = xr.open_zarr(fp)[str(var.name)]
+        arr.data = darr.from_zarr(os.path.join(fp, str(var.name)), inline_array=True)
     return arr
 
 
@@ -749,7 +966,7 @@ def xrconcat_recursive(var: Union[dict, list], dims: List[str]) -> xr.Dataset:
         if type(var) is dict:
             var_dict = var
         elif type(var) is list:
-            var_dict = {tuple([np.asscalar(v[d]) for d in dims]): v for v in var}
+            var_dict = {tuple([np.asarray(v[d]).item() for d in dims]): v for v in var}
         else:
             raise NotImplementedError("type {} not supported".format(type(var)))
         try:
@@ -786,7 +1003,10 @@ def update_meta(dpath, pattern=r"^minian\.nc$", meta_dict=None, backend="netcdf"
             f_path = os.path.join(dirpath, fname)
             pathlist = os.path.normpath(dirpath).split(os.sep)
             new_ds = xr.Dataset()
-            old_ds = open_minian(f_path, f_path, backend)
+            if backend == "netcdf":
+                old_ds = xr.open_dataset(f_path)
+            else:
+                old_ds = open_minian(f_path)
             new_ds.attrs = deepcopy(old_ds.attrs)
             old_ds.close()
             new_ds = new_ds.assign_coords(

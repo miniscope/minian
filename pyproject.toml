@@ -35,7 +35,8 @@ dependencies = [
     "opencv-python>=4.10.0.84",
     "pandas>=2.2.2",
     "pyfftw>=0.13.1",
-    "pymetis>=2023.1.1",
+    # pymetis: no reliable Windows wheels / sdist builds; fallback in minian.cnmf.graphs.
+    "pymetis>=2023.1.1; sys_platform != 'win32'",
     "rechunker>=0.5.3",
     "requests>=2.33.1",
     "scikit-image>=0.24.0",
@@ -77,6 +78,7 @@ Documentation = "https://minian.readthedocs.io/"
 
 [project.scripts]
 minian-install = "minian.install:main"
+minian-pipeline = "minian.pipeline:main"
 minian-pipeline-defaults = "minian.config:main"
 
 [tool.maturin]

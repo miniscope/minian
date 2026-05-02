@@ -1,7 +1,7 @@
 """CNMF decomposition and helpers (combined module)."""
 
 import warnings
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple, Union
 
 import cvxpy as cvx
 import numpy as np
@@ -85,7 +85,8 @@ def update_temporal_cvxpy(
     use_cons = kwargs.get("use_cons", False)
     scs = kwargs.get("scs_fallback")
     c_last = kwargs.get("c_last")
-    zero_thres = kwargs.get("zero_thres")
+    zero_thres_raw = kwargs.get("zero_thres")
+    zero_thres_f = 0.0 if zero_thres_raw is None else float(zero_thres_raw)
     # conform variables to generalize multiple unit case
     if y.ndim < 2:
         y = y.reshape((1, -1))
@@ -197,15 +198,27 @@ def update_temporal_cvxpy(
                     "problem status is {}, returning zero".format(prob.status),
                     RuntimeWarning,
                 )
-                return [np.zeros(c.shape, dtype=float)] * 4
+                z = np.zeros(c.shape, dtype=float)
+                return (z, z.copy(), z.copy(), z.copy())
     if not (prob.status == "optimal"):
         warnings.warn("problem solved sub-optimally", RuntimeWarning)
-    c = np.where(c.value > zero_thres, c.value, 0)
-    s = np.where(s.value > zero_thres, s.value, 0)
-    b = np.where(b.value > zero_thres, b.value, 0)
-    c0 = c0.value.reshape((-1, 1)) * dc_vec
-    c0 = np.where(c0 > zero_thres, c0, 0)
-    return c, s, b, c0
+
+    def _cvx_vals(x: Any, shape: Tuple[int, ...]) -> np.ndarray:
+        v = x.value
+        if v is None:
+            return np.zeros(shape, dtype=float)
+        return np.asarray(v, dtype=float)
+
+    c_val = _cvx_vals(c, c.shape)
+    s_val = _cvx_vals(s, c.shape)
+    b_val = _cvx_vals(b, b.shape)
+    c0_val = _cvx_vals(c0, (int(c0.shape[0]),))
+    c_arr = np.where(c_val > zero_thres_f, c_val, 0.0)
+    s_arr = np.where(s_val > zero_thres_f, s_val, 0.0)
+    b_arr = np.where(b_val > zero_thres_f, b_val, 0.0)
+    c0_mid = c0_val.reshape((-1, 1)) * dc_vec
+    c0_arr = np.where(c0_mid > zero_thres_f, c0_mid, 0.0)
+    return c_arr, s_arr, b_arr, c0_arr
 
 
 def lstsq_vec(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -229,7 +242,11 @@ def lstsq_vec(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 
 def get_ar_coef(
-    y: np.ndarray, sn: float, p: int, add_lag: int, pad: Optional[int] = None
+    y: np.ndarray,
+    sn: float,
+    p: int,
+    add_lag: Union[int, str],
+    pad: Optional[int] = None,
 ) -> np.ndarray:
     """
     Estimate Autoregressive coefficients of order `p` given a timeseries `y`.
@@ -242,8 +259,8 @@ def get_ar_coef(
         Estimated noise level of the input `y`.
     p : int
         Order of the autoregressive process.
-    add_lag : int
-        Additional number of timesteps of covariance to use for the estimation.
+    add_lag : int or ``"p"``
+        Additional lag in covariance, or ``"p"`` to use ``2 * p`` lags.
     pad : int, optional
         Length of the output. If not `None` then the resulting coefficients will
         be zero-padded to this length. By default `None`.
@@ -256,6 +273,8 @@ def get_ar_coef(
     if add_lag == "p":
         max_lag = p * 2
     else:
+        if not isinstance(add_lag, int):
+            raise TypeError("add_lag must be 'p' or an int")
         max_lag = p + add_lag
     cov = acovf(y, fft=True)
     C_mat = toeplitz(cov[:max_lag], cov[:p]) - sn**2 * np.eye(max_lag, p)
@@ -284,7 +303,7 @@ def update_temporal_block(
     YrA: np.ndarray,
     noise_freq: float,
     p: int,
-    add_lag="p",
+    add_lag: Union[int, str] = "p",
     normalize=True,
     use_smooth=True,
     med_wd=None,

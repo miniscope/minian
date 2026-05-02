@@ -78,3 +78,15 @@ def test_thread_allocation_matches_default_cluster_workers():
     assert int(ta.cluster_workers) == int(rs.default_cluster_workers(2))
     assert int(ta.logical_cpus) == int(rs.logical_parallelism())
     assert int(ta.after_reserve_cpus) == max(0, int(rs.logical_parallelism()) - 2)
+    assert abs(float(ta.worker_cpu_ratio) - 2.0 / 3.0) < 1e-9
+
+
+def test_thread_allocation_one_third_matches_legacy_integer_workers():
+    """``ratio=1/3`` reproduces the former ``(cpus - reserve) // 3`` worker count."""
+    rs = _rust()
+    n = int(rs.logical_parallelism())
+    for reserve in (0, 1, 2):
+        after = max(0, n - reserve)
+        legacy = max(1, after // 3)
+        ta = rs.thread_allocation(reserve, 1.0 / 3.0)
+        assert int(ta.cluster_workers) == legacy

@@ -3,29 +3,48 @@ ignorePaths: []
 dictionaryDefinitions: []
 dictionaries: []
 words:
+  - absolutized
+  - Adict
+  - alignviewer
   - amax
+  - annt
   - argwhere
   - ascontiguousarray
+  - Ashape
   - asscalar
   - Asum
+  - atleast
   - autochunking
+  - autocovariances
   - beautifulsoup
+  - binarizing
   - blas
   - bokeh
+  - bseg
+  - bspline
   - btype
   - busa
+  - CCOEFF
   - cdname
   - cdval
   - cdylib
   - celerybeat
+  - chunksize
+  - chunksizes
+  - cidx
   - cmap
   - CMAPS
   - cnmf
   - cnmfviewer
+  - colorbar
   - colorcet
+  - colormapped
   - commitizen
+  - conts
   - coorandinates
+  - crds
   - csize
+  - curmap
   - cvxpy
   - darr
   - dask
@@ -33,9 +52,11 @@ words:
   - datashaded
   - datashader
   - datashading
+  - deconvolve
   - Deconvolved
   - delenv
   - denoise
+  - didx
   - dmypy
   - doctest
   - dpath
@@ -43,48 +64,74 @@ words:
   - dtype
   - dynspread
   - ecos
+  - edgelist
+  - eigvals
   - epath
   - errorlevel
   - exitfirst
   - fhist
+  - fidx
   - filt
   - flist
   - fmread
   - fnames
+  - funcs
+  - gaussians
+  - Gaussians
+  - gdict
   - getaffinity
+  - gufunc
   - haya
+  - hblk
   - Holo
   - holostreams
   - holoviews
   - htmlcov
   - hvobj
+  - hvobjs
   - hvres
   - hvsum
   - idxs
+  - iheight
+  - imdict
   - imread
   - Internsity
   - interp
   - intpath
   - ipykernel
   - ipynb
+  - iseg
   - isel
+  - ivar
+  - iwidth
+  - Jaccard
   - jnote
   - jsonable
   - kdim
   - kdims
+  - keepdims
+  - Kolmogorov
   - ksize
   - kstest
+  - lfilter
   - libx
   - linalg
+  - lmax
   - localcluster
   - lsqr
   - lstsq
+  - mathbf
   - maturin
+  - maximas
+  - maxs
+  - mdim
   - medpy
   - metas
   - minian
   - Miniscope
   - mkdocs
+  - moph
+  - moveaxis
   - nanmax
   - nanmin
   - natsort
@@ -92,22 +139,43 @@ words:
   - nbfile
   - nbsphinx
   - nbsplit
+  - ncell
+  - nchunk
   - ndcurve
+  - ndenumerate
   - ndimage
+  - neighbours
   - networkx
+  - newaxis
   - nextdir
+  - nlab
+  - NNLS
+  - nonselection
   - nosetests
+  - npart
+  - nsamp
+  - nseg
   - Nsort
+  - nstp
+  - ntabs
   - numba
+  - numblocks
   - NWORKERS
   - OPENBLAS
   - outpath
   - outputdict
   - ovly
+  - perframe
+  - perpx
+  - perseed
+  - pfire
   - Pipfile
   - pipmov
+  - pipusub
   - pjoin
   - pnwgt
+  - polyder
+  - polyfit
   - popd
   - pushd
   - pyargs
@@ -122,54 +190,97 @@ words:
   - pytype
   - realfft
   - rechunk
+  - rechunked
   - rechunker
+  - rechunking
   - refelect
+  - regrid
+  - renamer
   - rerunfailures
   - rfft
   - ropeproject
   - rtds
+  - rwdict
+  - schunks
   - scisps
   - Scrapy
   - sdist
+  - selem
+  - setdiag
   - setuptools
+  - shiftds
+  - showma
+  - showuma
+  - simpleitk
+  - sitk
   - skimage
   - skvideo
+  - Smirnov
+  - smth
   - SOURCEDIR
   - SPHINXBUILD
   - SPHINXOPTS
   - spliter
+  - sprs
   - Spyder
   - spyderproject
   - spyproject
+  - SQDIFF
   - srcpath
+  - ssub
+  - stackups
+  - statsmodels
   - strm
   - subsetting
   - subviews
+  - summ
+  - tensordot
   - thres
+  - thresholding
   - tifffile
   - timepoint
   - timepoints
+  - tmps
+  - tocsc
+  - todense
   - toeplitz
   - topdown
   - tophat
+  - triu
+  - ufunc
+  - uids
+  - ulab
+  - ulabs
   - ultrafast
   - usub
+  - usum
   - VARARRAY
   - varr
   - varray
   - vaviewer
   - vcodec
   - vdims
+  - vindex
   - Viridis
   - VLINE
   - vlist
+  - vmax
   - vname
   - vpath
+  - vsub
+  - wblk
   - webassets
   - wgts
+  - wname
+  - wndh
+  - wndw
   - xarr
   - xarray
   - XLABEL
+  - xrconcat
   - YLABEL
-ignoreWords: []
+  - zstore
+ignoreWords:
+  - comput
+  - scal
 import: []

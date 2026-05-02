@@ -1,19 +1,30 @@
-"""HoloViews plots for pipeline exploration and diagnostics."""
+"""HoloViews plots for pipeline exploration and diagnostics.
+
+Plots follow **HoloViews + modern Bokeh** expectations: subplot text is driven by
+:class:`holoviews:holoviews.core.dimension.Dimensioned.relabel`, not ``title=``
+on :class:`~holoviews:element.Image`/:class:`~holoviews:element.RGB`/etc. Passing
+``title`` inside ``hv.opts.*`` or flattened ``.opts()`` can bind a plain Python
+string to ``bokeh`` ``Figure.title``; HoloViews then calls ``.update()`` as if it
+were a ``Title`` model and raises ``AttributeError`` (see visualization package
+docstring).
+
+"""
 
 import itertools as itt
 from typing import Callable, List, Optional, Union
 
 import holoviews as hv
-from holoviews import dim
 import numpy as np
 import pandas as pd
 import sklearn.mixture
 import xarray as xr
 from bokeh.palettes import Category10_10, Viridis256
 from datashader import count_cat
+from holoviews import dim
 from holoviews.operation.datashader import datashade, dynspread
 from holoviews.util import Dynamic
 
+from ._numeric import centroid, construct_pulse_response, normalize
 from ._viz_constants import (
     Datashade,
     Gmm,
@@ -24,7 +35,6 @@ from ._viz_constants import (
     Spatial,
     Temporal,
 )
-from ._numeric import centroid, construct_pulse_response, normalize
 
 
 def datashade_ndcurve(
@@ -102,27 +112,31 @@ def visualize_preprocess(
     asp = fw / fh
     # Type-scoped opts so a Layout with Image + datashaded RGB does not merge ``cmap``
     # onto ``hv.RGB`` (RGB has no cmap; flat ``.opts(cmap=...)`` on the layout does).
+    # Do not set ``title`` in ``hv.opts.*`` — Bokeh 3.x can leave ``figure.title`` as a
+    # plain ``str`` and HoloViews then errors on ``title.update()``; use ``.relabel()`` for text.
     opts_im = hv.opts.Image(
         frame_width=Preprocess.FRAME_WIDTH,
         aspect=asp,
-        title=Preprocess.IMAGE_TITLE,
         cmap=ImagePalette.VIRIDIS_BOKEH,
     )
     opts_cnt_lines = hv.opts.Contours(
         frame_width=Preprocess.FRAME_WIDTH,
         aspect=asp,
-        title=Preprocess.CONTOURS_TITLE,
         cmap=ImagePalette.VIRIDIS_BOKEH,
     )
     opts_cnt_rgb = hv.opts.RGB(
         frame_width=Preprocess.FRAME_WIDTH,
         aspect=asp,
-        title=Preprocess.CONTOURS_TITLE,
     )
 
     def _vis(f):
-        im = hv.Image(f, kdims=["width", "height"]).opts(opts_im)
-        cnt = hv.operation.contours(im).opts(opts_cnt_lines)
+        im_plot = hv.Image(f, kdims=["width", "height"]).opts(opts_im)
+        cnt = (
+            hv.operation.contours(im_plot)
+            .opts(opts_cnt_lines)
+            .relabel(Preprocess.CONTOURS_TITLE)
+        )
+        im = im_plot.relabel(Preprocess.IMAGE_TITLE)
         return im, cnt
 
     if fn is not None:
@@ -182,7 +196,7 @@ def visualize_seeds(
     Returns
     -------
     hvres : hv.Overlay
-        The resuling overlay of seeds and max projection.
+        The resulting overlay of seeds and max projection.
 
     See Also
     --------
@@ -250,7 +264,9 @@ def visualize_gmm_fit(
     hist = np.histogram(values, bins=bins, density=True)
     gss_dict = dict()
     for igss, (mu, sig) in enumerate(zip(gmm.means_, gmm.covariances_)):
-        gss = gaussian(hist[1], np.asscalar(mu), np.asscalar(np.sqrt(sig)))
+        mu_f = float(np.asarray(mu, dtype=float).squeeze())
+        sig_f = float(np.sqrt(np.asarray(sig, dtype=float)).squeeze())
+        gss = gaussian(hist[1], mu_f, sig_f)
         gss_dict[igss] = hv.Curve((hist[1], gss))
     return (
         hv.Histogram(((hist[0] - hist[0].min()) / np.ptp(hist[0]), hist[1])).opts(
@@ -291,7 +307,7 @@ def visualize_spatial_update(
         Names of key dimensions identifying the parameter space. Should have
         same length as the keys in `A_dict` and `C_dict`. If `None` then a
         dimension names "dummy" will be created and the visualization can be
-        used to visualize restults across cells. By default `None`.
+        used to visualize results across cells. By default `None`.
     norm : bool, optional
         Whether to normalize the temporal activities of each cell to range (0,
         1) for visualization. By default `True`.
@@ -434,7 +450,7 @@ def visualize_temporal_update(
         Names of key dimensions identifying the parameter space. Should have
         same length as the keys in `C_dict` etc. If `None` then a dimension
         names "dummy" will be created and the visualization can be used to
-        visualize restults across cells. By default `None`.
+        visualize results across cells. By default `None`.
     norm : bool, optional
         Whether to normalize the temporal activities of each cell to range (0,
         1) for visualization. By default `True`.
@@ -597,17 +613,13 @@ def visualize_motion(motion: xr.DataArray) -> Union[hv.Layout, hv.NdOverlay]:
         mheight = mheight.assign_coords(grid=np.arange(mheight.sizes["grid"]))
         mwidth = mwidth.assign_coords(grid=np.arange(mwidth.sizes["grid"]))
         return (
-            (
-                hv.Image(mheight.rename("height_motion"), kdims=["frame", "grid"]).opts(
-                    title="height_motion", **opts_im
-                )
-                + hv.Image(mwidth.rename("width_motion"), kdims=["frame", "grid"]).opts(
-                    title="width_motion", **opts_im
-                )
-            )
-            .cols(1)
-            .opts(show_title=True)
-        )
+            hv.Image(mheight.rename("height_motion"), kdims=["frame", "grid"])
+            .opts(**opts_im)
+            .relabel("height_motion")
+            + hv.Image(mwidth.rename("width_motion"), kdims=["frame", "grid"])
+            .opts(**opts_im)
+            .relabel("width_motion")
+        ).cols(1)
     else:
         opts_cv = {
             "frame_width": Motion.CURVE_FRAME_WIDTH,

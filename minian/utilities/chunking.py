@@ -1,7 +1,7 @@
 """Chunk inspection, heuristic chunk plans, optimized rechunking."""
 
 import functools as fct
-from typing import List, Optional
+from typing import Any, List, Optional, Tuple
 
 import dask as da
 import dask.array as darr
@@ -11,7 +11,7 @@ import xarray as xr
 from .dask_graph import FAST_FUNCTIONS, custom_arr_optimize
 
 
-def get_chk(arr: xr.DataArray) -> dict:
+def get_chk(arr: xr.DataArray) -> dict[Any, Any]:
     """
     Get chunks of a `xr.DataArray`.
 
@@ -25,7 +25,10 @@ def get_chk(arr: xr.DataArray) -> dict:
     chk : dict
         Dictionary mapping dimension names to chunks.
     """
-    return {d: c for d, c in zip(arr.dims, arr.chunks)}
+    ch = arr.chunks
+    if ch is None:
+        return {}
+    return {d: c for d, c in zip(arr.dims, ch)}
 
 
 def rechunk_like(x: xr.DataArray, y: xr.DataArray) -> xr.DataArray:
@@ -58,7 +61,7 @@ def get_optimal_chk(
     dim_grp=[("frame",), ("height", "width")],
     csize=256,
     dtype: Optional[type] = None,
-) -> dict:
+) -> Tuple[dict[Any, Any], dict[Any, Any]]:
     """
     Compute the optimal chunk size across all dimensions of the input array.
 
@@ -96,14 +99,13 @@ def get_optimal_chk(
     dims = arr.dims
     if not dim_grp:
         dim_grp = [(d,) for d in dims]
-    chk_compute = dict()
+    chk_compute: dict[Any, Any] = {}
     for dg in dim_grp:
         d_rest = set(dims) - set(dg)
-        dg_dict = {d: "auto" for d in dg}
-        dr_dict = {d: -1 for d in d_rest}
-        dg_dict.update(dr_dict)
+        chunk_spec: dict[Any, Any] = {d: "auto" for d in dg}
+        chunk_spec.update({d: -1 for d in d_rest})
         with da.config.set({"array.chunk-size": "{}MiB".format(csize)}):
-            arr_chk = arr.chunk(dg_dict)
+            arr_chk = arr.chunk(chunk_spec)
         chk = get_chunksize(arr_chk)
         chk_compute.update({d: chk[d] for d in dg})
     with da.config.set({"array.chunk-size": "{}MiB".format(csize)}):

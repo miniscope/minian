@@ -4,7 +4,7 @@ import functools as fct
 import itertools as itt
 import logging
 from collections import OrderedDict
-from typing import List, Union
+from typing import Any, List, Optional, Tuple, Union, cast
 
 import holoviews as hv
 import panel as pn
@@ -25,6 +25,10 @@ log = logging.getLogger(__name__)
 
 
 class VArrayViewer:
+    ds: Union[xr.DataArray, xr.Dataset]
+    meta_dicts: OrderedDict[str, list[Any]]
+    cur_metas: OrderedDict[str, Any]
+    mask: dict[Tuple[Any, ...], dict[str, Any]]
     """
     Interactive visualization for movie data arrays.
 
@@ -74,7 +78,7 @@ class VArrayViewer:
         varr: Union[xr.DataArray, List[xr.DataArray], xr.Dataset],
         framerate=30,
         summary=["mean"],
-        meta_dims: List[str] = None,
+        meta_dims: Optional[List[str]] = None,
         datashading=True,
         layout=False,
     ):
@@ -123,23 +127,24 @@ class VArrayViewer:
             raise NotImplementedError(
                 "video array of type {} not supported".format(type(varr))
             )
+        mdims = meta_dims if meta_dims is not None else []
         try:
             self.meta_dicts = OrderedDict(
-                [(d, list(self.ds.coords[d].values)) for d in meta_dims]
+                [(d, list(self.ds.coords[d].values)) for d in mdims]
             )
             self.cur_metas = OrderedDict(
                 [(d, v[0]) for d, v in self.meta_dicts.items()]
             )
         except TypeError:
-            self.meta_dicts = dict()
-            self.cur_metas = dict()
+            self.meta_dicts = OrderedDict()
+            self.cur_metas = OrderedDict()
         self._datashade = datashading
         self._layout = layout
         self.framerate = framerate
         self._f = self.ds.coords["frame"].values
         self._h = self.ds.sizes["height"]
         self._w = self.ds.sizes["width"]
-        self.mask = dict()
+        self.mask = {}
         CStream = Stream.define(
             "CStream",
             f=param.Integer(
@@ -151,19 +156,21 @@ class VArrayViewer:
         self.widgets = self._widgets()
         if type(summary) is list:
             summ_all = {
-                SummaryStat.MEAN: self.ds.mean(["height", "width"]),
-                SummaryStat.MAX: self.ds.max(["height", "width"]),
-                SummaryStat.MIN: self.ds.min(["height", "width"]),
-                SummaryStat.DIFF: self.ds.diff("frame").mean(["height", "width"]),
+                SummaryStat.MEAN: cast(xr.DataArray, self.ds.mean(["height", "width"])),
+                SummaryStat.MAX: cast(xr.DataArray, self.ds.max(["height", "width"])),
+                SummaryStat.MIN: cast(xr.DataArray, self.ds.min(["height", "width"])),
+                SummaryStat.DIFF: cast(
+                    xr.DataArray, self.ds.diff("frame").mean(["height", "width"])
+                ),
             }
-            summ = None
+            summ: Optional[dict[str, xr.DataArray]] = None
             try:
-                summ = {k: summ_all[SummaryStat(k)] for k in summary}
+                summ = {str(k): summ_all[SummaryStat(k)] for k in summary}
             except (KeyError, ValueError):
                 log.warning("{} Not understood for specifying summary".format(summary))
             if summ:
                 log.info("computing summary")
-                sum_list = []
+                sum_list: list[xr.DataArray] = []
                 for k, v in summ.items():
                     sum_list.append(v.compute().assign_coords(sum_var=k))
                 summary = xr.concat(sum_list, dim="sum_var")

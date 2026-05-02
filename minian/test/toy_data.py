@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Any, Optional, cast
 
 import numba as nb
 import numpy as np
@@ -7,11 +8,24 @@ import xarray as xr
 from cv2 import GaussianBlur
 from numpy import random
 
-from ..constants import MINIAN
-from ..cnmf import *
-from ..initialization import *
-from ..motion_correction import *
-from ..preprocessing import *
+from ..cnmf import (
+    compute_trace,
+    get_noise_fft,
+    unit_merge,
+    update_background,
+    update_spatial,
+    update_temporal,
+)
+from ..initialization import (
+    initA,
+    initC,
+    ks_refine,
+    pnr_refine,
+    seeds_init,
+    seeds_merge,
+)
+from ..motion_correction import apply_shifts, apply_transform, estimate_motion
+from ..preprocessing import denoise, remove_background
 from ..utilities import save_minian
 from ..visualization import write_video
 
@@ -174,7 +188,7 @@ if __name__ == "__main__":
     # optimal parameters
     param_denoise = {"method": "median", "ksize": 7}
     param_background_removal = {"method": "tophat", "wnd": 15}
-    param_estimate_shift = {"dim": "frame", "max_sh": 20}
+    param_estimate_motion = {"dim": "frame", "max_sh": 20}
     param_seeds_init = {
         "wnd_size": 100,
         "method": "rolling",
@@ -200,7 +214,6 @@ if __name__ == "__main__":
         "sparse_penal": 1e-3,
         "p": 1,
         "add_lag": 20,
-        "use_spatial": False,
         "jac_thres": 0.2,
         "zero_thres": 1e-8,
         "max_iters": 200,
@@ -241,48 +254,70 @@ if __name__ == "__main__":
         save_minian(
             dat,
             dpath=testpath,
-            fname=MINIAN,
-            backend="zarr",
             meta_dict={"session": -1, "animal": -2},
             overwrite=True,
         )
     # run pipeline
     log.info("pre-processing")
     Y_glow = (Y - Y.min("frame").compute()).rename("Y_glow")
-    Y_dn = denoise(Y_glow, **param_denoise).rename("Y_denoise")
-    Y_bg = remove_background(Y_dn, **param_background_removal).rename("Y_bg")
-    shifts_est = estimate_shifts(Y_bg, **param_estimate_shift)
-    Y_mc = apply_shifts(Y_bg, shifts_est).fillna(0).rename("Y_mc")
-    for dat in [Y_glow, Y_dn, Y_bg, Y_mc, shifts_est]:
+    Y_dn = denoise(
+        Y_glow,
+        cast(str, param_denoise["method"]),
+        ksize=cast(int, param_denoise["ksize"]),
+    ).rename("Y_denoise")
+    Y_bg = remove_background(
+        Y_dn,
+        cast(str, param_background_removal["method"]),
+        cast(int, param_background_removal["wnd"]),
+    ).rename("Y_bg")
+    motion_est = estimate_motion(Y_bg.astype(float), **cast(Any, param_estimate_motion))
+    Y_mc = apply_transform(Y_bg, motion_est, fill=0).rename("Y_mc")
+    for dat in [Y_glow, Y_dn, Y_bg, Y_mc, motion_est]:
         save_minian(
             dat,
             dpath=testpath,
-            fname=MINIAN,
-            backend="zarr",
             meta_dict={"session": -1, "animal": -2},
             overwrite=True,
         )
     log.info("initialization")
     Y_flt = Y_mc.compute().stack(spatial=["height", "width"])
     seeds_in = seeds_init(Y_mc, **param_seeds_init)
-    seeds_pnr, _, _ = pnr_refine(Y_flt, seeds_in.copy(), **param_pnr_refine)
+    _pnr_out = cast(
+        tuple[Any, Any, Any],
+        pnr_refine(
+            Y_flt,
+            seeds_in.copy(),
+            noise_freq=cast(float, param_pnr_refine["noise_freq"]),
+            thres=cast(float, param_pnr_refine["thres"]),
+            med_wnd=cast(Optional[int], param_pnr_refine.get("med_wnd")),
+        ),
+    )
+    seeds_pnr, _, _ = _pnr_out
     seeds_ks = ks_refine(Y_flt, seeds_pnr[seeds_pnr["mask_pnr"]], **param_ks_refine)
+    max_proj = Y_mc.max("frame").rename("max_proj")
     seeds_mrg = seeds_merge(
-        Y_flt, seeds_ks[seeds_ks["mask_ks"]].reset_index(drop=True), **param_seeds_merge
+        Y_mc,
+        max_proj,
+        seeds_ks[seeds_ks["mask_ks"]].reset_index(drop=True),
+        **param_seeds_merge,
     )
-    A_init, C_init, b_init, f_init = initialize(
-        Y_mc, seeds_mrg[seeds_mrg["mask_mrg"]], **param_initialize
-    )
+    A_init = initA(Y_mc, seeds_mrg[seeds_mrg["mask_mrg"]], **param_initialize)
+    C_init = initC(Y_mc, A_init)
+    b_init, f_init = update_background(Y_mc, A_init, C_init)
     log.info("cnmf")
     sn = get_noise_fft(Y_mc, **param_get_noise).persist()
     A_sp1, b_sp1, C_sp1, f_sp1 = update_spatial(
         Y_mc, A_init, b_init, C_init, f_init, sn, **param_first_spatial
     )
-    YrA, C_tp1, S_tp1, B_tp1, C0_tp1, sig_tp1, g_tp1, scale_tp1 = update_temporal(
-        Y_mc, A_sp1, b_sp1, C_sp1, f_sp1, sn, **param_first_temporal
+    YrA_tp = compute_trace(Y_mc, A_sp1, b_sp1, C_sp1, f_sp1).persist()
+    C_tp1, S_tp1, B_tp1, C0_tp1, g_tp1, _mask_tp1 = update_temporal(
+        A_sp1, C_sp1, YrA=YrA_tp, **cast(Any, param_first_temporal)
     )
+    sig_tp1 = (C_tp1 + B_tp1 + C0_tp1).rename("sig_tp1")
     A_tp1 = A_sp1.sel(unit_id=C_tp1.coords["unit_id"]).rename("A_tp1")
-    A_mrg, sig_mrg = unit_merge(A_tp1, sig_tp1, [], **param_first_merge)
+    _merged = unit_merge(A_tp1, sig_tp1, None, **param_first_merge)
+    A_mrg = cast(xr.DataArray, _merged[0])
+    sig_mrg = cast(xr.DataArray, _merged[1])
     log.info("%s", A_mrg)
     # save results
     for dat in [
@@ -304,8 +339,6 @@ if __name__ == "__main__":
         save_minian(
             dat,
             dpath=testpath,
-            fname=MINIAN,
-            backend="zarr",
             meta_dict={"session": -1, "animal": -2},
             overwrite=True,
         )

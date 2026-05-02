@@ -68,7 +68,7 @@ def seeds_init(
         window. By default `10`.
     diff_thres : int, optional
         Intensity threshold for the difference between local maxima and its
-        neighbours. Any local maxima that is not birghter than its neighbor
+        neighbours. Any local maxima that is not brighter than its neighbor
         (defined by the same disk window) by `diff_thres` intensity values will
         be filtered out. By default `2`.
 
@@ -122,7 +122,7 @@ def seeds_init(
     return seeds[["height", "width", "seeds"]]
 
 
-def max_proj_frame(varr: xr.DataArray, idx: np.ndarray) -> xr.DataArray:
+def max_proj_frame(varr: xr.DataArray, idx: Union[np.ndarray, slice]) -> xr.DataArray:
     """
     Compute max projection on a given subset of frames.
 
@@ -130,8 +130,8 @@ def max_proj_frame(varr: xr.DataArray, idx: np.ndarray) -> xr.DataArray:
     ----------
     varr : xr.DataArray
         The input movie data containing all frames.
-    idx : np.ndarray
-        The subset of frames to use to compute max projection.
+    idx : np.ndarray or slice
+        Frame index array or slice passed to ``isel(frame=...)``.
 
     Returns
     -------
@@ -292,7 +292,7 @@ def pnr_refine(
 
     For each input seed, the noise is defined as high-pass filtered fluorescence
     trace of the seed. The peak-to-noise ratio (pnr) of that seed is then
-    defined as the ratio between the peak-to-peak value of the originial
+    defined as the ratio between the peak-to-peak value of the original
     fluorescence trace and that of the noise trace. Optionally, if abrupt
     changes in baseline fluorescence is expected, then the baseline can be
     estimated by median-filtering the fluorescence trace and subtracted from the
@@ -300,7 +300,7 @@ def pnr_refine(
     hard threshold of pnr is not desired, then a Gaussian Mixture Model with 2
     components can be fitted to the distribution of pnr across all seeds, and
     only seeds with pnr belonging to the higher-mean Gaussian will be considered
-    valide.
+    valid.
 
     Parameters
     ----------
@@ -347,6 +347,9 @@ def pnr_refine(
         )
         vsub_ls.append(vsub)
     varr_sub = xr.concat(vsub_ls, "index")
+    # apply_ufunc(..., dask="parallelized") needs one chunk on each core dim (frame).
+    if getattr(varr_sub.data, "chunks", None):
+        varr_sub = varr_sub.chunk({"frame": -1})
     if med_wnd:
         log.info("removing baseline")
         varr = xr.apply_ufunc(
@@ -438,7 +441,7 @@ def intensity_refine(
     Filter seeds by thresholding the intensity of their corresponding pixels in
     the max projection of the movie.
 
-    This function generate a histogram of the max projection by spliting the
+    This function generate a histogram of the max projection by splitting the
     intensity into bins of roughly 10 pixels. Then the intensity threshold is
     defined as the intensity of the peak of the histogram times `thres_mul`.
 
@@ -516,6 +519,8 @@ def ks_refine(varr: xr.DataArray, seeds: pd.DataFrame, sig=0.01) -> pd.DataFrame
         )
         vsub_ls.append(vsub)
     varr_sub = xr.concat(vsub_ls, "index")
+    if getattr(varr_sub.data, "chunks", None):
+        varr_sub = varr_sub.chunk({"frame": -1})
     log.info("performing KS test")
     ks = xr.apply_ufunc(
         ks_perseed,
@@ -638,7 +643,7 @@ def initA(
     For each input seed, this function compute the correlation between the
     fluorescence activity of the seed and those of its neighboring pixels up to
     `wnd` pixels. It then set all correlation below `thres_corr` to zero, and
-    use the resulting correlation image as the resutling spatial footprint of
+    use the resulting correlation image as the resulting spatial footprint of
     the seed.
 
     Parameters

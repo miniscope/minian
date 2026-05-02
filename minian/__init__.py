@@ -33,7 +33,7 @@ da.config.set(
 )
 # setting fuse width ref: https://github.com/dask/dask/issues/5105
 da.config.set(
-    **{
+    {
         "distributed.worker.memory.target": 0.8,
         "distributed.worker.memory.spill": 0.85,
         "distributed.worker.memory.pause": 0.9,

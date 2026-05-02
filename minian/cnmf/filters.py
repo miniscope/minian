@@ -10,6 +10,16 @@ from . import legacy
 
 log = logging.getLogger(__name__)
 
+
+def _f64_array_for_rust_fft(x: np.ndarray) -> np.ndarray:
+    """
+    C-contiguous float64 array with the ALIGNED flag set for ``minian_rs`` FFT
+    entrypoints (ndarray rejects unaligned ``f64`` views from NumPy).
+    """
+    a = np.ascontiguousarray(np.asarray(x), dtype=np.float64)
+    return np.require(a, requirements=["C", "A"])
+
+
 try:
     from minian.minian_rs import filt_fft_f64 as _rust_filt_fft
     from minian.minian_rs import filt_fft_vec_f64 as _rust_filt_fft_vec
@@ -25,7 +35,7 @@ def smooth_sig(
     sig: xr.DataArray, freq: float, method="fft", btype="low"
 ) -> xr.DataArray:
     """
-    Filter the input timeseries with a cut-off frequency in vecorized fashion.
+    Filter the input timeseries with a cut-off frequency in vectorized fashion.
 
     Parameters
     ----------
@@ -36,7 +46,7 @@ def smooth_sig(
     method : str, optional
         Method used for filtering. Either `"fft"` or `"butter"`. If `"fft"`, the
         filtering is carried out with zero-ing fft signal. If `"butter"`, the
-        fiilterings carried out with :func:`scipy.signal.butter`. By default
+        filtering carried out with :func:`scipy.signal.butter`. By default
         "fft".
     btype : str, optional
         Either `"low"` or `"high"` specify low or high pass filtering. By
@@ -79,7 +89,7 @@ def filt_fft(x: np.ndarray, freq: float, btype: str) -> np.ndarray:
     if _rust_filt_fft is None:
         return legacy.filt_fft(x, freq, btype)
 
-    xc = np.ascontiguousarray(x, dtype=np.float64)
+    xc = _f64_array_for_rust_fft(x)
     out = np.asarray(_rust_filt_fft(xc, float(freq), btype), dtype=np.float64)
     return out.astype(x.dtype, copy=False)
 
@@ -117,7 +127,7 @@ def filt_fft_vec(x: np.ndarray, freq: float, btype: str) -> np.ndarray:
     if _rust_filt_fft_vec is None:
         return legacy.filt_fft_vec(x, freq, btype)
 
-    xc = np.ascontiguousarray(x, dtype=np.float64)
+    xc = _f64_array_for_rust_fft(x)
     out = np.asarray(_rust_filt_fft_vec(xc, float(freq), btype, True), dtype=np.float64)
     if out.shape != x.shape:
         raise ValueError(

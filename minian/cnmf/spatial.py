@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import Optional, Tuple, Union
+from typing import Optional, Union, cast
 
 import cv2
 import dask as da
@@ -27,15 +27,15 @@ def update_spatial(
     A: xr.DataArray,
     C: xr.DataArray,
     sn: xr.DataArray,
-    b: xr.DataArray = None,
-    f: xr.DataArray = None,
+    b: Optional[xr.DataArray] = None,
+    f: Optional[xr.DataArray] = None,
     dl_wnd=5,
     sparse_penal=0.5,
     update_background=False,
     normalize=True,
     size_thres=(9, None),
     in_memory=False,
-) -> Tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray]:
+) -> tuple[xr.DataArray, ...]:
     """
     Update spatial components given the input data and temporal dynamic for each
     cell.
@@ -43,12 +43,12 @@ def update_spatial(
     This function carries out spatial update of the CNMF algorithm. The update
     is done in parallel and independently for each pixel. To save computation
     time, we compute a subsetting matrix `sub` by dilating the initial
-    spatial foorprint of each cell. The window size of the dilation is
-    controled by `dl_wnd`. Then for each pixel, only cells that have a non-zero
+    spatial footprint of each cell. The window size of the dilation is
+    controlled by `dl_wnd`. Then for each pixel, only cells that have a non-zero
     value in `sub` at the current pixel will be considered for update.
     Optionally, the spatial footprint of the background can be updated in the
     same fashion based on the temporal dynamic of the background. After the
-    update, the spatial footprint of each cell can be optionally noramlized to
+    update, the spatial footprint of each cell can be optionally normalized to
     unit sum, so that difference in fluorescent intensity will not be reflected
     in spatial footprint. A `size_thres` can be passed in to filter out cells
     whose size (number of non-zero values in spatial footprint) is outside the
@@ -71,7 +71,7 @@ def update_spatial(
         Estimation of noise level for each pixel. Should have dimension "height"
         and "width".
     b : xr.DataArray, optional
-        Previous estimation of spatial footprint of background. Fhould have
+        Previous estimation of spatial footprint of background. Should have
         dimension "height" and "width".
     f : xr.DataArray, optional
         Estimation of temporal dynamic of background. Should have dimension
@@ -108,7 +108,7 @@ def update_spatial(
         New estimation of spatial footprint of background. Only returned if
         `update_background` is `True`. Same shape as `b`.
     norm_fac : xr.DataArray
-        Normalizing factor. Userful to scale temporal activity of cells. Only
+        Normalizing factor. Useful to scale temporal activity of cells. Only
         returned if `normalize` is `True`.
 
     Notes
@@ -122,7 +122,7 @@ def update_spatial(
     if in_memory:
         C_store = C.compute().values
     else:
-        C_path = os.path.join(intpath, C.name + ".zarr", C.name)
+        C_path = os.path.join(intpath, str(C.name) + ".zarr", str(C.name))
         C_store = zarr.open_array(C_path)
     log.info("estimating penalty parameter")
     alpha = sparse_penal * sn
@@ -163,7 +163,7 @@ def update_spatial(
     Y_trans = Y.transpose("height", "width", "frame")
     # take fast route if a lot of chunks are empty
     if ssub.sum() < 500:
-        A_new = np.empty(sub.data.numblocks, dtype=object)
+        blk_grid = np.empty(sub.data.numblocks, dtype=object)
         for (hblk, wblk), has_unit in np.ndenumerate(ssub):
             cur_sub = sub.data.blocks[hblk, wblk, :]
             if has_unit:
@@ -176,20 +176,20 @@ def update_spatial(
                 )
             else:
                 cur_blk = darr.array(sparse.zeros((cur_sub.shape)))
-            A_new[hblk, wblk, 0] = cur_blk
-        A_new = darr.block(A_new.tolist())
+            blk_grid[hblk, wblk, 0] = cur_blk
+        a_new_da = darr.block(blk_grid.tolist())
     else:
-        A_new = update_spatial_block(
+        a_new_da = update_spatial_block(
             Y_trans.data,
             alpha.data,
             sub.data,
             C_store=C_store,
             f=f_in,
         )
-    with da.config.set(**{"optimization.fuse.ave-width": 6}):
-        A_new = da.optimize(A_new)[0]
+    with da.config.set({"optimization.fuse.ave-width": 6}):
+        a_new_da = da.optimize(a_new_da)[0]
     A_new = xr.DataArray(
-        darr.moveaxis(A_new, -1, 0).map_blocks(lambda a: a.todense(), dtype=A.dtype),
+        darr.moveaxis(a_new_da, -1, 0).map_blocks(lambda a: a.todense(), dtype=A.dtype),
         dims=["unit_id", "height", "width"],
         coords={
             "unit_id": sub.coords["unit_id"],
@@ -211,17 +211,19 @@ def update_spatial(
     if size_thres:
         low, high = size_thres
         A_bin = A_new > 0
-        mask = np.ones(A_new.sizes["unit_id"], dtype=bool)
+        mask_arr = np.ones(A_new.sizes["unit_id"], dtype=bool)
         if low:
-            mask = np.logical_and(
-                (A_bin.sum(["height", "width"]) > low).compute(), mask
+            mask_arr = np.logical_and(
+                (A_bin.sum(["height", "width"]) > low).compute(), mask_arr
             )
         if high:
-            mask = np.logical_and(
-                (A_bin.sum(["height", "width"]) < high).compute(), mask
+            mask_arr = np.logical_and(
+                (A_bin.sum(["height", "width"]) < high).compute(), mask_arr
             )
         mask = xr.DataArray(
-            mask, dims=["unit_id"], coords={"unit_id": A_new.coords["unit_id"].values}
+            mask_arr,
+            dims=["unit_id"],
+            coords={"unit_id": A_new.coords["unit_id"].values},
         )
     else:
         mask = (A_new.sum(["height", "width"]) > 0).compute()
@@ -295,10 +297,10 @@ def update_spatial_perpx(
         idx = sub[:-1].nonzero()[0]
     else:
         idx = sub.nonzero()[0]
-    try:
+    if isinstance(C_store, zarr.Array):
         C = C_store.get_orthogonal_selection((idx, slice(None))).T
-    except AttributeError:
-        C = C_store[idx, :].T
+    else:
+        C = cast(np.ndarray, C_store)[idx, :].T
     if (f is not None) and sub[-1]:
         C = np.concatenate([C, f.reshape((-1, 1))], axis=1)
         idx = np.concatenate([idx, np.array(len(sub) - 1).reshape(-1)])
@@ -311,7 +313,10 @@ def update_spatial_perpx(
 
 
 def update_spatial_block(
-    y: np.ndarray, alpha: np.ndarray, sub: sparse.COO, **kwargs
+    y: Union[np.ndarray, darr.Array],
+    alpha: Union[np.ndarray, darr.Array],
+    sub: Union[sparse.COO, darr.Array],
+    **kwargs,
 ) -> sparse.COO:
     """
     Carry out spatial update for each 3d block of data.

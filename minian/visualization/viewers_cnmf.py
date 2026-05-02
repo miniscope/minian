@@ -3,7 +3,7 @@
 import functools as fct
 import logging
 from collections import OrderedDict
-from typing import Optional
+from typing import Any, Optional
 
 import dask.array as da
 import holoviews as hv
@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 
 
 class CNMFViewer:
+    metas: dict[str, Any]
     """
     Interactive visualization for CNMF results.
 
@@ -157,10 +158,19 @@ class CNMFViewer:
         S: Optional[xr.DataArray],
         org: Optional[xr.DataArray],
     ) -> None:
-        self._A = A if A is not None else minian["A"]
-        self._C = C if C is not None else minian["C"]
-        self._S = S if S is not None else minian["S"]
-        self._org = org if org is not None else minian["org"]
+        def _need(explicit: Optional[xr.DataArray], key: str) -> xr.DataArray:
+            if explicit is not None:
+                return explicit
+            if minian is None:
+                raise TypeError(
+                    f"minian must be a Dataset when {key} is not passed explicitly"
+                )
+            return minian[key]
+
+        self._A = _need(A, "A")
+        self._C = _need(C, "C")
+        self._S = _need(S, "S")
+        self._org = _need(org, "org")
 
     def _init_unit_labels(self, minian: Optional[xr.Dataset]) -> None:
         if minian is not None and "unit_labels" in minian:
@@ -193,9 +203,11 @@ class CNMFViewer:
         self._showS = True
 
     def _init_org_metadata_selectors(self) -> None:
-        self._meta_dims = list(set(self._org.dims) - {"frame", "height", "width"})
+        self._meta_dims = list(
+            {str(d) for d in set(self._org.dims) - {"frame", "height", "width"}}
+        )
         self.meta_dicts = {d: list(self._org.coords[d].values) for d in self._meta_dims}
-        self.metas = {d: v[0] for d, v in self.meta_dicts.items()}
+        self.metas = {str(d): v[0] for d, v in self.meta_dicts.items()}
 
     def _init_nn_sort_coords_if_enabled(self) -> None:
         if not self._NNsort:

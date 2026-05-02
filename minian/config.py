@@ -1,13 +1,16 @@
 """Pipeline defaults: paths, Dask ``n_workers``, and BLAS thread caps.
 
-CPU-based ``n_workers`` defaults come only from ``minian.minian_rs`` — see
-:func:`minian.minian_rs.thread_allocation` (logical CPUs and derived worker count).
+CPU-based ``n_workers`` defaults come from ``minian.minian_rs`` — see
+:func:`minian.minian_rs.thread_allocation` (logical CPUs, optional
+``worker_cpu_ratio``, and derived worker count). The default ratio is **2/3**
+of ``(logical CPUs − reserve)`` (floored, at least one worker).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Dict, Mapping, Optional, Tuple
@@ -24,6 +27,7 @@ _BLAS_THREAD_KEYS: Tuple[str, ...] = (
 )
 
 __all__ = [
+    "DEFAULT_WORKER_CPU_RATIO",
     "PipelineConfig",
     "apply_blas_thread_env",
     "apply_minian_intermediate",
@@ -33,6 +37,9 @@ __all__ = [
     "pipeline_config_to_jsonable",
     "resolve_n_workers",
 ]
+
+#: Default ``worker_cpu_ratio`` for :func:`resolve_n_workers` (matches Rust ``DEFAULT_WORKER_CPU_RATIO``).
+DEFAULT_WORKER_CPU_RATIO: float = 2.0 / 3.0
 
 
 def _thread_env_same(limit: str) -> Dict[str, str]:
@@ -50,17 +57,39 @@ def _env_nonempty_positive_int(var: str) -> Optional[int]:
         return None
 
 
+def _env_worker_cpu_ratio(
+    env_var: str = "MINIAN_WORKER_CPU_RATIO",
+) -> Optional[float]:
+    """Parse a positive float from ``env_var``, clamp to ``(0, 1]``; ``None`` if unset or invalid."""
+    raw = os.environ.get(env_var)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        v = float(raw.strip())
+    except ValueError:
+        return None
+    if not math.isfinite(v) or v <= 0.0:
+        return None
+    return min(1.0, max(v, 1e-12))
+
+
 def resolve_n_workers(
     *,
     reserve: int = 1,
     env_var: str = "MINIAN_NWORKERS",
+    worker_cpu_ratio: Optional[float] = None,
+    env_ratio_var: str = "MINIAN_WORKER_CPU_RATIO",
 ) -> int:
     """
     Worker count for ``dask.distributed.LocalCluster(..., n_workers=...)``.
 
-    If ``env_var`` is set to a positive integer string, that value is used (minimum 1).
-    Otherwise defers to :func:`minian.minian_rs.thread_allocation` (requires the
-    Rust extension).
+    If ``env_var`` is set to a positive integer string, that value is used (minimum 1)
+    and ``worker_cpu_ratio`` is ignored.
+
+    Otherwise uses :func:`minian.minian_rs.thread_allocation` (requires the Rust
+    extension) with ``reserve`` and a ratio resolved as: explicit ``worker_cpu_ratio``
+    if not ``None``, else :func:`_env_worker_cpu_ratio` from ``env_ratio_var``, else
+    :data:`DEFAULT_WORKER_CPU_RATIO` (``2/3``).
     """
     from_env = _env_nonempty_positive_int(env_var)
     if from_env is not None:
@@ -72,7 +101,12 @@ def resolve_n_workers(
             "minian.minian_rs is required to resolve CPU-based n_workers "
             "(install / build the package so the Rust extension is present)."
         ) from e
-    return int(_thread_allocation(reserve).cluster_workers)
+    ratio = worker_cpu_ratio
+    if ratio is None:
+        ratio = _env_worker_cpu_ratio(env_ratio_var)
+    if ratio is None:
+        ratio = DEFAULT_WORKER_CPU_RATIO
+    return int(_thread_allocation(reserve, ratio).cluster_workers)
 
 
 def apply_thread_env(env: Mapping[str, Any]) -> None:
@@ -124,9 +158,9 @@ def _default_param_load_videos() -> Dict[str, Any]:
 class PipelineConfig:
     """Algorithm defaults for a headless driver or JSON export.
 
-    Video roots and similar layout (what notebooks call ``dpath``) are intentionally
-    not modeled here — set those in a notebook or in your own ``.py`` pipeline wrapper
-    (e.g. pass paths into ``load_videos`` / ``param_save_minian``).
+    Video roots (``dpath``) are chosen by the driver; :mod:`minian.pipeline` merges
+    ``param_save_minian['dpath']`` at run time under the ``--data`` directory.
+    Load from JSON with :func:`load_pipeline_config` or use these field defaults.
     """
 
     intpath: str = field(default_factory=get_minian_intermediate_path)
@@ -137,6 +171,8 @@ class PipelineConfig:
     #: Use ``None`` to auto-pick from CPUs (see :func:`resolve_n_workers`).
     n_workers: Optional[int] = None
     reserve_cores_for_os: int = 1
+    #: ``None`` → :envvar:`MINIAN_WORKER_CPU_RATIO` or :data:`DEFAULT_WORKER_CPU_RATIO`.
+    worker_cpu_ratio: Optional[float] = None
     #: Applied by :meth:`apply_environment` unless ``blas_threads`` is passed there.
     thread_env: Dict[str, str] = field(default_factory=_default_thread_env)
     param_save_minian: Dict[str, Any] = field(
@@ -206,10 +242,34 @@ class PipelineConfig:
         if self.thread_env:
             self.thread_env = {str(k): str(v) for k, v in self.thread_env.items()}
 
+    def resolved_worker_cpu_ratio(self) -> float:
+        """Effective ratio passed to Rust when :meth:`resolved_n_workers` uses CPU defaults."""
+        if self.worker_cpu_ratio is not None:
+            r = float(self.worker_cpu_ratio)
+            if r != r or r <= 0.0:
+                return DEFAULT_WORKER_CPU_RATIO
+            return min(1.0, max(r, 1e-12))
+        return _env_worker_cpu_ratio() or DEFAULT_WORKER_CPU_RATIO
+
     def resolved_n_workers(self) -> int:
         if self.n_workers is not None:
             return max(1, int(self.n_workers))
-        return resolve_n_workers(reserve=self.reserve_cores_for_os)
+        return resolve_n_workers(
+            reserve=self.reserve_cores_for_os,
+            worker_cpu_ratio=self.worker_cpu_ratio,
+        )
+
+    def algorithm_param_dicts(self) -> Dict[str, Dict[str, Any]]:
+        """``param_*`` kwargs for CNMF stages, excluding ``param_save_minian`` (set per run).
+
+        Keys match what :mod:`minian.pipeline` passes to ``load_videos``, ``denoise``, etc.
+        """
+        skip = frozenset({"param_save_minian"})
+        return {
+            f.name: getattr(self, f.name)
+            for f in fields(self)
+            if f.name.startswith("param_") and f.name not in skip
+        }
 
     def with_paths_resolved(self) -> PipelineConfig:
         """Copy with ``intpath`` and ``param_save_minian['dpath']`` (if present) absolutized."""
@@ -307,6 +367,7 @@ def pipeline_config_to_jsonable(
     data = _to_jsonable(asdict(cfg))
     if include_resolved_workers:
         data["resolved_n_workers"] = cfg.resolved_n_workers()
+        data["resolved_worker_cpu_ratio"] = cfg.resolved_worker_cpu_ratio()
     return data
 
 
@@ -314,6 +375,7 @@ def _pipeline_config_from_json_dict(raw: Dict[str, Any]) -> PipelineConfig:
     """Merge decoded JSON objects into :class:`PipelineConfig` field defaults."""
     raw = dict(raw)
     raw.pop("resolved_n_workers", None)
+    raw.pop("resolved_worker_cpu_ratio", None)
     decoded = _from_jsonable(raw)
     defaults = PipelineConfig()
     fs = fields(PipelineConfig)

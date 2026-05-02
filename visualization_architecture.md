@@ -79,7 +79,7 @@ Do **not** delete the old module until `__init__.py` re-exports match the previo
 
 - `uv run --extra viz` — import all public symbols from `minian.visualization`.
 - Run targeted tests that touch visualization (if any).
-- Optional: execute `pipeline.ipynb` / `pipeline_test.ipynb` cells that use `CNMFViewer`, `generate_videos`, etc.
+- Optional: execute `pipeline.ipynb` cells, run `uv run minian-pipeline` / `python -m minian.pipeline`, or notebooks that use `CNMFViewer`, `generate_videos`, etc.
 
 ## Related files
 

@@ -1,6 +1,9 @@
-"""HoloViews / Panel literals: sizes, palettes, titles, widget geometry."""
+"""HoloViews / Panel literals: sizes, palettes, subplot labels, widget geometry."""
 
 from __future__ import annotations
+
+# ``Preprocess.{IMAGE_TITLE, …}`` feed ``hv.relabel()`` (subplot label), not
+# ``hv.opts`` ``title`` / Bokeh ``Figure.title`` strings (see ``visualization`` package doc).
 
 from enum import StrEnum
 
@@ -22,7 +25,7 @@ class SummaryStat(StrEnum):
 
 
 class Preprocess:
-    """Sizes and titles for :func:`pipeline_plots.visualize_preprocess`."""
+    """Sizes and subplot label templates for :func:`pipeline_plots.visualize_preprocess`."""
 
     FRAME_WIDTH = 500
     IMAGE_TITLE = "Image {label} {group} {dimensions}"

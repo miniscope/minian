@@ -1,6 +1,7 @@
 """Interactive cross-registration alignment viewer."""
 
 import logging
+from typing import Any, Dict, Optional
 
 import colorcet as cc
 import cv2
@@ -59,6 +60,10 @@ class AlignViewer:
 
     """
 
+    meta_dict: Optional[Dict[str, Any]]
+    meta: Dict[str, Any]
+    wgt_meta: Optional[pn.layout.WidgetBox]
+
     def __init__(
         self,
         minian_ds: xr.Dataset,
@@ -106,7 +111,7 @@ class AlignViewer:
         # handling meta
         try:
             self.meta_dict = {
-                col: c.unique().tolist() for col, c in mappings["meta"].iteritems()
+                col: c.unique().tolist() for col, c in mappings["meta"].items()
             }
         except KeyError:
             self.meta_dict = None
@@ -120,6 +125,7 @@ class AlignViewer:
                 w.param.watch(lambda v, n=w.name: self.cb_update_meta(n, v), "value")
             self.wgt_meta = pn.layout.WidgetBox(*wgt_meta)
         else:
+            self.meta = {}
             self.wgt_meta = None
         self.update_meta()
         # sessionRGB
@@ -252,6 +258,5 @@ class AlignViewer:
         pn.layout.Row
             Resulting visualizations containing both plots and toolbars.
         """
-        return pn.layout.Row(
-            self.plot, pn.layout.Column(self.wgt_meta, self.wgt_rgb, self.wgt_opt)
-        )
+        meta_widgets = [w for w in (self.wgt_meta, self.wgt_rgb, self.wgt_opt) if w]
+        return pn.layout.Row(self.plot, pn.layout.Column(*meta_widgets))

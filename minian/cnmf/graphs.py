@@ -1,19 +1,44 @@
 """CNMF decomposition and helpers (combined module)."""
 
 import logging
-from typing import List, Union
+from typing import Any, List, Optional, Union, cast
 
 import dask as da
+import dask.array as darr
 import networkx as nx
 import numpy as np
 import pandas as pd
-import pymetis
 import scipy.sparse
 import xarray as xr
 
 from .filters import filt_fft_vec
 
+_pymetis: Any = None
+try:
+    import pymetis as _pm
+
+    _pymetis = _pm
+except ImportError:  # pragma: no cover — wheels missing on Windows
+    pass
+
+
 log = logging.getLogger(__name__)
+
+
+def _fallback_partition(sorted_nodes: list, nparts: int) -> list[int]:
+    """Contiguous partitions when pymetis/METIS is unavailable (e.g. Windows)."""
+    n = len(sorted_nodes)
+    nparts = max(int(nparts), 1)
+    if n == 0:
+        return []
+    membership = [0] * n
+    base, rem = divmod(n, nparts)
+    idx = 0
+    for p in range(nparts):
+        for _ in range(base + (1 if p < rem else 0)):
+            membership[idx] = p
+            idx += 1
+    return membership
 
 
 def label_connected(
@@ -39,7 +64,7 @@ def label_connected(
     """
     n = int(adj.shape[0])
     if scipy.sparse.issparse(adj):
-        adj_sp = adj.tocsr(copy=True)
+        adj_sp = cast(scipy.sparse.spmatrix, adj).tocsr(copy=True)
         adj_sp.setdiag(0)
         adj_sp = scipy.sparse.triu(adj_sp, format="csr")
         g = nx.from_scipy_sparse_array(adj_sp)
@@ -61,7 +86,7 @@ def label_connected(
 def graph_optimize_corr(
     varr: xr.DataArray,
     G: nx.Graph,
-    freq: float,
+    freq: Optional[float],
     idx_dims=["height", "width"],
     chunk=600,
     step_size=50,
@@ -69,8 +94,8 @@ def graph_optimize_corr(
     """
     Compute correlation in an optimized fashion given a computation graph.
 
-    This function carry out out-of-core computation of large correaltion matrix.
-    It takes in a computaion graph whose node represent timeseries and edges
+    This function carry out out-of-core computation of large correlation matrix.
+    It takes in a computation graph whose node represent timeseries and edges
     represent the desired pairwise correlation to be computed. The actual
     timeseries are stored in `varr` and indexed with node attributes. The
     function can carry out smoothing of timeseries before computation of
@@ -109,13 +134,16 @@ def graph_optimize_corr(
         representing the node index of the edge (correlation), and column "corr"
         with computed value of correlation.
     """
-    # a heuristic to make number of partitions scale with nodes
-    n_cuts, membership = pymetis.part_graph(
-        max(int(np.ceil(G.number_of_nodes() / chunk)), 1), adjacency=adj_list(G)
-    )
+    nparts = max(int(np.ceil(G.number_of_nodes() / chunk)), 1)
+    if _pymetis is not None:
+        _cuts, membership = _pymetis.part_graph(nparts, adjacency=adj_list(G))
+    else:
+        membership = _fallback_partition(sorted(G.nodes()), nparts)
+
     nx.set_node_attributes(
         G, {k: {"part": v} for k, v in zip(sorted(G.nodes), membership)}
     )
+
     eg_df = nx.to_pandas_edgelist(G)
     part_map = nx.get_node_attributes(G, "part")
     eg_df["part_src"] = eg_df["source"].map(part_map)
@@ -138,29 +166,31 @@ def graph_optimize_corr(
         vsub = varr.sel(**idx_arr).data
         if len(idx_arr) > 1:  # vectorized indexing
             vsub = vsub.T
+        if getattr(vsub, "chunks", None) is None:
+            vsub = darr.from_array(np.asarray(vsub), chunks=-1)
         else:
             vsub = vsub.rechunk(-1)
-        with da.config.set(**{"optimization.fuse.ave-width": vsub.shape[0]}):
+        with da.config.set({"optimization.fuse.ave-width": int(vsub.shape[0])}):
             return da.optimize(smooth_corr(vsub, ridx, cidx, freq=freq))[0]
 
     for _, eg_sub in egd_same.groupby("part_src"):
-        pixels = list(set(eg_sub["source"]) | set(eg_sub["target"]))
-        corr_ls.append(construct_comput(eg_sub, pixels))
+        px_same = list(set(eg_sub["source"]) | set(eg_sub["target"]))
+        corr_ls.append(construct_comput(eg_sub, px_same))
         idx_ls.append(eg_sub.index)
-        npxs.append(len(pixels))
-    pixels = set()
+        npxs.append(len(px_same))
+    px_accum: set[Any] = set()
     eg_ls = []
     grp = np.arange(len(egd_diff)) // step_size
     for igrp, eg_sub in egd_diff.sort_values("source").groupby(grp):
-        pixels = pixels | set(eg_sub["source"]) | set(eg_sub["target"])
+        px_accum |= set(eg_sub["source"]) | set(eg_sub["target"])
         eg_ls.append(eg_sub)
-        if (len(pixels) > chunk - step_size / 2) or igrp == max(grp):
-            pixels = list(pixels)
+        if (len(px_accum) > chunk - step_size / 2) or igrp == max(grp):
+            px_batch = list(px_accum)
             edf = pd.concat(eg_ls)
-            corr_ls.append(construct_comput(edf, pixels))
+            corr_ls.append(construct_comput(edf, px_batch))
             idx_ls.append(edf.index)
-            npxs.append(len(pixels))
-            pixels = set()
+            npxs.append(len(px_batch))
+            px_accum = set()
             eg_ls = []
     log.info("pixel recompute ratio: {}".format(sum(npxs) / G.number_of_nodes()))
     log.info("graph_optimize_corr: computing correlations")
@@ -171,7 +201,10 @@ def graph_optimize_corr(
 
 
 def adj_corr(
-    varr: xr.DataArray, adj: np.ndarray, nod_df: pd.DataFrame, freq: float
+    varr: xr.DataArray,
+    adj: np.ndarray,
+    nod_df: pd.DataFrame,
+    freq: Optional[float],
 ) -> scipy.sparse.csr_matrix:
     """
     Compute correlation in an optimized fashion given an adjacency matrix and
@@ -229,7 +262,10 @@ def adj_list(G: nx.Graph) -> List[np.ndarray]:
 
 
 def smooth_corr(
-    X: np.ndarray, ridx: np.ndarray, cidx: np.ndarray, freq: float
+    X: np.ndarray,
+    ridx: np.ndarray,
+    cidx: np.ndarray,
+    freq: Optional[float],
 ) -> np.ndarray:
     """
     Wraps around :func:`filt_fft_vec` and :func:`idx_corr` to carry out both

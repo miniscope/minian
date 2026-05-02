@@ -6,7 +6,7 @@ import functools as fct
 import logging
 import os
 import warnings
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import dask as da
 import dask.array as darr
@@ -19,7 +19,6 @@ import xarray as xr
 from ..utilities import (
     custom_arr_optimize,
     custom_delay_optimize,
-    open_minian,
     save_minian,
 )
 from .graphs import adj_corr, label_connected
@@ -32,7 +31,7 @@ def compute_trace(
     Y: xr.DataArray, A: xr.DataArray, b: xr.DataArray, C: xr.DataArray, f: xr.DataArray
 ) -> xr.DataArray:
     """
-    Compute the residule traces `YrA` for each cell.
+    Compute the residual traces `YrA` for each cell.
 
     `YrA` is computed as `C + A_norm(YtA - CtA)`, where `YtA` is `(Y -
     b.dot(f)).tensordot(A, ["height", "width"])`, representing the projection of
@@ -43,7 +42,7 @@ def compute_trace(
     diagonal matrix that normalize the result with sum of squares of spatial
     footprints for each cell. Together, the `YrA` trace is a "unit_id"x"frame"
     matrix, representing the sum of previous temporal components and the
-    residule temporal fluctuations as estimated by projecting the data onto the
+    residual temporal fluctuations as estimated by projecting the data onto the
     spatial footprints and subtracting the cross-talk fluctuations.
 
     Parameters
@@ -63,12 +62,12 @@ def compute_trace(
     Returns
     -------
     YrA : xr.DataArray
-        Residule traces for each cell. Should have dimensions("frame", "unit_id").
+        residual traces for each cell. Should have dimensions("frame", "unit_id").
     """
     fms = Y.coords["frame"]
     uid = A.coords["unit_id"]
     Y = Y.data
-    A = darr.from_array(A.data.map_blocks(sparse.COO).compute(), chunks=-1)
+    A_da = darr.from_array(A.data.map_blocks(sparse.COO).compute(), chunks=-1)
     C = C.data.map_blocks(sparse.COO).T
     b = (
         b.fillna(0)
@@ -77,17 +76,18 @@ def compute_trace(
         .compute()
     )
     f = f.fillna(0).data.reshape((-1, 1))
-    AtA = darr.tensordot(A, A, axes=[(1, 2), (1, 2)]).compute()
+    AtA = darr.tensordot(A_da, A_da, axes=[(1, 2), (1, 2)]).compute()
     A_norm = (
-        (1 / (A**2).sum(axis=(1, 2)))
+        (1 / (A_da**2).sum(axis=(1, 2)))
         .map_blocks(
-            lambda a: sparse.diagonalize(sparse.COO(a)), chunks=(A.shape[0], A.shape[0])
+            lambda a: sparse.diagonalize(sparse.COO(a)),
+            chunks=(A_da.shape[0], A_da.shape[0]),
         )
         .compute()
     )
     B = darr.tensordot(f, b, axes=[(1), (0)])
     Y = Y - B
-    YtA = darr.tensordot(Y, A, axes=[(1, 2), (1, 2)])
+    YtA = darr.tensordot(Y, A_da, axes=[(1, 2), (1, 2)])
     YtA = darr.dot(YtA, A_norm)
     CtA = darr.dot(C, AtA)
     CtA = darr.dot(CtA, A_norm)
@@ -122,7 +122,7 @@ def unit_merge(
     with spatial and temporal components taken as mean across all the cells to
     be merged. Additionally any variables specified in `add_list` will be merged
     in the same manner. Optionally the temporal components can be smoothed
-    before being used to caculate correlation. Despite the name any timeseries
+    before being used to calculate correlation. Despite the name any timeseries
     be passed as `C` and used to calculate the correlation.
 
     Parameters
@@ -155,8 +155,10 @@ def unit_merge(
     log.info("unit_merge: started")
     log.info("computing spatial overlap")
     with da.config.set(
-        array_optimize=darr.optimization.optimize,
-        **{"optimization.fuse.subgraphs": False},
+        {
+            "array_optimize": darr.optimization.optimize,
+            "optimization.fuse.subgraphs": False,
+        }
     ):
         log.info("unit_merge: binarized footprints (persist)")
         A_sps = (A.data.map_blocks(sparse.COO) > 0).rechunk(-1).persist()
@@ -207,7 +209,60 @@ def unit_merge(
         log.info("unit_merge: finished")
         return A_merge, C_merge, add_list
     log.info("unit_merge: finished")
-    return A_merge, C_merge
+    return A_merge, C_merge, None
+
+
+def _default_distributed_scheduler():
+    try:
+        from distributed import default_client
+
+        return default_client()
+    except (ImportError, ValueError):
+        return None
+
+
+def _materialize_group_y_c(cur_yr_a_da, cur_c_da, scheduler):
+    """Materialize group ``YrA`` / ``C`` slices to NumPy (``update_temporal_block``)."""
+    if scheduler is not None:
+        y = cur_yr_a_da.compute(scheduler=scheduler)
+        c = None if cur_c_da is None else cur_c_da.compute(scheduler=scheduler)
+    else:
+        y = cur_yr_a_da.compute()
+        c = None if cur_c_da is None else cur_c_da.compute()
+    return y, c
+
+
+def _compute_five_from_delayed(scheduler, c_a, s_a, b_a, c0_a, g_a):
+    """``da.compute`` on one group's five ``from_delayed`` outputs."""
+    if scheduler is not None:
+        return da.compute(c_a, s_a, b_a, c0_a, g_a, scheduler=scheduler)
+    return da.compute(c_a, s_a, b_a, c0_a, g_a)
+
+
+def _append_temporal_delayed_lists(c_ls, s_ls, b_ls, c0_ls, g_ls, res, y_np, p):
+    """``res`` is a single ``Delayed`` tuple; index ``res[i]``, do not iterate ``res``."""
+    sh, dt = y_np.shape, y_np.dtype
+    for i, out_ls in enumerate((c_ls, s_ls, b_ls, c0_ls)):
+        out_ls.append(darr.from_delayed(res[i], shape=sh, dtype=dt))
+    g_ls.append(darr.from_delayed(res[4], shape=(sh[0], p), dtype=dt))
+
+
+def _xr_ut_frame(name, data, unit_ids, frame_coord):
+    return xr.DataArray(
+        data,
+        dims=["unit_id", "frame"],
+        coords={"unit_id": unit_ids, "frame": frame_coord},
+        name=name,
+    )
+
+
+def _xr_ut_lag_g(data, unit_ids, p, name="g"):
+    return xr.DataArray(
+        data,
+        dims=["unit_id", "lag"],
+        coords={"unit_id": unit_ids, "lag": np.arange(p)},
+        name=name,
+    )
 
 
 def update_temporal(
@@ -279,9 +334,9 @@ def update_temporal(
         Input movie data. Should have dimensions ("frame", "height", "width").
         Only used if `YrA is None`. By default `None`.
     YrA : xr.DataArray, optional
-        Estimation of residule traces for each cell. Should have dimensions
+        Estimation of residual traces for each cell. Should have dimensions
         ("frame", "unit_id"). If `None` then one will be computed using
-        `computea_trace` with relevant inputs. By default `None`.
+        `compute_trace` with relevant inputs. By default `None`.
     noise_freq : float, optional
         Frequency cut-off for both the estimation of noise level and the
         optional smoothing, specified as a fraction of sampling frequency. By
@@ -311,7 +366,7 @@ def update_temporal(
         By default `None`.
     med_wd : int, optional
         Window size for the median filter used for baseline correction. For each
-        cell, the baseline flurescence is estimated by median-filtering the
+        cell, the baseline fluorescence is estimated by median-filtering the
         temporal activity. Then the baseline is subtracted from the temporal
         activity right before the optimization step. If `None` then no baseline
         correction will be performed. By default `None`.
@@ -328,7 +383,7 @@ def update_temporal(
         only. By default `True`.
     normalize : bool, optional
         Whether to normalize `YrA` for each cell to unit sum such that sparse
-        penalty has simlar effect for all the cells. Each group of cell will be
+        penalty has similar effect for all the cells. Each group of cell will be
         normalized together (with mean of the sum for each cell) to preserve
         relative amplitude of fluorescence between overlapping cells. By default
         `True`.
@@ -395,7 +450,7 @@ def update_temporal(
         & & \\mathbf{c} \\geq 0, \\; \\mathbf{G} \\mathbf{c} \\geq 0
         \\end{aligned}
 
-    Where :math:`\\mathbf{y}` is the estimated residule trace (`YrA`) for the
+    Where :math:`\\mathbf{y}` is the estimated residual trace (`YrA`) for the
     cell, :math:`\\mathbf{c}` is the calcium dynamic of the cell,
     :math:`\\mathbf{G}` is a "frame"x"frame" matrix constructed from the
     estimated AR coefficients of cell, such that the deconvolved spikes of the
@@ -412,23 +467,28 @@ def update_temporal(
     """
     intpath = os.environ["MINIAN_INTERMEDIATE"]
     if YrA is None:
+        if Y is None or b is None or f is None:
+            raise TypeError("Y, b, and f are required when YrA is None")
         YrA = compute_trace(Y, A, b, C, f).persist()
     Ymask = (YrA > 0).any("frame").compute()
     A, C, YrA = A.sel(unit_id=Ymask), C.sel(unit_id=Ymask), YrA.sel(unit_id=Ymask)
-    log.info("grouping overlaping units")
+    log.info("grouping overlapping units")
     A_sps = (A.data.map_blocks(sparse.COO) > 0).compute().astype(np.float32)
     A_inter = sparse.tensordot(A_sps, A_sps, axes=[(1, 2), (1, 2)])
     A_usum = np.tile(A_sps.sum(axis=(1, 2)).todense(), (A_sps.shape[0], 1))
     A_usum = A_usum + A_usum.T
-    jac = scipy.sparse.csc_matrix(A_inter / (A_usum - A_inter) > jac_thres)
+    # pydata sparse COO does not auto-convert in scipy.sparse.csc_matrix(...).
+    jac_cmp = (A_inter / (A_usum - A_inter)) > jac_thres
+    jac = scipy.sparse.csc_matrix(np.asarray(jac_cmp.todense(), dtype=bool))
     unit_labels = label_connected(jac)
     YrA = YrA.assign_coords(unit_labels=("unit_id", unit_labels))
     log.info("updating temporal components")
-    c_ls = []
-    s_ls = []
-    b_ls = []
-    c0_ls = []
-    g_ls = []
+    _sched = _default_distributed_scheduler()
+    c_ls: list[Any] = []
+    s_ls: list[Any] = []
+    b_ls: list[Any] = []
+    c0_ls: list[Any] = []
+    g_ls: list[Any] = []
     uid_ls = []
     grp_dim = "unit_labels"
     C = C.assign_coords(unit_labels=("unit_id", unit_labels))
@@ -438,118 +498,105 @@ def update_temporal(
         custom_delay_optimize,
         inline_patterns=["getitem", "rechunk-merge"],
     )
-    for cur_YrA, cur_C in zip(YrA.groupby(grp_dim), C.groupby(grp_dim)):
-        uid_ls.append(cur_YrA[1].coords["unit_id"].values.reshape(-1))
-        cur_YrA, cur_C = cur_YrA[1].data.rechunk(-1), cur_C[1].data.rechunk(-1)
+    _tb_kw = dict(
+        noise_freq=noise_freq,
+        p=p,
+        add_lag=add_lag,
+        normalize=normalize,
+        concurrent=concurrent_update,
+        use_smooth=use_smooth,
+        bseg=bseg,
+        med_wd=med_wd,
+        sparse_penal=sparse_penal,
+        max_iters=max_iters,
+        scs_fallback=scs_fallback,
+        zero_thres=zero_thres,
+    )
+    for cur_yra_g, cur_c_g in zip(YrA.groupby(grp_dim), C.groupby(grp_dim)):
+        uid_ls.append(cur_yra_g[1].coords["unit_id"].values.reshape(-1))
+        cur_yra_da = cur_yra_g[1].data.rechunk(-1)
+        cur_c_da: Optional[darr.Array] = cur_c_g[1].data.rechunk(-1)
         # peak memory demand for cvxpy is roughly 500 times input
-        mem_cvx = cur_YrA.nbytes if concurrent_update else cur_YrA[0].nbytes
+        mem_cvx = cur_yra_da.nbytes if concurrent_update else cur_yra_da[0].nbytes
         mem_cvx = mem_cvx * 500
-        mem_demand = max(mem_cvx, cur_YrA.nbytes * 5) / 1e6
+        mem_demand = max(mem_cvx, cur_yra_da.nbytes * 5) / 1e6
         # issue a warning if expected memory demand is larger than 1G
         if mem_demand > 1e3:
             warnings.warn(
-                "{} cells will be updated togeter, "
+                "{} cells will be updated together, "
                 "which takes roughly {} MB of memory. "
                 "Consider merging the units "
-                "or changing jac_thres".format(cur_YrA.shape[0], mem_demand)
+                "or changing jac_thres".format(cur_yra_da.shape[0], mem_demand)
             )
         if not warm_start:
-            cur_C = None
-        if cur_YrA.shape[0] > 1:
+            cur_c_da = None
+        dl_opt: Any
+        if cur_yra_da.shape[0] > 1:
             dl_opt = inline_opt
         else:
             dl_opt = custom_delay_optimize
-        # explicitly using delay (rather than gufunc) seem to promote the
+        # ``update_temporal_block`` expects NumPy; materialize before ``delayed``.
+        cur_YrA_np, cur_C_np = _materialize_group_y_c(cur_yra_da, cur_c_da, _sched)
+        # explicitly using delay (rather than ufunc) seem to promote the
         # depth-first behavior of dask
         with da.config.set(delayed_optimize=dl_opt):
             res = da.optimize(
-                da.delayed(update_temporal_block)(
-                    cur_YrA,
-                    noise_freq=noise_freq,
-                    p=p,
-                    add_lag=add_lag,
-                    normalize=normalize,
-                    concurrent=concurrent_update,
-                    use_smooth=use_smooth,
-                    c_last=cur_C,
-                    bseg=bseg,
-                    med_wd=med_wd,
-                    sparse_penal=sparse_penal,
-                    max_iters=max_iters,
-                    scs_fallback=scs_fallback,
-                    zero_thres=zero_thres,
-                )
+                da.delayed(update_temporal_block)(cur_YrA_np, **_tb_kw, c_last=cur_C_np)
             )[0]
-        c_ls.append(darr.from_delayed(res[0], shape=cur_YrA.shape, dtype=cur_YrA.dtype))
-        s_ls.append(darr.from_delayed(res[1], shape=cur_YrA.shape, dtype=cur_YrA.dtype))
-        b_ls.append(darr.from_delayed(res[2], shape=cur_YrA.shape, dtype=cur_YrA.dtype))
-        c0_ls.append(
-            darr.from_delayed(res[3], shape=cur_YrA.shape, dtype=cur_YrA.dtype)
-        )
-        g_ls.append(
-            darr.from_delayed(res[4], shape=(cur_YrA.shape[0], p), dtype=cur_YrA.dtype)
+        _append_temporal_delayed_lists(
+            c_ls, s_ls, b_ls, c0_ls, g_ls, res, cur_YrA_np, p
         )
     uids_new = np.concatenate(uid_ls)
-    C_new = xr.DataArray(
-        darr.concatenate(c_ls, axis=0),
-        dims=["unit_id", "frame"],
-        coords={
-            "unit_id": uids_new,
-            "frame": YrA.coords["frame"],
-        },
-        name="C_new",
+    n_groups = len(c_ls)
+    if n_groups == 0:
+        raise ValueError("update_temporal: no label groups (empty c_ls)")
+    # Avoid ``darr.concatenate`` + ``persist`` here: current Dask builds a graph that
+    # often loses valid deps (``Missing dependency`` / ``FutureCancelledError`` on
+    # ``load`` / ``to_zarr``). Compute each group's five ``from_delayed`` slices in one
+    # ``da.compute`` per group (five ``from_delayed`` arrays share one
+    # ``update_temporal_block``). A single ``da.compute`` over all groups merges
+    # hundreds of graphs and can blow worker memory / lose deps; one group at a time
+    # is slower but stable.
+    c_parts = []
+    s_parts = []
+    b0_parts = []
+    c0_parts = []
+    g_parts = []
+    log.info(
+        "update_temporal: computing %d label groups sequentially (5 outputs per group)",
+        n_groups,
     )
-    S_new = xr.DataArray(
-        darr.concatenate(s_ls, axis=0),
-        dims=["unit_id", "frame"],
-        coords={
-            "unit_id": uids_new,
-            "frame": YrA.coords["frame"].values,
-        },
-        name="S_new",
-    )
-    b0_new = xr.DataArray(
-        darr.concatenate(b_ls, axis=0),
-        dims=["unit_id", "frame"],
-        coords={
-            "unit_id": uids_new,
-            "frame": YrA.coords["frame"].values,
-        },
-        name="b0_new",
-    )
-    c0_new = xr.DataArray(
-        darr.concatenate(c0_ls, axis=0),
-        dims=["unit_id", "frame"],
-        coords={
-            "unit_id": uids_new,
-            "frame": YrA.coords["frame"].values,
-        },
-        name="c0_new",
-    )
-    g = xr.DataArray(
-        darr.concatenate(g_ls, axis=0),
-        dims=["unit_id", "lag"],
-        coords={"unit_id": uids_new, "lag": np.arange(p)},
-        name="g",
-    )
-    arr_opt = fct.partial(custom_arr_optimize, keep_patterns=["^update_temporal_block"])
-    with da.config.set(array_optimize=arr_opt):
-        da.compute(
-            [
-                save_minian(
-                    var.chunk({"unit_id": 1}), intpath, compute=False, overwrite=True
-                )
-                for var in [C_new, S_new, b0_new, c0_new, g]
-            ]
+    for i in range(n_groups):
+        c_g, s_g, b_g, c0_g, g_g = _compute_five_from_delayed(
+            _sched, c_ls[i], s_ls[i], b_ls[i], c0_ls[i], g_ls[i]
         )
-    int_ds = open_minian(intpath, return_dict=True)
-    C_new, S_new, b0_new, c0_new, g = (
-        int_ds["C_new"],
-        int_ds["S_new"],
-        int_ds["b0_new"],
-        int_ds["c0_new"],
-        int_ds["g"],
+        c_parts.append(c_g)
+        s_parts.append(s_g)
+        b0_parts.append(b_g)
+        c0_parts.append(c0_g)
+        g_parts.append(g_g)
+    c_np, s_np, b0_np, c0_np, g_np = (
+        np.concatenate(pl, axis=0)
+        for pl in (c_parts, s_parts, b0_parts, c0_parts, g_parts)
     )
+    frame_vals = YrA.coords["frame"].values
+    temporal_out = [
+        _xr_ut_frame("C_new", c_np, uids_new, YrA.coords["frame"]),
+        _xr_ut_frame("S_new", s_np, uids_new, frame_vals),
+        _xr_ut_frame("b0_new", b0_np, uids_new, frame_vals),
+        _xr_ut_frame("c0_new", c0_np, uids_new, frame_vals),
+        _xr_ut_lag_g(g_np, uids_new, p),
+    ]
+    for var_done in temporal_out:
+        log.info("update_temporal: writing %r to zarr", var_done.name)
+        save_minian(
+            var_done,
+            intpath,
+            compute=True,
+            overwrite=True,
+        )
+    # Same arrays as ``temporal_out`` (already on disk via ``save_minian``).
+    C_new, S_new, b0_new, c0_new, g = temporal_out
     mask = (S_new.sum("frame") > 0).compute()
     log.info("{} out of {} units dropped".format((~mask).sum().values, len(Ymask)))
     C_new, S_new, b0_new, c0_new, g = (
@@ -560,11 +607,20 @@ def update_temporal(
         g[mask],
     )
     sig_new = C_new + b0_new + c0_new
-    sig_new = da.optimize(sig_new)[0]
+    if getattr(sig_new.data, "chunks", None):
+        sig_new = da.optimize(sig_new)[0]
     YrA_new = YrA.sel(unit_id=mask)
     if post_scal and len(sig_new) > 0:
         log.info("post-hoc scaling")
-        scal = lstsq_vec(sig_new.data, YrA_new.data).compute().reshape((-1, 1))
+        sig_d, yr_d = sig_new.data, YrA_new.data
+        if (
+            getattr(sig_d, "chunks", None) is not None
+            or getattr(yr_d, "chunks", None) is not None
+        ):
+            sig_np, yr_np = darr.compute(sig_d, yr_d)
+        else:
+            sig_np, yr_np = np.asarray(sig_d), np.asarray(yr_d)
+        scal = lstsq_vec(sig_np, yr_np).reshape((-1, 1))
         C_new, S_new, b0_new, c0_new = (
             C_new * scal,
             S_new * scal,
@@ -578,7 +634,7 @@ def compute_AtC(A: xr.DataArray, C: xr.DataArray) -> xr.DataArray:
     """
     Compute the outer product of spatial and temporal components.
 
-    This funtion computes the outer product of spatial and temporal components.
+    This function computes the outer product of spatial and temporal components.
     The result is a 3d array representing the movie data as estimated by the
     spatial and temporal components.
 
@@ -630,11 +686,11 @@ def update_background(
     A movie representation (with dimensions "height" "width" and "frame") of
     estimated cell activities are computed as the product between the spatial
     components matrix and the temporal components matrix of cells over the
-    "unit_id" dimension. Then the residule movie is computed by subtracting the
+    "unit_id" dimension. Then the residual movie is computed by subtracting the
     estimated cell activity movie from the input movie. Then the spatial
-    footprint of background `b` is the mean of the residule movie over "frame"
+    footprint of background `b` is the mean of the residual movie over "frame"
     dimension, and the temporal component of background `f` is the least-square
-    solution between the residule movie and the spatial footprint `b`.
+    solution between the residual movie and the spatial footprint `b`.
 
     Parameters
     ----------
@@ -665,7 +721,13 @@ def update_background(
     Yb = (Y - AtC).clip(0)
     Yb = save_minian(Yb.rename("Yb"), intpath, overwrite=True)
     if b is None:
-        b_new = Yb.mean("frame").persist()
+        # Mean over ``frame`` is a full pass over ``Yb``; ``persist()`` on a cluster
+        # schedules ``mean_chunk`` on workers (often OOM) while the result is only
+        # (height, width). Compute on the client thread pool so the result is small,
+        # numpy-backed, and safe for later ``.compute()`` / plotting with a Client.
+        log.info("update_background: materializing mean(Yb, frame) on client (threads)")
+        with da.config.set(scheduler="threads"):
+            b_new = Yb.mean("frame").load()
     else:
         b_new = b.persist()
     b_stk = (
@@ -678,5 +740,11 @@ def update_background(
     f_new = darr.linalg.lstsq(b_stk.data, Yb_stk.data)[0]
     f_new = xr.DataArray(
         f_new.squeeze(), dims=["frame"], coords={"frame": Yb.coords["frame"]}
-    ).persist()
+    )
+    # Do not ``persist()`` here: the graph still pulls ``Yb`` from zarr via workers,
+    # and plotting later uses ``scheduler=threads`` in ``materialize_local``, which
+    # then clashes with Distributed keys (Missing dependency) or OOM on ``from-zarr``.
+    log.info("update_background: materializing f_new on client (threads)")
+    with da.config.set(scheduler="threads"):
+        f_new = f_new.load()
     return b_new, f_new

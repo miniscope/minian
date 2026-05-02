@@ -14,7 +14,7 @@ from scipy.spatial import cKDTree
 log = logging.getLogger(__name__)
 
 
-def construct_G(g: np.ndarray, T: np.ndarray) -> np.ndarray:
+def construct_G(g: np.ndarray, T: int) -> np.ndarray:
     """
     Construct a convolving matrix from AR coefficients.
 
@@ -22,7 +22,7 @@ def construct_G(g: np.ndarray, T: np.ndarray) -> np.ndarray:
     ----------
     g : np.ndarray
         Input AR coefficients.
-    T : np.ndarray
+    T : int
         Number of time samples of the AR process.
 
     Returns

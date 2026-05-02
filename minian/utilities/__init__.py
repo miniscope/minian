@@ -24,6 +24,7 @@ from .dask_graph import (
     split_key,
     unique_keys,
 )
+from .local_compute import materialize_local
 from .datasets import (
     load_avi_lazy,
     load_avi_lazy_framewise,
@@ -62,6 +63,7 @@ __all__ = (
     "load_tif_lazy",
     "load_tif_perframe",
     "load_videos",
+    "materialize_local",
     "med_baseline",
     "open_minian",
     "open_minian_mf",

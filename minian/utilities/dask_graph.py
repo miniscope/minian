@@ -3,7 +3,8 @@
 import _operator
 import functools as fct
 import re
-from typing import List, Optional, Union
+from collections.abc import Callable, Mapping
+from typing import Any, List, Optional, Union, cast
 
 import dask.array as darr
 import numpy as np
@@ -12,7 +13,6 @@ from dask.core import flatten
 from dask.optimization import cull, fuse, inline, inline_functions
 from dask.utils import ensure_dict
 from distributed.diagnostics.plugin import SchedulerPlugin
-from distributed.scheduler import SchedulerState, cast
 
 ANNOTATIONS = {
     "from-zarr-store": {"resources": {"MEM": 1}},
@@ -72,20 +72,44 @@ class TaskAnnotation(SchedulerPlugin):
         super().__init__()
         self.annt_dict = ANNOTATIONS
 
-    def update_graph(self, scheduler, client, tasks, **kwargs):
-        parent = cast(SchedulerState, scheduler)
-        for tk in tasks.keys():
+    def update_graph(self, scheduler, client=None, tasks=None, **kwargs):
+        # distributed >= 2024.x passes ``tasks`` as list[Key]; older versions used a dict.
+        if tasks is None:
+            return
+        # Task map is ``.tasks`` on current SchedulerState; older builds used ``._tasks``.
+        task_table = getattr(scheduler, "tasks", None) or getattr(
+            scheduler, "_tasks", None
+        )
+        if not task_table:
+            return
+        task_keys = list(tasks.keys()) if isinstance(tasks, Mapping) else list(tasks)
+        for tk in task_keys:
             for pattern, annt in self.annt_dict.items():
-                if re.search(pattern, tk):
-                    ts = parent._tasks.get(tk)
+                if re.search(pattern, str(tk)):
+                    ts = task_table.get(tk)
+                    if ts is None:
+                        continue
                     res = annt.get("resources", None)
                     if res:
-                        ts._resource_restrictions = res
+                        # distributed TaskState: public ``resource_restrictions``; older
+                        # builds used ``_resource_restrictions``.
+                        if hasattr(ts, "resource_restrictions"):
+                            ts.resource_restrictions = dict(res)
+                        else:
+                            ts._resource_restrictions = res  # type: ignore[attr-defined]
                     pri = annt.get("priority", None)
                     if pri:
-                        pri_org = list(ts._priority)
-                        pri_org[0] = -pri
-                        ts._priority = tuple(pri_org)
+                        cur = getattr(ts, "priority", None)
+                        if cur is None:
+                            cur = getattr(ts, "_priority", None)
+                        if cur is not None:
+                            pri_org = list(cur)
+                            pri_org[0] = -pri
+                            new_pri = tuple(pri_org)
+                            if hasattr(ts, "priority"):
+                                ts.priority = new_pri
+                            else:
+                                ts._priority = new_pri  # type: ignore[attr-defined]
 
 
 def custom_arr_optimize(
@@ -132,10 +156,15 @@ def custom_arr_optimize(
     """
     # inlining lots of array operations ref:
     # https://github.com/dask/dask/issues/6668
+    # Dask may pass extra args; fused renamer returns ``str`` or ``tuple`` (tuple keys).
+    _FusedKeyRenamer = Callable[..., Union[str, tuple[Any, ...]]]
     if rename_dict:
-        key_renamer = fct.partial(custom_fused_keys_renamer, rename_dict=rename_dict)
+        key_renamer = cast(
+            _FusedKeyRenamer,
+            fct.partial(custom_fused_keys_renamer, rename_dict=rename_dict),
+        )
     else:
-        key_renamer = custom_fused_keys_renamer
+        key_renamer = cast(_FusedKeyRenamer, custom_fused_keys_renamer)
     keep_keys = []
     if keep_patterns:
         key_ls = list(dsk.keys())
@@ -160,7 +189,7 @@ def custom_arr_optimize(
     return dsk
 
 
-def rewrite_key(key: Union[str, tuple], rwdict: dict) -> str:
+def rewrite_key(key: Union[str, tuple], rwdict: dict) -> Union[str, tuple[Any, ...]]:
     """
     Rewrite a task key according to `rwdict`.
 
@@ -174,8 +203,8 @@ def rewrite_key(key: Union[str, tuple], rwdict: dict) -> str:
 
     Returns
     -------
-    key : str
-        The new key.
+    key : str or tuple
+        The new key (tuple preserved when the input key was a tuple).
 
     Raises
     ------
@@ -200,10 +229,12 @@ def rewrite_key(key: Union[str, tuple], rwdict: dict) -> str:
 
 
 def custom_fused_keys_renamer(
-    keys: list, max_fused_key_length=120, rename_dict: Optional[dict] = None
-) -> str:
+    keys: list,
+    max_fused_key_length: Any = 120,
+    rename_dict: Optional[dict] = None,
+) -> Union[str, tuple[Any, ...]]:
     """
-    Custom implmentation to create new keys for `fuse` tasks.
+    Custom implementation to create new keys for `fuse` tasks.
 
     Uses custom `split_key` implementation.
 
@@ -219,8 +250,8 @@ def custom_fused_keys_renamer(
 
     Returns
     -------
-    fused_key : str
-        The fused task key.
+    fused_key : str or tuple
+        The fused task key (tuple when the leading fused key was a tuple).
 
     See Also
     -------
@@ -234,28 +265,32 @@ def custom_fused_keys_renamer(
     if max_fused_key_length:  # Take into account size of hash suffix
         max_fused_key_length -= 5
 
-    def _enforce_max_key_limit(key_name):
+    def _enforce_max_key_limit(key_name: str) -> str:
         if max_fused_key_length and len(key_name) > max_fused_key_length:
             name_hash = f"{hash(key_name):x}"[:4]
             key_name = f"{key_name[:max_fused_key_length]}-{name_hash}"
         return key_name
 
     if typ is str:
-        first_name = split_key(first_key, rename_dict=rename_dict)
-        names = {split_key(k, rename_dict=rename_dict) for k in it}
-        names.discard(first_name)
-        names = sorted(names)
-        names.append(first_key)
-        concatenated_name = "-".join(names)
-        return _enforce_max_key_limit(concatenated_name)
+        fuse_label = first_key
     elif typ is tuple and len(first_key) > 0 and isinstance(first_key[0], str):
-        first_name = split_key(first_key, rename_dict=rename_dict)
-        names = {split_key(k, rename_dict=rename_dict) for k in it}
-        names.discard(first_name)
-        names = sorted(names)
-        names.append(first_key[0])
-        concatenated_name = "-".join(names)
-        return (_enforce_max_key_limit(concatenated_name),) + first_key[1:]
+        fuse_label = first_key[0]
+    else:
+        raise ValueError(
+            "custom_fused_keys_renamer: first key must be str or non-empty tuple "
+            f"with str head, got {typ!r}: {first_key!r}"
+        )
+
+    first_name = split_key(first_key, rename_dict=rename_dict)
+    name_set = {split_key(k, rename_dict=rename_dict) for k in it}
+    name_set.discard(first_name)
+    names_sorted = sorted(name_set)
+    names_sorted.append(fuse_label)
+    concatenated = "-".join(names_sorted)
+    limited = _enforce_max_key_limit(concatenated)
+    if typ is str:
+        return limited
+    return (limited,) + first_key[1:]
 
 
 def split_key(key: Union[tuple, str], rename_dict: Optional[dict] = None) -> str:
@@ -276,9 +311,16 @@ def split_key(key: Union[tuple, str], rename_dict: Optional[dict] = None) -> str
     new_key : str
         New key.
     """
-    if type(key) is tuple:
-        key = key[0]
-    kls = key.split("-")
+    if isinstance(key, tuple):
+        head = key[0]
+        if not isinstance(head, str):
+            raise ValueError("split_key: tuple keys must have str as first element")
+        sk = head
+    elif isinstance(key, str):
+        sk = key
+    else:
+        raise ValueError(f"split_key: key must be str or tuple, got {type(key)!r}")
+    kls = sk.split("-")
     if rename_dict:
         kls = list(map(lambda k: rename_dict.get(k, k), kls))
     kls_ft = list(filter(lambda k: k in ANNOTATIONS.keys(), kls))
@@ -304,10 +346,10 @@ def check_key(key: Union[str, tuple], pat: str) -> bool:
     bool
         Whether `key` contains pattern.
     """
-    try:
-        return bool(re.search(pat, key))
-    except TypeError:
-        return bool(re.search(pat, key[0]))
+    skey = key[0] if isinstance(key, tuple) else key
+    if not isinstance(skey, str):
+        return False
+    return bool(re.search(pat, skey))
 
 
 def check_pat(key: Union[str, tuple], pat_ls: List[str]) -> bool:
