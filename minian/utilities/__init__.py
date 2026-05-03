@@ -24,6 +24,7 @@ from .dask_graph import (
     split_key,
     unique_keys,
 )
+from .ffmpeg_util import FFmpegUnavailableError, ensure_ffmpeg
 from .datasets import (
     load_avi_ffmpeg,
     load_avi_lazy,
@@ -49,6 +50,7 @@ from .logger import (
 )
 
 __all__ = (
+    "FFmpegUnavailableError",
     "ANNOTATIONS",
     "FAST_FUNCTIONS",
     "TaskAnnotation",
@@ -58,6 +60,7 @@ __all__ = (
     "custom_arr_optimize",
     "custom_delay_optimize",
     "custom_fused_keys_renamer",
+    "ensure_ffmpeg",
     "factors",
     "format_wall_duration",
     "get_chk",

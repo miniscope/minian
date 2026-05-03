@@ -51,8 +51,10 @@ def test_get_minian_intermediate_path(
     assert get_minian_intermediate_path() == os.path.join(
         str(tmp_path), MINIAN_INTERMEDIATE
     )
-    got = get_minian_intermediate_path("/tmp")
-    assert got == os.path.join("/tmp", MINIAN_INTERMEDIATE)
+    parent = os.path.join(tmp_path, "session_root")
+    os.makedirs(parent, exist_ok=True)
+    got = get_minian_intermediate_path(parent)
+    assert got == os.path.join(os.path.abspath(parent), MINIAN_INTERMEDIATE)
 
 
 def test_resolve_n_workers_invalid_env_fallback(

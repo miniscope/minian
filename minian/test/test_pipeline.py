@@ -7,6 +7,7 @@ Includes tiny :mod:`dask.array` smoke tests and optional ``demo_movies`` loads
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,7 @@ from minian.pipelines.cnmf_process import (
     main,
     parse_pipeline_argv,
 )
-from minian.utilities import load_videos
+from minian.utilities import ensure_ffmpeg, load_videos
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEMO_MOVIES = _REPO_ROOT / "demo_movies"
@@ -159,3 +160,9 @@ def test_load_videos_demo_movies_rechunk_first_frame() -> None:
         one = rch.isel(frame=0)
         s = int(one.sum().compute())
     assert s > 0
+
+
+def test_ensure_ffmpeg_smoke() -> None:
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("ffmpeg and ffprobe required on PATH for video tests")
+    ensure_ffmpeg()

@@ -15,6 +15,7 @@ import xarray as xr
 from ..cnmf import compute_AtC
 from ..constants import MINIAN
 from .._ffmpeg_constants import H264, RawGray, Uint8, VideoExport
+from ..utilities.ffmpeg_util import ensure_ffmpeg
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ def _stats_chunked_for_reduce(arr: xr.DataArray) -> xr.DataArray:
 
 
 def write_vid_blk(arr, vpath, options):
+    ensure_ffmpeg()
     uid = uuid4()
     vname = "{}.mp4".format(uid)
     fpath = os.path.join(vpath, vname)
@@ -88,6 +90,7 @@ def write_video(
     --------
     ffmpeg.output
     """
+    ensure_ffmpeg()
     if not vname:
         vname = "{}.mp4".format(uuid4())
     vdir = "." if vpath is None else vpath
@@ -133,6 +136,7 @@ def write_video(
 
 
 def concat_video_recursive(vlist, vname=None):
+    ensure_ffmpeg()
     if not len(vlist) > 1:
         return vlist[0]
     if len(vlist) > VideoExport.CONCAT_LIST_CHUNK:

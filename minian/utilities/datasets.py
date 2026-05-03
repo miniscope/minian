@@ -33,6 +33,7 @@ from tifffile import TiffFile, imread
 from .._ffmpeg_constants import RawGray
 from ..constants import MINIAN
 from .dask_graph import custom_arr_optimize
+from .ffmpeg_util import ensure_ffmpeg
 
 log = logging.getLogger(__name__)
 
@@ -357,6 +358,7 @@ def load_videos(
 
     file_extension = os.path.splitext(vlist[0])[1]
     if file_extension in (".avi", ".mkv"):
+        ensure_ffmpeg()
         movie_load_func = load_avi_lazy
     elif file_extension == ".tif":
         movie_load_func = load_tif_lazy
@@ -471,6 +473,7 @@ def load_avi_lazy(fname: str) -> DaskArray:
     arr : darr.array
         The array representation of the video.
     """
+    ensure_ffmpeg()
     probe = ffmpeg.probe(fname)
     video_info = next(s for s in probe["streams"] if s["codec_type"] == "video")
     w = int(video_info["width"])
@@ -504,6 +507,7 @@ def load_avi_ffmpeg(fname: str, h: int, w: int, f: int) -> np.ndarray:
     arr : np.ndarray
         The resulting array. Has shape (`f`, `h`, `w`).
     """
+    ensure_ffmpeg()
     out_bytes, err = (
         ffmpeg.input(fname)
         .video.output(RawGray.PIPE, format=RawGray.FORMAT, pix_fmt=RawGray.PIX_FMT)

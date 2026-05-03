@@ -46,6 +46,7 @@ from minian.preprocessing import denoise, remove_background
 from minian.utilities import (
     TaskAnnotation,
     configure_logging,
+    ensure_ffmpeg,
     get_optimal_chk,
     load_videos,
     save_minian,
@@ -268,6 +269,7 @@ def run_pipeline(
 ) -> None:
     """Execute the demo CNMF pipeline on ``data_dir`` (absolute or relative path)."""
     configure_logging(os.getenv("MINIAN_LOG_LEVEL", "INFO"), force=True)
+    ensure_ffmpeg()
     t_pipeline_total = time.perf_counter()
 
     dpath = os.path.abspath(data_dir)
