@@ -9,10 +9,20 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from minian.pipelines.cross_reg import run_cross_reg
+from minian.pipelines.cross_reg import parse_cross_reg_argv, run_cross_reg
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEMO_DATA = _REPO_ROOT / "demo_data"
+
+
+def test_parse_cross_reg_argv_defaults() -> None:
+    args = parse_cross_reg_argv([])
+    assert args.data == "."
+
+
+def test_parse_cross_reg_argv_data_override() -> None:
+    args = parse_cross_reg_argv(["--data", "/tmp/cross_reg_data"])
+    assert args.data == "/tmp/cross_reg_data"
 
 
 @pytest.fixture

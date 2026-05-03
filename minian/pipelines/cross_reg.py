@@ -1,13 +1,15 @@
 """Headless cross-registration across sessions (Dask progress + wall timers).
 
-Run as ``python -m minian.pipelines.cross_reg`` or the ``minian-cross-reg`` console script.
+Run as ``python -m minian.pipelines.cross_reg`` or ``minian-cross-reg`` (``-d`` / ``--data`` defaults to ``.``).
 """
 
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import time
+from typing import List, Optional
 
 import xarray as xr
 from dask.diagnostics import ProgressBar
@@ -39,11 +41,33 @@ def set_window(wnd):
     return wnd == wnd.min()
 
 
-def main() -> None:
+def parse_cross_reg_argv(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    """CLI for :func:`run_cross_reg` (``argv`` defaults to ``sys.argv[1:]`` when ``None``)."""
+    ap = argparse.ArgumentParser(
+        description=(
+            "Cross-register Minian outputs across sessions (writes mappings.pkl, "
+            "cents.pkl, shiftds.nc under the data directory)."
+        ),
+    )
+    ap.add_argument(
+        "-d",
+        "--data",
+        default=".",
+        dest="data",
+        help=(
+            "Directory containing session subfolders with minian results (e.g. "
+            'session1/minian.nc). Default: "."'
+        ),
+    )
+    return ap.parse_args(argv)
+
+
+def main(argv: Optional[List[str]] = None) -> None:
     configure_logging(os.getenv("MINIAN_LOG_LEVEL", "INFO"), force=True)
     t_total = time.perf_counter()
 
-    dpath = "./demo_data/"
+    args = parse_cross_reg_argv(argv)
+    dpath = os.path.abspath(args.data)
     f_pattern = r"minian.nc$"
     id_dims = ["session"]
 

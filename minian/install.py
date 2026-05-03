@@ -11,8 +11,8 @@ log = logging.getLogger(__name__)
 
 
 NOTEBOOK_FILES = [
-    "pipeline.ipynb",
-    "cross-registration.ipynb",
+    "notebooks/pipeline.ipynb",
+    "notebooks/cross-registration.ipynb",
     "img/workflow.png",
     "img/param_pnr.png",
     "img/param_spatial_update.png",

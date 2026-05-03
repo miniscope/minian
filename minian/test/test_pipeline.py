@@ -40,7 +40,7 @@ def _demo_movies_or_skip() -> Path:
 
 def test_parse_pipeline_argv_defaults() -> None:
     args = parse_pipeline_argv([])
-    assert args.data == "./demo_movies/"
+    assert args.data == "."
     assert args.config is None
     assert "worker_cpu_ratio" not in vars(args)
 

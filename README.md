@@ -15,6 +15,7 @@ MiniAn is an analysis pipeline and visualization tool inspired by both [CaImAn](
 # Prerequisites
 
 - [uv](https://docs.astral.sh/uv/)
+- [FFmpeg](https://ffmpeg.org/download.html).
 
 # Quick Start Guide
 
@@ -24,7 +25,10 @@ MiniAn is an analysis pipeline and visualization tool inspired by both [CaImAn](
 1. You can set download location with `--dest`, for example:
    - `uv run minian-install --notebooks --dest ./artifacts`
    - `uv run minian-install --demo --dest ./artifacts`
-1. Run notebook flow (current default): `uv run jupyter notebook` then open `pipeline.ipynb`
+1. **Headless pipelines** (after `uv sync`; `-d` / `--data` defaults to the current directory for both CLIs—use e.g. `-d ./demo_movies` for CNMF on the demo AVIs or `-d ./demo_data` for cross-reg on the demo sessions):
+   - CNMF pipeline: `uv run minian-pipeline --help` · `uv run minian-pipeline` or `uv run python -m minian.pipelines.cnmf_process` (legacy: `python -m minian.pipeline`)
+   - Cross-registration: `uv run minian-cross-reg --help` · `uv run minian-cross-reg` or `uv run python -m minian.pipelines.cross_reg`
+1. **Notebook flow**: `uv run jupyter notebook` then open `pipeline.ipynb` (or the path where you installed notebooks with `--dest`).
 
 # Rust extension (`minian.minian_rs`)
 
@@ -45,27 +49,15 @@ Release wheels are built via **`uv build`** (PEP 517 **`maturin`** backend); CI 
 
 MiniAn currently follows this high-level flow:
 
-1. Data I/O + utilities from `minian/utilities.py`.
+1. Data I/O + utilities from the `minian.utilities` package (e.g. `load_videos`, `save_minian`).
 1. Preprocessing from `minian/preprocessing.py`.
 1. Motion correction from `minian/motion_correction.py`.
 1. Seed/initial component setup from `minian/initialization.py`.
 1. CNMF iterations and component updates in `minian/cnmf.py`.
-1. Cross-session registration in `minian/cross_registration.py` (optional stage).
+1. Cross-session registration in `minian/cross_registration.py` (optional stage); runnable drivers live under **`minian/pipelines/`** (`cnmf_process.py`, `cross_reg.py`).
 1. Visualization/UI in the `minian/visualization/` package (HoloViews, Panel, Datashader).
 
 Notebook/asset bootstrap is handled by `minian/install.py` (`minian-install` CLI).
-
-# Cleanup Order (Recommended)
-
-For the Python 3.12+ modernization, work in this order:
-
-1. Stabilize packaging/runtime baseline (`pyproject.toml`, `uv.lock`, CI build).
-1. Split and harden dependencies (core vs `viz` vs `docs`; keep optional features optional).
-1. Keep the HoloViews/Bokeh/Panel stack aligned on supported versions (declared in `pyproject.toml`).
-1. Make notebook workflow optional and promote CLI-first pipeline execution.
-1. Refactor module internals (`preprocessing` -> `motion_correction` -> `initialization` -> `cnmf`) with tests after each step.
-1. Apply targeted performance work (Rust candidates only after profiling confirms bottlenecks).
-1. Final cleanup pass: dead code removal, docs refresh, migration notes.
 
 # Documentation
 

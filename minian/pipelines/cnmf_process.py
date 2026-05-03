@@ -2,7 +2,7 @@
 """Headless minian CNMF process: preprocessing, motion correction, and CNMF (Dask LocalCluster).
 
 Run as ``python -m minian.pipelines.cnmf_process``, ``python -m minian.pipeline``
-(legacy alias), or the ``minian-pipeline`` console script.
+(legacy alias), or the ``minian-pipeline`` console script (``--data`` / ``-d`` default: ``.``).
 """
 
 from __future__ import annotations
@@ -233,8 +233,8 @@ def parse_pipeline_argv(argv: Optional[List[str]] = None) -> argparse.Namespace:
     ap.add_argument(
         "-d",
         "--data",
-        default="./demo_movies/",
-        help="Directory containing demo videos (absolutized). Default: ./demo_movies/",
+        default=".",
+        help='Directory containing input videos (absolutized). Default: "." (current working directory).',
     )
     ap.add_argument(
         "-c",

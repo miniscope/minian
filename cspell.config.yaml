@@ -175,6 +175,7 @@ words:
   - outputdict
   - ovly
   - pathlist
+  - pbar
   - perframe
   - perpx
   - perseed
@@ -243,6 +244,7 @@ words:
   - stackups
   - statsmodels
   - strm
+  - subfolders
   - subg
   - subsetting
   - subviews
