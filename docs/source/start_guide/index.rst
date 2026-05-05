@@ -6,6 +6,7 @@ Getting Started
 
     install
     cli
+    pipeline_config_json
     faq
     changelog
     contribute

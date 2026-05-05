@@ -147,7 +147,7 @@ build_artifacts
 
 # minian intermediate
 minian_intermediate
-minian_config*
+minian_config_effective.json
 
 *.pkl
 shiftds.nc

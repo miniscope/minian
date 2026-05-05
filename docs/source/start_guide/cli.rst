@@ -84,6 +84,8 @@ Downloads notebooks and/or demo assets from GitHub into ``--dest`` (``minian.ins
      -v V                Git repo branch or tag name, default 2.0.0
      --dest DIR, -d DIR  Directory to download into (default: current working directory)
 
+.. _cli-pipeline-env:
+
 Pipeline configuration and environment
 ----------------------------------------
 
@@ -96,4 +98,4 @@ CLI and logging still honor:
 
 The driver registers the configured intermediate directory (under ``--data`` by default) via :meth:`minian.config.PipelineConfig.apply_environment` together with the fields above.
 
-See also :doc:`install`, :doc:`../pipeline/index`, and :doc:`../cross_reg/index`.
+See also :doc:`install`, :doc:`pipeline_config_json`, :doc:`../pipeline/index`, and :doc:`../cross_reg/index`.
