@@ -2,7 +2,7 @@ Contributing to MiniAn
 ======================
 
 We'd love feedback and contribution from the community!
-:ref:`Fork and clone MiniAn from source <start_guide/install:Install from source>`, make you changes and submit a PR!
+:ref:`Fork and clone MiniAn from source <start_guide/install:Install from source>`, make your changes and submit a PR!
 Below are some book-keeping notes.
 
 Commit Messages
@@ -16,9 +16,23 @@ All development should be done on separate branches and squash-merge to `master`
 Code Style
 ----------
 
-MiniAn use the `black coding style <https://black.readthedocs.io/en/stable/the_black_code_style.html>`_.
-We also use a github action to enforce the style.
-So watch out for automatic commits and avoid headache in confilicting history.
+MiniAn follows the `Black code style <https://black.readthedocs.io/en/stable/the_black_code_style.html>`_.
+Formatting is enforced with **`pre-commit`**, which runs Black on ``minian/`` (see ``.pre-commit-config.yaml`` at the repo root). CI runs the same hooks, so pull requests fail if anything under ``minian/`` is not Black-compliant.
+
+**One-time setup** (from a clone, after installing dev dependencies):
+
+.. code-block:: console
+
+    uv sync --group dev
+    uv run pre-commit install
+
+That registers Git hooks so Black runs on staged files when you commit. To format or re-check the whole tree without committing:
+
+.. code-block:: console
+
+    uv run pre-commit run --all-files
+
+If you use `mise <https://mise.jdx.dev/>`_ with this repository, ``mise run format`` runs the same ``pre-commit`` invocation across the repo.
 
 Creating release
 ----------------
@@ -59,9 +73,19 @@ To build documentation locally run the following commands:
 
 .. code-block:: console
 
-    pip install -r requirements/requirements-doc.txt
-    cd docs
-    make html
+    uv sync --group dev --extra docs
+    uv run sphinx-build -M html docs/source docs/build
+
+Alternatively, ``cd docs && make html`` after the same ``uv sync`` (it invokes Sphinx with this repo's ``Makefile``).
+
+Read the Docs installs ``requirements/requirements-base.txt`` then ``requirements/requirements-doc.txt`` (see ``.readthedocs.yaml``). Those files are **generated** from ``pyproject.toml`` / ``uv.lock``; after changing dependencies, regenerate them from the repository root:
+
+.. code-block:: console
+
+    uv export --format requirements.txt --no-dev --no-annotate --no-header -o requirements/requirements-base.txt
+    uv export --format requirements.txt --no-dev --extra docs --no-emit-project --no-annotate --no-header -o requirements/requirements-doc.txt
+
+Each command refreshes ``uv.lock`` unless you pass ``--frozen``. The same two lines are wrapped as ``mise run export-reqs-base`` and ``mise run export-reqs-doc`` in ``.mise.toml``. Commit the updated ``requirements/*.txt`` (and ``uv.lock`` if it changed).
 
 This however does not include the auto-generated pages for `pipeline.ipynb` and `cross-registration.ipynb`.
 To include those, create a folder `docs/source/artifact`.

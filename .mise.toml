@@ -1,0 +1,27 @@
+[tools]
+python = "3.12"
+rust = "1.95.0"
+
+[tasks.rs-dev]
+description = "Rebuild and install minian_rs into the current env (maturin develop)"
+run = "uv run maturin develop --manifest-path src-rust/Cargo.toml"
+
+[tasks.lock-upgrade-sync]
+description = "Bump uv.lock to latest compatible versions, then uv sync (dev + docs)"
+run = "uv lock --upgrade && uv sync --group dev --extra docs"
+
+[tasks.mypy]
+description = "Type-check Python with mypy ([tool.mypy] in pyproject.toml)"
+run = "uv run mypy minian"
+
+[tasks.format]
+description = "Run pre-commit (Black on minian/) — needs: uv sync --group dev"
+run = "uv run pre-commit run --all-files"
+
+[tasks.export-reqs-base]
+description = "Refresh uv.lock and export runtime deps to requirements/requirements-base.txt"
+run = "uv export --format requirements.txt --no-dev --no-annotate --no-header -o requirements/requirements-base.txt"
+
+[tasks.export-reqs-doc]
+description = "Refresh uv.lock and export [project.optional-dependencies].docs closure (no root package) to requirements/requirements-doc.txt"
+run = "uv export --format requirements.txt --no-dev --extra docs --no-emit-project --no-annotate --no-header -o requirements/requirements-doc.txt"

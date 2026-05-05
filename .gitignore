@@ -110,6 +110,19 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Python tooling
+.nox/
+.ruff_cache/
+.pyre/
+.pytype/
+__pypackages__/
+
+# uv
+.uv/
+uv.lock
 
 # minian results
 demo_movies/minian
@@ -134,3 +147,43 @@ build_artifacts
 
 # minian intermediate
 minian_intermediate
+minian_config_effective.json
+
+*.pkl
+shiftds.nc
+
+# Rust
+**/target/
+*.rs.bk
+
+### macOS ###
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Icon must end with two \r
+Icon
+
+# Thumbnails
+._*
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+### macOS Patch ###
+# iCloud generated files
+*.icloud

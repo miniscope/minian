@@ -1,0 +1,1047 @@
+"""Video loaders, persisted Minian datasets, concat helpers, metadata updates."""
+
+import functools as fct
+import logging
+import math
+import os
+import re
+import shutil
+import warnings
+from collections.abc import Hashable, Mapping
+from copy import deepcopy
+from os import listdir
+from os.path import isdir, isfile
+from os.path import join as pjoin
+from pathlib import Path
+from typing import Any, Callable, List, Literal, Optional, Tuple, Union, cast
+from uuid import uuid4
+
+import cv2
+import dask as da
+import dask.array as darr
+import ffmpeg
+import numpy as np
+import pandas as pd
+import rechunker
+import xarray as xr
+import zarr as zr
+from dask.array.core import Array as DaskArray
+from dask.delayed import optimize as default_delay_optimize
+from natsort import natsorted
+from tifffile import TiffFile, imread
+
+from ..constants import MINIAN, RawGray
+from .dask_graph import custom_arr_optimize
+from .ffmpeg_util import ensure_ffmpeg
+
+log = logging.getLogger(__name__)
+
+# Arrays this size or smaller are loaded into memory before zarr write when
+# ``compute=True``, so workers never execute graphs that only produce a tiny
+# on-disk array but still depend on large zarr-backed movies (e.g. ``motion``).
+_SAVE_MATERIALIZE_NBYTES_DEFAULT = 256 * 1024 * 1024
+
+# numcodecs Blosc rejects contiguous buffers larger than ``2 ** 31 - 1`` bytes.
+_ZARR_CODEC_MAX_CHUNK_NBYTES = 1500 * 1024 * 1024
+
+
+# Minian's global ``custom_arr_optimize`` can confuse local schedulers during
+# ``load()`` (``ValueError: Missing dependency`` on ``rechunk-merge`` / gufuncs).
+def _eager_load_dask_mapping(
+    scheduler: Literal["threads", "synchronous"],
+) -> dict[str, Any]:
+    """Single mapping for :func:`dask.config.set` (avoids mypy ``**`` / overload confusion)."""
+    return {
+        "scheduler": scheduler,
+        "array_optimize": darr.optimization.optimize,
+        "delayed_optimize": default_delay_optimize,
+    }
+
+
+_ZarrSaveMode = Literal["a", "w-"]
+
+
+def _zarr_save_mode(overwrite: bool) -> _ZarrSaveMode:
+    return "a" if overwrite else "w-"
+
+
+def _has_distributed_client() -> bool:
+    try:
+        from distributed import default_client
+
+        default_client()
+        return True
+    except (ImportError, ValueError):
+        return False
+
+
+def _dataset_assign_parent_path_coords(
+    ds: xr.Dataset, dpath: str, meta_dict: Optional[dict]
+) -> xr.Dataset:
+    """Coordinates from ancestor directory segments (same convention as ``save_minian``)."""
+    if meta_dict is None:
+        return ds
+    pathlist = os.path.split(os.path.abspath(dpath))[0].split(os.sep)
+    return ds.assign_coords(**dict((dn, pathlist[di]) for dn, di in meta_dict.items()))
+
+
+def _orthogonal_chunk_nbytes(chunk_elems: Tuple[int, ...], itemsize: int) -> int:
+    """Bytes in one orthogonal chunk given per-axis max partition sizes."""
+    return int(math.prod(chunk_elems)) * int(itemsize)
+
+
+def _dataset_to_zarr_compute(ds: xr.Dataset, fp: str, mode: _ZarrSaveMode):
+    """``Dataset.to_zarr(compute=True)`` avoiding worker OOM when a Client is active.
+
+    Uses the threaded scheduler plus default optimizers so the write does not
+    fan out entirely on low-RAM workers. On ``Missing dependency``, retries
+    synchronous then distributed (e.g. graphs built under a custom
+    ``array_optimize`` or after ``persist()``).
+    """
+    if not _has_distributed_client():
+        return ds.to_zarr(store=fp, mode=mode, compute=True)
+    try:
+        with da.config.set(_eager_load_dask_mapping("threads")):
+            return ds.to_zarr(store=fp, mode=mode, compute=True)
+    except ValueError as err:
+        if "Missing dependency" not in str(err):
+            raise
+        log.warning(
+            "save_minian: threads to_zarr failed (%s); retrying synchronous", err
+        )
+        try:
+            with da.config.set(_eager_load_dask_mapping("synchronous")):
+                return ds.to_zarr(store=fp, mode=mode, compute=True)
+        except ValueError as err2:
+            if "Missing dependency" not in str(err2):
+                raise
+            log.warning(
+                "save_minian: synchronous to_zarr failed (%s); retrying distributed",
+                err2,
+            )
+            return ds.to_zarr(store=fp, mode=mode, compute=True)
+
+
+def _eager_load_for_zarr(var: xr.DataArray, nbytes: int) -> xr.DataArray:
+    """
+    Load ``var`` into memory so ``to_zarr`` does not ship a heavy upstream graph.
+
+    Uses Dask's **default** array/delayed optimizers for this step only (not
+    :func:`~minian.utilities.custom_arr_optimize`). With a ``Client``, first
+    tries **threads** on the client (avoids heavy zarr-backed work on workers
+    for small outputs). If that raises ``Missing dependency``, retries
+    **synchronous** on the client. If that also fails — common after ``persist``
+    graphs built beside ``concatenate`` (e.g. ``update_temporal``) —
+    then gathers via :func:`dask.compute` on ``var.data`` with the active
+    **distributed** client and ``optimize_graph=False`` (avoids a second brittle
+    merge pass after ``persist()`` / ``concatenate``). That path runs only after
+    local schedulers failed.
+
+    Without a distributed ``Client``, uses the **synchronous** scheduler with
+    the same default optimizers.
+    """
+    log.info(
+        "save_minian: loading %r into memory before zarr write (%d bytes)",
+        var.name,
+        nbytes,
+    )
+    log.info("save_minian: computing %r before zarr write", var.name)
+    if _has_distributed_client():
+        try:
+            with da.config.set(_eager_load_dask_mapping("threads")):
+                return var.load()
+        except ValueError as err:
+            if "Missing dependency" not in str(err):
+                raise
+            log.warning(
+                "save_minian: threads preload failed (%s); retrying synchronous",
+                err,
+            )
+            try:
+                with da.config.set(_eager_load_dask_mapping("synchronous")):
+                    return var.load()
+            except ValueError as err2:
+                if "Missing dependency" not in str(err2):
+                    raise
+                log.warning(
+                    "save_minian: synchronous preload failed (%s); "
+                    "gathering via distributed scheduler (optimize_graph=False)",
+                    err2,
+                )
+                from distributed import default_client
+
+                (computed,) = da.compute(
+                    var.data,
+                    scheduler=default_client(),
+                    optimize_graph=False,
+                )
+                return xr.DataArray(
+                    computed,
+                    dims=var.dims,
+                    coords=var.coords,
+                    attrs=var.attrs,
+                    name=var.name,
+                )
+    with da.config.set(_eager_load_dask_mapping("synchronous")):
+        return var.load()
+
+
+def _dask_chunks_zarr_compatible(axis_chunks: tuple) -> bool:
+    """Mirror xarray's check in ``extract_zarr_variable_encoding``: uniform slabs per axis."""
+    ch = tuple(int(x) for x in axis_chunks)
+    if len(ch) <= 1:
+        return True
+    # All chunks except the last must agree; final chunk cannot be larger than the first.
+    if len(set(ch[:-1])) > 1:
+        return False
+    if len(ch) > 1 and ch[-1] > ch[0]:
+        return False
+    return True
+
+
+def _uniformize_chunks_for_zarr(var: xr.DataArray) -> xr.DataArray:
+    """Rechunk ``var`` when Dask partitioning is incompatible with ``Dataset.to_zarr``.
+
+    Subtract/clip stackups (e.g. ``Y - compute_AtC(A, C).clip(...)``) can leave
+    irregular chunk sizes along a dimension; Zarr rejects that.
+    """
+    if not getattr(var.data, "chunks", None):
+        return var
+    rechunk_kw: dict[Hashable, int] = {}
+    for dim in var.dims:
+        ch = tuple(var.chunksizes[dim])
+        if _dask_chunks_zarr_compatible(ch):
+            continue
+        rechunk_kw[dim] = -1
+    if not rechunk_kw:
+        return var
+    log.info(
+        "save_minian: rechunking %r along %s so zarr can write uniformly sized chunks",
+        var.name,
+        list(rechunk_kw.keys()),
+    )
+    return var.chunk(rechunk_kw)
+
+
+def _max_dask_chunk_nbytes(var: xr.DataArray) -> Optional[int]:
+    """Worst-case number of bytes in a single orthogonal Dask chunk."""
+    arr = getattr(var, "data", None)
+    if arr is None or not getattr(arr, "chunks", None):
+        return None
+    chunk_max = tuple(max(var.chunksizes[d]) for d in var.dims)
+    return _orthogonal_chunk_nbytes(chunk_max, int(np.dtype(var.dtype).itemsize))
+
+
+def _cap_dask_chunks_for_zarr(
+    var: xr.DataArray, max_chunk_nbytes: int = _ZARR_CODEC_MAX_CHUNK_NBYTES
+) -> xr.DataArray:
+    """Shrink Dask partitioning so each chunk stays under codec buffer limits."""
+    nbytes = _max_dask_chunk_nbytes(var)
+    if nbytes is None or nbytes <= max_chunk_nbytes:
+        return var
+    log.info(
+        "save_minian: capping Dask chunks (worst chunk ~%.2f MiB) for Blosc codec limit",
+        nbytes / (1024 * 1024),
+    )
+    dims = list(var.dims)
+    max_sizes = [max(var.chunksizes[d]) for d in dims]
+    itemsize = int(np.dtype(var.dtype).itemsize)
+    nbytes_loop = _orthogonal_chunk_nbytes(tuple(max_sizes), itemsize)
+    for _ in range(1024):
+        if nbytes_loop <= max_chunk_nbytes:
+            break
+        candidates = [i for i, s in enumerate(max_sizes) if s > 1]
+        if not candidates:
+            raise ValueError(
+                "cannot cap Dask chunks to fit zarr compressor limit; "
+                "each dimension uses a single-element chunk yet the chunk exceeds the limit "
+                "(check dtype or pass smaller ``chunks=`` to save_minian)"
+            )
+        if "frame" in dims:
+            fi = dims.index("frame")
+            i = (
+                fi
+                if fi in candidates
+                else max(candidates, key=lambda idx: max_sizes[idx])
+            )
+        else:
+            i = max(candidates, key=lambda idx: max_sizes[idx])
+        prod_rest = int(math.prod(max_sizes[k] for k in range(len(dims)) if k != i))
+        target = max(1, max_chunk_nbytes // (prod_rest * itemsize))
+        if target >= max_sizes[i]:
+            target = max(1, max_sizes[i] // 2)
+        max_sizes[i] = target
+        nbytes_loop = _orthogonal_chunk_nbytes(tuple(max_sizes), itemsize)
+    else:
+        raise ValueError(
+            "failed to cap Dask chunks below zarr compressor buffer limit (~"
+            f"{nbytes_loop} bytes); try passing ``chunks=`` to save_minian"
+        )
+    chunk_dict = {dims[j]: max_sizes[j] for j in range(len(dims))}
+    return var.chunk(chunk_dict)
+
+
+def load_videos(
+    vpath: str,
+    pattern=r"msCam[0-9]+\.avi$",
+    dtype: Union[str, type] = np.float64,
+    downsample: Optional[dict] = None,
+    downsample_strategy="subset",
+    post_process: Optional[Callable] = None,
+) -> xr.DataArray:
+    """
+    Load multiple videos in a folder and return a `xr.DataArray`.
+
+    Load videos from the folder specified in `vpath` and according to the regex
+    `pattern`, then concatenate them together and return a `xr.DataArray`
+    representation of the concatenated videos. The videos are sorted by
+    filenames with :func:`natsort.natsorted` before concatenation. Optionally
+    the data can be downsampled, and the user can pass in a custom callable to
+    post-process the result.
+
+    Parameters
+    ----------
+    vpath : str
+        The path containing the videos to load.
+    pattern : regexp, optional
+        The regexp matching the filenames of the videos. By default
+        `r"msCam[0-9]+\\.avi$"`, which can be interpreted as filenames starting
+        with "msCam" followed by at least a number, and then followed by ".avi".
+    dtype : Union[str, type], optional
+        Datatype of the resulting DataArray, by default `np.float64`.
+    downsample : dict, optional
+        A dictionary mapping dimension names to an integer downsampling factor.
+        The dimension names should be one of "height", "width" or "frame". By
+        default `None`.
+    downsample_strategy : str, optional
+        How the downsampling should be done. Only used if `downsample` is not
+        `None`. Either `"subset"` where data points are taken at an interval
+        specified in `downsample`, or `"mean"` where mean will be taken over
+        data within each interval. By default `"subset"`.
+    post_process : Callable, optional
+        An user-supplied custom function to post-process the resulting array.
+        Four arguments will be passed to the function: the resulting DataArray
+        `varr`, the input path `vpath`, the list of matched video filenames
+        `vlist`, and the list of DataArray before concatenation `varr_list`. The
+        function should output another valid DataArray. In other words, the
+        function should have signature `f(varr: xr.DataArray, vpath: str, vlist:
+        List[str], varr_list: List[xr.DataArray]) -> xr.DataArray`. By default
+        `None`
+
+    Returns
+    -------
+    varr : xr.DataArray
+        The resulting array representation of the input movie. Should have
+        dimensions ("frame", "height", "width").
+
+    Raises
+    ------
+    FileNotFoundError
+        if no files under `vpath` match the pattern `pattern`
+    ValueError
+        if the matched files does not have extension ".avi", ".mkv" or ".tif"
+    NotImplementedError
+        if `downsample_strategy` is not "subset" or "mean"
+    """
+    vpath = os.path.normpath(vpath)
+    vlist = natsorted(
+        [vpath + os.sep + v for v in os.listdir(vpath) if re.search(pattern, v)]
+    )
+    if not vlist:
+        raise FileNotFoundError(
+            "No data with pattern {} found in the specified folder {}".format(
+                pattern, vpath
+            )
+        )
+    log.info("loading {} videos in folder {}".format(len(vlist), vpath))
+
+    file_extension = os.path.splitext(vlist[0])[1]
+    if file_extension in (".avi", ".mkv"):
+        ensure_ffmpeg()
+        movie_load_func = load_avi_lazy
+    elif file_extension == ".tif":
+        movie_load_func = load_tif_lazy
+    else:
+        raise ValueError("Extension not supported.")
+
+    varr_list = [movie_load_func(v) for v in vlist]
+    varr = darr.concatenate(varr_list, axis=0)
+    varr = xr.DataArray(
+        varr,
+        dims=["frame", "height", "width"],
+        coords=dict(
+            frame=np.arange(varr.shape[0]),
+            height=np.arange(varr.shape[1]),
+            width=np.arange(varr.shape[2]),
+        ),
+    )
+    if dtype:
+        varr = varr.astype(dtype)
+    if downsample:
+        if downsample_strategy == "mean":
+            coarsened = varr.coarsen(**downsample, boundary="trim", coord_func="min")
+            varr = cast(Any, coarsened).mean()
+        elif downsample_strategy == "subset":
+            idx = {d: slice(None, None, w) for d, w in downsample.items()}
+            varr = varr.isel(idx)
+        else:
+            raise NotImplementedError("unrecognized downsampling strategy")
+    varr = varr.rename("fluorescence")
+    if post_process:
+        varr = post_process(varr, vpath, vlist, varr_list)
+    arr_opt = fct.partial(custom_arr_optimize, keep_patterns=["^load_avi_ffmpeg"])
+    with da.config.set(array_optimize=arr_opt):
+        varr = da.optimize(varr)[0]
+    return varr
+
+
+def load_tif_lazy(fname: str) -> DaskArray:
+    """
+    Lazy load a tif stack of images.
+
+    Parameters
+    ----------
+    fname : str
+        The filename of the tif stack to load.
+
+    Returns
+    -------
+    arr : darr.array
+        Resulting dask array representation of the tif stack.
+    """
+    data = TiffFile(fname)
+    f = len(data.pages)
+
+    fmread = da.delayed(load_tif_perframe)
+    flist = [fmread(fname, i) for i in range(f)]
+
+    sample = flist[0].compute()
+    arr = [
+        da.array.from_delayed(fm, dtype=sample.dtype, shape=sample.shape)
+        for fm in flist
+    ]
+    return da.array.stack(arr, axis=0)
+
+
+def load_tif_perframe(fname: str, fid: int) -> np.ndarray:
+    """
+    Load a single image from a tif stack.
+
+    Parameters
+    ----------
+    fname : str
+        The filename of the tif stack.
+    fid : int
+        The index of the image to load.
+
+    Returns
+    -------
+    arr : np.ndarray
+        Array representation of the image.
+    """
+    return imread(fname, key=fid)
+
+
+def load_avi_lazy_framewise(fname: str) -> DaskArray:
+    cap = cv2.VideoCapture(fname)
+    f = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fmread = da.delayed(load_avi_perframe)
+    flist = [fmread(fname, i) for i in range(f)]
+    sample = flist[0].compute()
+    arr = [
+        da.array.from_delayed(fm, dtype=sample.dtype, shape=sample.shape)
+        for fm in flist
+    ]
+    return da.array.stack(arr, axis=0)
+
+
+def load_avi_lazy(fname: str) -> DaskArray:
+    """
+    Lazy load an avi video.
+
+    This function construct a single delayed task for loading the video as a
+    whole.
+
+    Parameters
+    ----------
+    fname : str
+        The filename of the video to load.
+
+    Returns
+    -------
+    arr : darr.array
+        The array representation of the video.
+    """
+    ensure_ffmpeg()
+    probe = ffmpeg.probe(fname)
+    video_info = next(s for s in probe["streams"] if s["codec_type"] == "video")
+    w = int(video_info["width"])
+    h = int(video_info["height"])
+    f = int(video_info["nb_frames"])
+    return da.array.from_delayed(
+        da.delayed(load_avi_ffmpeg)(fname, h, w, f), dtype=np.uint8, shape=(f, h, w)
+    )
+
+
+def load_avi_ffmpeg(fname: str, h: int, w: int, f: int) -> np.ndarray:
+    """
+    Load an avi video using `ffmpeg`.
+
+    This function directly invoke `ffmpeg` using the `python-ffmpeg` wrapper and
+    retrieve the data from buffer.
+
+    Parameters
+    ----------
+    fname : str
+        The filename of the video to load.
+    h : int
+        The height of the video.
+    w : int
+        The width of the video.
+    f : int
+        The number of frames in the video.
+
+    Returns
+    -------
+    arr : np.ndarray
+        The resulting array. Has shape (`f`, `h`, `w`).
+    """
+    ensure_ffmpeg()
+    out_bytes, err = (
+        ffmpeg.input(fname)
+        .video.output(RawGray.PIPE, format=RawGray.FORMAT, pix_fmt=RawGray.PIX_FMT)
+        .run(capture_stdout=True)
+    )
+    return np.frombuffer(out_bytes, np.uint8).reshape(f, h, w)
+
+
+def load_avi_perframe(fname: str, fid: int) -> np.ndarray:
+    cap = cv2.VideoCapture(fname)
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, fid)
+    ret, fm = cap.read()
+    if ret:
+        return np.flip(cv2.cvtColor(fm, cv2.COLOR_RGB2GRAY), axis=0)
+    else:
+        log.warning("frame read failed for frame {}".format(fid))
+        return np.zeros((h, w))
+
+
+def open_minian(
+    dpath: str, post_process: Optional[Callable] = None, return_dict=False
+) -> Union[dict[str, xr.DataArray], xr.Dataset]:
+    """
+    Load an existing minian dataset.
+
+    If `dpath` is a file, then it is assumed that the full dataset is saved as a
+    single file, and this function will directly call
+    :func:`xarray.open_dataset` on `dpath`. Otherwise if `dpath` is a directory,
+    then it is assumed that the dataset is saved as a directory of `zarr`
+    arrays, as produced by :func:`save_minian`. This function will then iterate
+    through all the directories under input `dpath` and load them as
+    `xr.DataArray` with `zarr` backend, so it is important that the user make
+    sure every directory under `dpath` can be load this way. The loaded arrays
+    will be combined as either a `xr.Dataset` or a `dict`. Optionally a
+    user-supplied custom function can be used to post process the resulting
+    `xr.Dataset`.
+
+    Parameters
+    ----------
+    dpath : str
+        The path to the minian dataset that should be loaded.
+    post_process : Callable, optional
+        User-supplied function to post process the dataset. Only used if
+        `return_dict` is `False`. Two arguments will be passed to the function:
+        the resulting dataset `ds` and the data path `dpath`. In other words the
+        function should have signature `f(ds: xr.Dataset, dpath: str) ->
+        xr.Dataset`. By default `None`.
+    return_dict : bool, optional
+        Whether to combine the DataArray as dictionary, where the `.name`
+        attribute will be used as key. Otherwise the DataArray will be combined
+        using `xr.merge(..., compat="no_conflicts")`, which will implicitly
+        align the DataArray over all dimensions, so it is important to make sure
+        the coordinates are compatible and will not result in creation of large
+        NaN-padded results. Only used if `dpath` is a directory, otherwise a
+        `xr.Dataset` is always returned. By default `False`.
+
+    Returns
+    -------
+    ds : Union[dict, xr.Dataset]
+        The resulting dataset. If `return_dict` is `True` it will be a `dict`,
+        otherwise a `xr.Dataset`.
+
+    See Also
+    -------
+    xarray.open_zarr : for how each directory will be loaded as `xr.DataArray`
+    xarray.merge : for how the `xr.DataArray` will be merged as `xr.Dataset`
+    """
+    ds: Union[dict[str, xr.DataArray], xr.Dataset]
+    if isfile(dpath):
+        ds = xr.open_dataset(dpath).chunk()
+    elif isdir(dpath):
+        dslist = []
+        for d in listdir(dpath):
+            arr_path = pjoin(dpath, d)
+            # ``save_minian`` on-disk rechunk uses UUID dirs under ``dpath``; only
+            # open ``*.zarr`` stores produced by ``save_minian``.
+            if not (isdir(arr_path) and d.endswith(".zarr")):
+                continue
+            arr = list(xr.open_zarr(arr_path).values())[0]
+            arr.data = darr.from_zarr(
+                os.path.join(arr_path, str(arr.name)), inline_array=True
+            )
+            dslist.append(arr)
+        if return_dict:
+            ds = {str(x.name): x for x in dslist}
+        else:
+            ds = xr.merge(dslist, compat="no_conflicts", join="outer")
+    else:
+        raise FileNotFoundError(dpath)
+    if (not return_dict) and post_process:
+        ds = post_process(ds, dpath)
+    return ds
+
+
+def require_existing_dirs(
+    paths: Mapping[str, str],
+    *,
+    hint: str = "Run the processing pipeline first or correct the path.",
+) -> None:
+    """Raise :class:`FileNotFoundError` unless every path is an existing directory.
+
+    Typical use: confirm intermediate and merged Minian Zarr roots exist before
+    :func:`open_minian`.
+
+    Parameters
+    ----------
+    paths
+        Short label (for the error message) mapped to a directory path.
+    hint
+        Suffix appended to each ``FileNotFoundError`` message.
+    """
+    for label, p in paths.items():
+        ap = os.path.abspath(p)
+        if not isdir(ap):
+            raise FileNotFoundError(f"Missing {label}: {ap!r} — {hint}")
+
+
+def open_minian_mf(
+    dpath: str,
+    index_dims: List[str],
+    result_format="xarray",
+    pattern=r"minian$",
+    sub_dirs: List[str] = [],
+    exclude=True,
+    **kwargs,
+) -> Union[xr.Dataset, pd.DataFrame]:
+    """
+    Open multiple minian datasets across multiple directories.
+
+    This function recursively walks through directories under `dpath` and try to
+    load minian datasets from all directories matching `pattern`. It will then
+    combine them based on `index_dims` into either a `xr.Dataset` object or a
+    `pd.DataFrame`. Optionally a subset of paths can be specified, so that they
+    can either be excluded or white-listed. Additional keyword arguments will be
+    passed directly to :func:`open_minian`.
+
+    Parameters
+    ----------
+    dpath : str
+        The root folder containing all datasets to be loaded.
+    index_dims : List[str]
+        List of dimensions that can be used to index and merge multiple
+        datasets. All loaded datasets should have unique coordinates in the
+        listed dimensions.
+    result_format : str, optional
+        If `"xarray"`, the result will be merged together recursively along each
+        dimensions listed in `index_dims`. Users should make sure the
+        coordinates are compatible and the merging will not cause generation of
+        large NaN-padded results. If `"pandas"`, then a `pd.DataFrame` is
+        returned, with columns corresponding to `index_dims` uniquely identify
+        each dataset, and an additional column (name :data:`~minian.constants.MINIAN`)
+        of object dtype
+        pointing to the loaded minian dataset objects. By default `"xarray"`.
+    pattern : regexp, optional
+        Pattern of minian dataset directory names. By default `r"minian$"`.
+    sub_dirs : List[str], optional
+        A list of sub-directories under `dpath`. Useful if only a subset of
+        datasets under `dpath` should be recursively loaded. By default `[]`.
+    exclude : bool, optional
+        Whether to exclude directories listed under `sub_dirs`. If `True`, then
+        any minian datasets under those specified in `sub_dirs` will be ignored.
+        If `False`, then **only** the datasets under those specified in
+        `sub_dirs` will be loaded (they still have to be under `dpath` though).
+        by default `True`.
+
+    Returns
+    -------
+    ds : Union[xr.Dataset, pd.DataFrame]
+        The resulting combined datasets. If `result_format` is `"xarray"`, then
+        a `xr.Dataset` will be returned, otherwise a `pd.DataFrame` will be
+        returned.
+
+    Raises
+    ------
+    NotImplementedError
+        if `result_format` is not "xarray" or "pandas"
+    """
+    minian_dict = dict()
+    for nextdir, dirlist, filelist in os.walk(dpath, topdown=False):
+        nextdir = os.path.abspath(nextdir)
+        cur_path = Path(nextdir)
+        dir_tag = bool(
+            (
+                (any([Path(epath) in cur_path.parents for epath in sub_dirs]))
+                or nextdir in sub_dirs
+            )
+        )
+        if exclude == dir_tag:
+            continue
+        flist = list(filter(lambda f: re.search(pattern, f), filelist + dirlist))
+        if flist:
+            log.info("opening dataset under {}".format(nextdir))
+            if len(flist) > 1:
+                warnings.warn("multiple dataset found: {}".format(flist))
+            fname = flist[-1]
+            log.info("opening {}".format(fname))
+            minian = open_minian(dpath=os.path.join(nextdir, fname), **kwargs)
+            key = tuple([np.array_str(minian[d].values) for d in index_dims])
+            minian_dict[key] = minian
+            log.info("%s", ["{}: {}".format(d, v) for d, v in zip(index_dims, key)])
+
+    if result_format == "xarray":
+        return xrconcat_recursive(minian_dict, index_dims)
+    elif result_format == "pandas":
+        minian_df = pd.Series(minian_dict).rename(MINIAN)
+        minian_df.index.set_names(index_dims, inplace=True)
+        return minian_df.to_frame()
+    else:
+        raise NotImplementedError("format {} not understood".format(result_format))
+
+
+def _zarr_store_chunks_match_target(z_arr, target_chunks: dict[str, int]) -> bool:
+    """True when zarr ``chunks`` already match resolved ``target_chunks`` (uniform layout)."""
+    dims = z_arr.attrs.get("_ARRAY_DIMENSIONS")
+    if not dims:
+        return False
+    zc = getattr(z_arr, "chunks", None)
+    if zc is None or len(zc) != len(dims):
+        return False
+    try:
+        for i, d in enumerate(dims):
+            if int(zc[i]) != int(target_chunks[str(d)]):
+                return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _rechunker_effective_max_mem_bytes(z_arr, target_chunks: dict, requested) -> int:
+    """
+    Rechunker rejects plans when ``max_mem`` is smaller than either the full
+    source chunk or the full target chunk (:func:`rechunker.algorithm.rechunking_plan`).
+    Bump the user/env limit to at least that minimum (bytes).
+    """
+    from math import prod
+
+    import dask.utils as du
+
+    req_b = int(du.parse_bytes(requested))
+    itemsize = int(np.dtype(z_arr.dtype).itemsize)
+    schunks = z_arr.chunks
+    if schunks is None:
+        src_mem = itemsize * int(np.prod(z_arr.shape, dtype=np.int64))
+    else:
+        src_mem = itemsize * prod(int(c) for c in schunks)
+
+    dims = z_arr.attrs.get("_ARRAY_DIMENSIONS")
+    if dims is None:
+        tgt_mem = 0
+    else:
+        tc = tuple(int(target_chunks[str(d)]) for d in dims)
+        tgt_mem = itemsize * prod(tc)
+
+    need = max(req_b, src_mem, tgt_mem)
+    if need > req_b:
+        log.info(
+            "save_minian: rechunker max_mem raised to %s bytes (requested %s; "
+            "source_chunk=%s target_chunk=%s — rechunker needs at least the larger slab)",
+            need,
+            req_b,
+            src_mem,
+            tgt_mem,
+        )
+    return need
+
+
+def save_minian(
+    var: xr.DataArray,
+    dpath: str,
+    meta_dict: Optional[dict] = None,
+    overwrite=False,
+    chunks: Optional[dict] = None,
+    compute=True,
+    mem_limit="200MB",
+    materialize_nbytes: int = _SAVE_MATERIALIZE_NBYTES_DEFAULT,
+) -> xr.DataArray:
+    """
+    Save a `xr.DataArray` with `zarr` storage backend following minian
+    conventions.
+
+    This function will store arbitrary `xr.DataArray` into `dpath` with `zarr`
+    backend. A separate folder will be created under `dpath`, with folder name
+    `var.name + ".zarr"`. Optionally metadata can be retrieved from directory
+    hierarchy and added as coordinates of the `xr.DataArray`. In addition, an
+    on-disk rechunking of the result can be performed using
+    :func:`rechunker.rechunk` if `chunks` are given.
+
+    Parameters
+    ----------
+    var : xr.DataArray
+        The array to be saved.
+    dpath : str
+        The path to the minian dataset directory.
+    meta_dict : dict, optional
+        How metadata should be retrieved from directory hierarchy. The keys
+        should be negative integers representing directory level relative to
+        `dpath` (so `-1` means the immediate parent directory of `dpath`), and
+        values should be the name of dimensions represented by the corresponding
+        level of directory. The actual coordinate value of the dimensions will
+        be the directory name of corresponding level. By default `None`.
+    overwrite : bool, optional
+        Whether to overwrite the result on disk. By default `False`.
+    chunks : dict, optional
+        A dictionary specifying the desired chunk size. The chunk size should be
+        specified using :doc:`dask:array-chunks` convention, except the "auto"
+        specification is not supported. The rechunking operation will be
+        carried out with on-disk algorithms using :func:`rechunker.rechunk`. By
+        default `None`.
+    compute : bool, optional
+        Whether to compute `var` and save it immediately. By default `True`.
+        Dask-backed inputs with incompatible chunk sizes for Zarr are rechunked
+        along affected dimensions before writing (typically after ``clip`` /
+        arithmetic fusion).
+    mem_limit : str, optional
+        The memory limit for the on-disk rechunking algorithm, passed to
+        :func:`rechunker.rechunk`. Only used if ``chunks`` is not ``None``. By
+        default ``"200MB"``. Values **below** the minimum rechunker allows
+        (largest on-disk source chunk or target chunk, in bytes) are **raised
+        automatically** and logged at INFO. On-disk rechunk is **skipped**
+        when the zarr layout already matches ``chunks``.
+    materialize_nbytes : int, optional
+        If ``compute`` is ``True`` and the array's ``nbytes`` is at most this
+        value, load it into memory before calling ``to_zarr``: **synchronous**
+        when no ``Client`` is active; with a ``Client``, **threads** on the
+        client first (default Dask optimizers for that step only), falling back
+        to distributed compute if ``Missing dependency`` occurs. Set to ``0``
+        to disable. By default 256 MiB.
+
+    Returns
+    -------
+    var : xr.DataArray
+        The array representation of saving result. If `compute` is `True`, then
+        the returned array will only contain delayed task of loading the on-disk
+        `zarr` arrays. Otherwise all computation leading to the input `var` will
+        be preserved in the result.
+
+    Examples
+    -------
+    The following will save the variable `var` under a subdirectory named after
+    :data:`~minian.constants.MINIAN`, e.g.
+    ``/spatial_memory/alpha/learning1/minian/important_array.zarr``, with the
+    additional coordinates: `{"session": "learning1", "animal": "alpha",
+    "experiment": "spatial_memory"}`.
+
+    >>> save_minian(
+    ...     var.rename("important_array"),
+    ...     "/spatial_memory/alpha/learning1/minian",
+    ...     {-1: "session", -2: "animal", -3: "experiment"},
+    ... ) # doctest: +SKIP
+    """
+    dpath = os.path.normpath(dpath)
+    Path(dpath).mkdir(parents=True, exist_ok=True)
+    md = _zarr_save_mode(overwrite)
+    fp = os.path.join(dpath, str(var.name) + ".zarr")
+    _fp_abs = os.path.abspath(fp)
+    log.info(
+        "save_minian: begin %r -> %s compute=%s chunks=%s",
+        var.name,
+        _fp_abs,
+        compute,
+        chunks,
+    )
+    if overwrite:
+        try:
+            shutil.rmtree(fp)
+        except FileNotFoundError:
+            pass
+    # Materialize small arrays *before* zarr-compat rechunks so we never fuse
+    # ``concatenate``/``persist`` with ``rechunk-merge`` (breaks threads/sync/compute).
+    if compute and materialize_nbytes > 0:
+        try:
+            _nb = int(var.nbytes)
+        except (TypeError, ValueError):
+            _nb = None
+        if _nb is not None and _nb <= materialize_nbytes:
+            var = _eager_load_for_zarr(var, _nb)
+    var = _uniformize_chunks_for_zarr(var)
+    var = _cap_dask_chunks_for_zarr(var)
+    ds = _dataset_assign_parent_path_coords(var.to_dataset(), dpath, meta_dict)
+    if compute:
+        try:
+            log.info("save_minian: computing + writing zarr %s", _fp_abs)
+            arr = _dataset_to_zarr_compute(ds, fp, md)
+        except Exception:
+            log.exception(
+                "save_minian: zarr write failed; %r may be incomplete", _fp_abs
+            )
+            raise
+        log.info("save_minian: finished %s", _fp_abs)
+    else:
+        arr = ds.to_zarr(store=fp, mode=md, compute=False)
+    if (chunks is not None) and compute:
+        chunks = {d: var.sizes[d] if v <= 0 else v for d, v in chunks.items()}
+        with da.config.set(
+            array_optimize=darr.optimization.optimize,
+            delayed_optimize=default_delay_optimize,
+        ):
+            zstore = zr.open(fp)
+            z_arr = zstore[str(var.name)]
+            if _zarr_store_chunks_match_target(z_arr, chunks):
+                log.info(
+                    "save_minian: skip on-disk rechunk %r (zarr chunks already match %s)",
+                    var.name,
+                    chunks,
+                )
+            else:
+                dst_path = os.path.join(dpath, str(uuid4()))
+                temp_path = os.path.join(dpath, str(uuid4()))
+                max_mem_b = _rechunker_effective_max_mem_bytes(z_arr, chunks, mem_limit)
+                log.info(
+                    "save_minian: on-disk rechunk %r chunks=%s max_mem=%s (mem_limit=%r)",
+                    var.name,
+                    chunks,
+                    max_mem_b,
+                    mem_limit,
+                )
+                rechk = rechunker.rechunk(
+                    z_arr,
+                    chunks,
+                    max_mem_b,
+                    dst_path,
+                    temp_store=temp_path,
+                )
+                # ``rechunker`` uses ``dask.compute`` on many small delayed tasks. With a
+                # distributed ``Client`` as default scheduler that fans out to workers,
+                # each task maps zarr slices into RAM and workers hit their limit even when
+                # ``max_mem`` is modest. Run rechunk on the driver with a single-threaded
+                # scheduler so ``frame=-1`` (or any target) stays valid without worker OOM.
+                if _has_distributed_client():
+                    log.info(
+                        "save_minian: on-disk rechunk %r execute(scheduler=single-threaded) "
+                        "so rechunker does not use distributed workers",
+                        var.name,
+                    )
+                    rechk.execute(scheduler="single-threaded")
+                else:
+                    rechk.execute()
+                try:
+                    shutil.rmtree(temp_path)
+                except FileNotFoundError:
+                    pass
+                arr_path = os.path.join(fp, str(var.name))
+                for f in os.listdir(arr_path):
+                    os.remove(os.path.join(arr_path, f))
+                for f in os.listdir(dst_path):
+                    os.rename(os.path.join(dst_path, f), os.path.join(arr_path, f))
+                os.rmdir(dst_path)
+    if compute:
+        arr = xr.open_zarr(fp)[str(var.name)]
+        arr.data = darr.from_zarr(os.path.join(fp, str(var.name)), inline_array=True)
+    return arr
+
+
+def xrconcat_recursive(var: Union[dict, list], dims: List[str]) -> xr.Dataset:
+    """
+    Recursively concatenate `xr.DataArray` over multiple dimensions.
+
+    Parameters
+    ----------
+    var : Union[dict, list]
+        Either a `dict` or a `list` of `xr.DataArray` to be concatenated. If a
+        `dict` then keys should be `tuple`, with length same as the length of
+        `dims` and values corresponding to the coordinates that uniquely
+        identify each `xr.DataArray`. If a `list` then each `xr.DataArray`
+        should contain valid coordinates for each dimensions specified in
+        `dims`.
+    dims : List[str]
+        Dimensions to be concatenated over.
+
+    Returns
+    -------
+    ds : xr.Dataset
+        The concatenated dataset.
+
+    Raises
+    ------
+    NotImplementedError
+        if input `var` is neither a `dict` nor a `list`
+    """
+    if len(dims) > 1:
+        if type(var) is dict:
+            var_dict = var
+        elif type(var) is list:
+            var_dict = {tuple([np.asarray(v[d]).item() for d in dims]): v for v in var}
+        else:
+            raise NotImplementedError("type {} not supported".format(type(var)))
+        try:
+            var_dict = {k: v.to_dataset() for k, v in var_dict.items()}
+        except AttributeError:
+            pass
+        data = np.empty(len(var_dict), dtype=object)
+        for iv, ds in enumerate(var_dict.values()):
+            data[iv] = ds
+        index = pd.MultiIndex.from_tuples(list(var_dict.keys()), names=dims)
+        var_ps = pd.Series(data=data, index=index)
+        xr_ls = []
+        for idx, v in var_ps.groupby(level=dims[0]):
+            v.index = v.index.droplevel(dims[0])
+            xarr = xrconcat_recursive(v.to_dict(), dims[1:])
+            xr_ls.append(xarr)
+        return xr.concat(xr_ls, dim=dims[0], join="outer")
+    else:
+        if type(var) is dict:
+            var = list(var.values())
+        return xr.concat(var, dim=dims[0], join="outer")
+
+
+def update_meta(dpath, pattern=r"^minian\.nc$", meta_dict=None, backend="netcdf"):
+    for dirpath, dirnames, fnames in os.walk(dpath):
+        if backend == "netcdf":
+            fnames = filter(lambda fn: re.search(pattern, fn), fnames)
+        elif backend == "zarr":
+            fnames = filter(lambda fn: re.search(pattern, fn), dirnames)
+        else:
+            raise NotImplementedError("backend {} not supported".format(backend))
+
+        for fname in fnames:
+            f_path = os.path.join(dirpath, fname)
+            pathlist = os.path.normpath(dirpath).split(os.sep)
+            new_ds = xr.Dataset()
+            if backend == "netcdf":
+                old_ds = xr.open_dataset(f_path)
+            else:
+                old_ds = open_minian(f_path)
+            new_ds.attrs = deepcopy(old_ds.attrs)
+            old_ds.close()
+            new_ds = new_ds.assign_coords(
+                **dict(
+                    [(cdname, pathlist[cdval]) for cdname, cdval in meta_dict.items()]
+                )
+            )
+            if backend == "netcdf":
+                new_ds.to_netcdf(f_path, mode="a")
+            elif backend == "zarr":
+                new_ds.to_zarr(f_path, mode="w")
+            log.info("updated: {}".format(f_path))

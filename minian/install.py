@@ -1,10 +1,18 @@
 import argparse
+import logging
 import os
+
 import requests
 
+from ._version import get_package_version
+from .utilities import configure_logging
+
+log = logging.getLogger(__name__)
+
+
 NOTEBOOK_FILES = [
-    "pipeline.ipynb",
-    "cross-registration.ipynb",
+    "notebooks/pipeline.ipynb",
+    "notebooks/cross-registration.ipynb",
     "img/workflow.png",
     "img/param_pnr.png",
     "img/param_spatial_update.png",
@@ -13,38 +21,39 @@ NOTEBOOK_FILES = [
 DEMO_FILES = [f"demo_movies/msCam{i}.avi" for i in range(1, 11)] + [
     f"demo_data/session{i}/minian.nc" for i in range(1, 3)
 ]
-VERSION = "1.2.1"
+VERSION = get_package_version()
 
 
-def _get_file(filename: str, version: str):
-    if os.path.isfile(f"{filename}"):
-        print(f"File {filename} already exists, skipping install of this file.")
+def _get_file(filename: str, version: str, dest: str):
+    local_path = os.path.join(dest, filename)
+    if os.path.isfile(local_path):
+        log.info("File %s already exists, skipping install of this file.", local_path)
         return
     for vv in [version, "v" + version]:
         r = requests.get(f"https://raw.github.com/DeniseCaiLab/minian/{vv}/{filename}")
         if r.status_code == 200:
-            parent_dir = os.path.dirname(filename)
+            parent_dir = os.path.dirname(local_path)
             if parent_dir:
                 os.makedirs(parent_dir, exist_ok=True)
-            with open(f"{filename}", "wb") as f:
+            with open(local_path, "wb") as f:
                 for chunk in r.iter_content(2048):
                     f.write(chunk)
-            print(f"File {filename} installed.")
+            log.info("File %s installed.", local_path)
             break
     else:
-        print(f"File {filename} not found with version {version}, skipping.")
+        log.warning("File %s not found with version %s, skipping.", filename, version)
 
 
-def demo(version: str):
-    print("Installing demo data")
+def demo(version: str, dest: str):
+    log.info("Installing demo data")
     for file in DEMO_FILES:
-        _get_file(file, version)
+        _get_file(file, version, dest)
 
 
-def notebook(version: str):
-    print("Installing notebooks")
+def notebook(version: str, dest: str):
+    log.info("Installing notebooks")
     for file in NOTEBOOK_FILES:
-        _get_file(file, version)
+        _get_file(file, version, dest)
 
 
 def main():
@@ -59,13 +68,24 @@ def main():
         default=VERSION,
         help="Git repo branch or tag name, default {}".format(VERSION),
     )
+    parser.add_argument(
+        "--dest",
+        "-d",
+        default=None,
+        metavar="DIR",
+        help="Directory to download into (default: current working directory)",
+    )
     args = parser.parse_args()
+    configure_logging()
 
     version = args.v
-    print(f"Using version: {version}")
+    dest = os.path.abspath(args.dest) if args.dest else os.getcwd()
+    os.makedirs(dest, exist_ok=True)
+    log.info("Using version: %s", version)
+    log.info("Download directory: %s", dest)
 
     if args.notebooks:
-        notebook(version)
+        notebook(version, dest)
 
     if args.demo:
-        demo(version)
+        demo(version, dest)

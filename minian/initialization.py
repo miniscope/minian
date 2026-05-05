@@ -1,18 +1,15 @@
-import functools as fct
 import itertools as itt
-import os
+import logging
 from typing import Optional, Tuple, Union
 
 import cv2
-import dask as da
 import dask.array as darr
 import networkx as nx
 import numpy as np
 import pandas as pd
 import sparse
 import xarray as xr
-from scipy.ndimage.measurements import label
-from scipy.signal import butter, lfilter
+from scipy.ndimage import label
 from scipy.sparse import csc_matrix
 from scipy.stats import kstest, zscore
 from skimage.morphology import disk
@@ -20,7 +17,35 @@ from sklearn.mixture import GaussianMixture
 from sklearn.neighbors import KDTree, radius_neighbors_graph
 
 from .cnmf import adj_corr, filt_fft, graph_optimize_corr, label_connected
+from .config import get_active_pipeline_config
 from .utilities import local_extreme, med_baseline, save_minian, sps_lstsq
+
+log = logging.getLogger(__name__)
+
+
+def _safe_frame_max(varr: xr.DataArray) -> xr.DataArray:
+    """Compute frame-wise max without all-NaN reduction warnings."""
+    max_proj = varr.fillna(-np.inf).max("frame")
+    return max_proj.where(varr.notnull().any("frame"))
+
+
+def _varr_sub_by_seed_chunks(varr: xr.DataArray, seeds: pd.DataFrame) -> xr.DataArray:
+    """Stack seed-wise crops along ``index`` for chunked processing.
+
+    Vectorized indexing on Dask-backed arrays can collapse to a single huge chunk;
+    split seeds into up to 128 groups with chunk size at most 100 to limit memory.
+    """
+    chk_size = min(int(len(seeds) / 128), 100)
+    vsub_ls = []
+    for _, seed_sub in seeds.groupby(np.arange(len(seeds)) // chk_size):
+        vsub = varr.sel(
+            height=seed_sub["height"].to_xarray(), width=seed_sub["width"].to_xarray()
+        )
+        vsub_ls.append(vsub)
+    varr_sub = xr.concat(vsub_ls, "index", join="outer")
+    if getattr(varr_sub.data, "chunks", None):
+        varr_sub = varr_sub.chunk({"frame": -1})
+    return varr_sub
 
 
 def seeds_init(
@@ -67,7 +92,7 @@ def seeds_init(
         window. By default `10`.
     diff_thres : int, optional
         Intensity threshold for the difference between local maxima and its
-        neighbours. Any local maxima that is not birghter than its neighbor
+        neighbours. Any local maxima that is not brighter than its neighbor
         (defined by the same disk window) by `diff_thres` intensity values will
         be filtered out. By default `2`.
 
@@ -79,8 +104,8 @@ def seeds_init(
         integer showing how many chunks where the seed is considered a local
         maxima.
     """
-    int_path = os.environ["MINIAN_INTERMEDIATE"]
-    print("constructing chunks")
+    int_path = get_active_pipeline_config().intpath
+    log.info("constructing chunks")
     idx_fm = varr.coords["frame"]
     nfm = len(idx_fm)
     if method == "rolling":
@@ -97,11 +122,14 @@ def seeds_init(
         )
     elif method == "random":
         max_idx = [np.random.randint(0, nfm - 1, wnd_size) for _ in range(nchunk)]
-    print("computing max projections")
+    log.info("computing max projections")
     res = [max_proj_frame(varr, cur_idx) for cur_idx in max_idx]
-    max_res = xr.concat(res, "sample")
+    max_res = xr.concat(res, "sample", join="outer")
     max_res = save_minian(max_res.rename("max_res"), int_path, overwrite=True)
-    print("calculating local maximum")
+    log.info("calculating local maximum")
+    # apply_ufunc(..., dask="parallelized") requires one chunk per core dim.
+    if getattr(max_res.data, "chunks", None):
+        max_res = max_res.chunk({"height": -1, "width": -1})
     loc_max = xr.apply_ufunc(
         local_max_roll,
         max_res,
@@ -118,7 +146,7 @@ def seeds_init(
     return seeds[["height", "width", "seeds"]]
 
 
-def max_proj_frame(varr: xr.DataArray, idx: np.ndarray) -> xr.DataArray:
+def max_proj_frame(varr: xr.DataArray, idx: Union[np.ndarray, slice]) -> xr.DataArray:
     """
     Compute max projection on a given subset of frames.
 
@@ -126,15 +154,15 @@ def max_proj_frame(varr: xr.DataArray, idx: np.ndarray) -> xr.DataArray:
     ----------
     varr : xr.DataArray
         The input movie data containing all frames.
-    idx : np.ndarray
-        The subset of frames to use to compute max projection.
+    idx : np.ndarray or slice
+        Frame index array or slice passed to ``isel(frame=...)``.
 
     Returns
     -------
     max_proj : xr.DataArray
         The max projection.
     """
-    return varr.isel(frame=idx).max("frame")
+    return _safe_frame_max(varr.isel(frame=idx))
 
 
 def local_max_roll(
@@ -241,9 +269,9 @@ def gmm_refine(
     -------
     sklearn.mixture.GaussianMixture
     """
-    print("selecting seeds")
+    log.info("selecting seeds")
     varr_sub = varr.sel(spatial=[tuple(hw) for hw in seeds[["height", "width"]].values])
-    print("computing peak-valley values")
+    log.info("computing peak-valley values")
     varr_valley = xr.apply_ufunc(
         np.percentile,
         varr_sub.chunk(dict(frame=-1)),
@@ -262,7 +290,7 @@ def gmm_refine(
     )
     varr_pv = varr_peak - varr_valley
     varr_pv = varr_pv.compute()
-    print("fitting GMM models")
+    log.info("fitting GMM models")
     dat = varr_pv.values.reshape(-1, 1)
     gmm = GaussianMixture(n_components=n_components)
     gmm.fit(dat)
@@ -288,7 +316,7 @@ def pnr_refine(
 
     For each input seed, the noise is defined as high-pass filtered fluorescence
     trace of the seed. The peak-to-noise ratio (pnr) of that seed is then
-    defined as the ratio between the peak-to-peak value of the originial
+    defined as the ratio between the peak-to-peak value of the original
     fluorescence trace and that of the noise trace. Optionally, if abrupt
     changes in baseline fluorescence is expected, then the baseline can be
     estimated by median-filtering the fluorescence trace and subtracted from the
@@ -296,7 +324,7 @@ def pnr_refine(
     hard threshold of pnr is not desired, then a Gaussian Mixture Model with 2
     components can be fitted to the distribution of pnr across all seeds, and
     only seeds with pnr belonging to the higher-mean Gaussian will be considered
-    valide.
+    valid.
 
     Parameters
     ----------
@@ -332,19 +360,10 @@ def pnr_refine(
         The GMM model object fitted to the distribution of pnr. Will be `None`
         unless `thres` is `"auto"`.
     """
-    print("selecting seeds")
-    # vectorized indexing on dask arrays produce a single chunk.
-    # to memory issue, split seeds into 128 chunks, with chunk size no greater than 100
-    chk_size = min(int(len(seeds) / 128), 100)
-    vsub_ls = []
-    for _, seed_sub in seeds.groupby(np.arange(len(seeds)) // chk_size):
-        vsub = varr.sel(
-            height=seed_sub["height"].to_xarray(), width=seed_sub["width"].to_xarray()
-        )
-        vsub_ls.append(vsub)
-    varr_sub = xr.concat(vsub_ls, "index")
+    log.info("selecting seeds")
+    varr_sub = _varr_sub_by_seed_chunks(varr, seeds)
     if med_wnd:
-        print("removing baseline")
+        log.info("removing baseline")
         varr = xr.apply_ufunc(
             med_baseline,
             varr_sub,
@@ -355,7 +374,7 @@ def pnr_refine(
             vectorize=True,
             output_dtypes=[varr.dtype],
         )
-    print("computing peak-noise ratio")
+    log.info("computing peak-noise ratio")
     pnr = xr.apply_ufunc(
         pnr_perseed,
         varr_sub,
@@ -434,7 +453,7 @@ def intensity_refine(
     Filter seeds by thresholding the intensity of their corresponding pixels in
     the max projection of the movie.
 
-    This function generate a histogram of the max projection by spliting the
+    This function generate a histogram of the max projection by splitting the
     intensity into bins of roughly 10 pixels. Then the intensity threshold is
     defined as the intensity of the peak of the histogram times `thres_mul`.
 
@@ -457,16 +476,16 @@ def intensity_refine(
         indicating whether the seed is considered valid by this function.
     """
     try:
-        fm_max = varr.max("frame")
+        fm_max = _safe_frame_max(varr)
     except ValueError:
-        print("using input as max projection")
+        log.info("using input as max projection")
         fm_max = varr
     bins = np.around(fm_max.sizes["height"] * fm_max.sizes["width"] / 10).astype(int)
     hist, edges = np.histogram(fm_max, bins=bins)
     try:
         thres = edges[int(np.around(np.argmax(hist) * thres_mul))]
     except IndexError:
-        print("threshold out of bound, returning input")
+        log.warning("threshold out of bound, returning input")
         return seeds
     mask = (fm_max > thres).stack(spatial=["height", "width"])
     mask_df = mask.to_pandas().rename("mask_int").reset_index()
@@ -501,18 +520,9 @@ def ks_refine(varr: xr.DataArray, seeds: pd.DataFrame, sig=0.01) -> pd.DataFrame
         indicating whether the seed is considered valid by this function. If the
         column already exists in input `seeds` it will be overwritten.
     """
-    print("selecting seeds")
-    # vectorized indexing on dask arrays produce a single chunk.
-    # to memory issue, split seeds into 128 chunks, with chunk size no greater than 100
-    chk_size = min(int(len(seeds) / 128), 100)
-    vsub_ls = []
-    for _, seed_sub in seeds.groupby(np.arange(len(seeds)) // chk_size):
-        vsub = varr.sel(
-            height=seed_sub["height"].to_xarray(), width=seed_sub["width"].to_xarray()
-        )
-        vsub_ls.append(vsub)
-    varr_sub = xr.concat(vsub_ls, "index")
-    print("performing KS test")
+    log.info("selecting seeds")
+    varr_sub = _varr_sub_by_seed_chunks(varr, seeds)
+    log.info("performing KS test")
     ks = xr.apply_ufunc(
         ks_perseed,
         varr_sub,
@@ -592,11 +602,11 @@ def seeds_merge(
         indicating whether the seed should be kept after the merge. If the
         column already exists in input `seeds` it will be overwritten.
     """
-    print("computing distance")
+    log.info("computing distance")
     nng = radius_neighbors_graph(seeds[["height", "width"]], thres_dist)
-    print("computing correlations")
+    log.info("computing correlations")
     adj = adj_corr(varr, nng, seeds[["height", "width"]], noise_freq)
-    print("merging seeds")
+    log.info("merging seeds")
     adj = adj > thres_corr
     adj = adj + adj.T
     labels = label_connected(adj, only_connected=True)
@@ -634,7 +644,7 @@ def initA(
     For each input seed, this function compute the correlation between the
     fluorescence activity of the seed and those of its neighboring pixels up to
     `wnd` pixels. It then set all correlation below `thres_corr` to zero, and
-    use the resulting correlation image as the resutling spatial footprint of
+    use the resulting correlation image as the resulting spatial footprint of
     the seed.
 
     Parameters
@@ -665,7 +675,7 @@ def initA(
     minian.cnmf.graph_optimize_corr :
         for how the correlation are computed in an out-of-core fashion
     """
-    print("optimizing computation graph")
+    log.info("optimizing computation graph")
     nod_df = pd.DataFrame(
         np.array(
             list(itt.product(varr.coords["height"].values, varr.coords["width"].values))
@@ -690,7 +700,7 @@ def initA(
     sdg.remove_nodes_from(list(nx.isolates(sdg)))
     sdg = nx.convert_node_labels_to_integers(sdg)
     corr_df = graph_optimize_corr(varr, sdg, noise_freq)
-    print("building spatial matrix")
+    log.info("building spatial matrix")
     corr_df = corr_df[corr_df["corr"] > thres_corr]
     nod_df = pd.DataFrame.from_dict(dict(sdg.nodes(data=True)), orient="index")
     seed_df = nod_df[nod_df["index"].notnull()].astype({"index": int})
@@ -725,8 +735,21 @@ def initA(
             tgt_nods["height"].values,
             tgt_nods["width"].values,
         )
-        cur_corr = pd.concat([src_corr, tgt_corr]).append(
-            {"corr": 1, "height": sd["height"], "width": sd["width"]}, ignore_index=True
+        cur_corr = pd.concat(
+            [
+                tgt_corr,
+                src_corr,
+                pd.DataFrame(
+                    [
+                        {
+                            "corr": 1,
+                            "height": sd["height"],
+                            "width": sd["width"],
+                        }
+                    ]
+                ),
+            ],
+            ignore_index=True,
         )
         cur_corr["iheight"] = cur_corr["height"].map(ih_dict)
         cur_corr["iwidth"] = cur_corr["width"].map(iw_dict)
@@ -777,7 +800,6 @@ def initC(varr: xr.DataArray, A: xr.DataArray) -> xr.DataArray:
         .transpose("spatial", "unit_id")
         .data.map_blocks(csc_matrix)
         .rechunk(-1)
-        .persist()
     )
     varr = varr.stack(spatial=["height", "width"]).transpose("frame", "spatial").data
     C = sps_lstsq(A, varr, iter_lim=10)

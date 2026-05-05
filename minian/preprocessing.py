@@ -1,3 +1,5 @@
+from typing import Any, Callable
+
 import cv2
 import numpy as np
 import xarray as xr
@@ -53,7 +55,7 @@ def remove_background(varr: xr.DataArray, method: str, wnd: int) -> xr.DataArray
         kwargs=dict(method=method, wnd=wnd, selem=selem),
     )
     res = res.astype(varr.dtype)
-    return res.rename(varr.name + "_subtracted")
+    return res.rename(f"{str(varr.name)}_subtracted")
 
 
 def remove_background_perframe(
@@ -85,8 +87,9 @@ def remove_background_perframe(
     """
     if method == "uniform":
         return fm - uniform_filter(fm, wnd)
-    elif method == "tophat":
+    if method == "tophat":
         return cv2.morphologyEx(fm, cv2.MORPH_TOPHAT, selem)
+    raise ValueError(f"remove_background method {method!r} not understood")
 
 
 def stripe_correction(varr, reduce_dim="height", on="mean"):
@@ -100,7 +103,7 @@ def stripe_correction(varr, reduce_dim="height", on="mean"):
         raise NotImplementedError("on {} not understood".format(on))
     mean1d = temp.mean(dim=reduce_dim)
     varr_sc = varr - mean1d
-    return varr_sc.rename(varr.name + "_Stripe_Corrected")
+    return varr_sc.rename(f"{str(varr.name)}_Stripe_Corrected")
 
 
 def denoise(varr: xr.DataArray, method: str, **kwargs) -> xr.DataArray:
@@ -136,6 +139,7 @@ def denoise(varr: xr.DataArray, method: str, **kwargs) -> xr.DataArray:
     NotImplementedError
         if the supplied `method` is not recognized
     """
+    func: Callable[..., Any]
     if method == "gaussian":
         func = cv2.GaussianBlur
     elif method == "anisotropic":
@@ -157,4 +161,4 @@ def denoise(varr: xr.DataArray, method: str, **kwargs) -> xr.DataArray:
         kwargs=kwargs,
     )
     res = res.astype(varr.dtype)
-    return res.rename(varr.name + "_denoised")
+    return res.rename(f"{str(varr.name)}_denoised")

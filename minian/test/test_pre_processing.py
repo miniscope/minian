@@ -1,9 +1,8 @@
 import pytest
 import numpy as np
-import holoviews as hv
 
 from ..utilities import load_videos
-from ..preprocessing import denoise, remove_background, stripe_correction
+from ..preprocessing import denoise, remove_background
 
 dpath = "./demo_movies"
 
@@ -28,7 +27,6 @@ def test_can_load_videos(varr):
     assert varr.shape[0] == 900  # frames
     assert varr.shape[1] == 480  # height
     assert varr.shape[2] == 752  # width
-    return varr
 
 
 def test_remove_background(varr):

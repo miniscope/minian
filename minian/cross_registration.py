@@ -1,4 +1,5 @@
 import itertools as itt
+import logging
 from typing import Iterable
 
 import dask as da
@@ -7,7 +8,9 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from .visualization import centroid
+from .visualization._numeric import centroid
+
+log = logging.getLogger(__name__)
 
 
 def calculate_centroids(A: xr.DataArray, window: xr.DataArray) -> pd.DataFrame:
@@ -19,7 +22,7 @@ def calculate_centroids(A: xr.DataArray, window: xr.DataArray) -> pd.DataFrame:
     A : xr.DataArray
         The input spatial footprints of cells.
     window : xr.DataArray
-        Boolean mask with dimensions "height" and "width". Only sptial
+        Boolean mask with dimensions "height" and "width". Only spatial
         footprints of cells within this window will be included in the result.
 
     Returns
@@ -58,7 +61,7 @@ def calculate_centroid_distance(
         Pairs of sessions within such groups (but not across groups) will be
         used for calculation. By default `["animal"]`.
     tile : tuple, optional
-        Size of the rolling window to constrain caculation, specified in pixels
+        Size of the rolling window to constrain calculation, specified in pixels
         and in the order ("height", "width"). By default `(50, 50)`.
 
     Returns
@@ -103,7 +106,7 @@ def calculate_centroid_distance(
         dist_df = da.delayed(pd.concat)(dist_df_ls, ignore_index=True, sort=True)
         return dist_df, len_df
 
-    print("creating parallel schedule")
+    log.info("creating parallel schedule")
     if index_dim:
         for idxs, grp in cents.groupby(index_dim):
             dist_df, len_df = cent_pair(grp)
@@ -120,7 +123,7 @@ def calculate_centroid_distance(
             res_list.append(res_df)
     else:
         res_list = [cent_pair(cents)[0]]
-    print("computing distances")
+    log.info("computing distances")
     res_list = da.compute(res_list)[0]
     res_df = pd.concat(res_list, ignore_index=True)
     res_df.columns = pd.MultiIndex.from_tuples(res_df.columns)
@@ -179,9 +182,7 @@ def pd_dist(A: pd.DataFrame, B: pd.DataFrame) -> pd.Series:
     dist : pd.Series
         Distance between centroid locations. Has same row index as `A` and `B`.
     """
-    return np.sqrt(
-        ((A[["height", "width"]] - B[["height", "width"]]) ** 2).sum("columns")
-    )
+    return np.sqrt(((A[["height", "width"]] - B[["height", "width"]]) ** 2).sum(axis=1))
 
 
 def cartesian(*args: Iterable) -> np.ndarray:
@@ -542,7 +543,7 @@ def fill_mapping(mappings: pd.DataFrame, cents: pd.DataFrame) -> pd.DataFrame:
     This function takes all cells in `cents` and check to see if they appear in
     any rows in `mappings`. If a cell is not involved in any mappings, then a
     row will be appended to `mappings` with the cell's "unit_id" in the session
-    column contatining the cell and `NaN` in all other "session" columns.
+    column containing the cell and `NaN` in all other "session" columns.
 
     Parameters
     ----------
