@@ -2,17 +2,16 @@
   max-width: none;
 }
 
-.bd-sidebar {
-  flex: 0 0 15%;
+/*
+ * PyData Sphinx Theme: give the article and the right-hand ToC more room.
+ * (--pst-sidebar-secondary controls .bd-sidebar-secondary width; default ~17rem.)
+ */
+html {
+  --pst-sidebar-secondary: 22rem;
 }
 
-.bd-content {
-  max-width: 70%;
-  flex: 0 0 70%;
-}
-
-.bd-toc {
-  flex: 0 0 15%;
+.bd-main .bd-content .bd-article-container {
+  max-width: min(96vw, 84rem);
 }
 
 cite {

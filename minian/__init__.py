@@ -52,8 +52,8 @@ da.config.set(
     }
 )
 # ref: https://github.com/dask/dask/issues/3530
-# on linux, after conda installing jemalloc, one can use the following line to
-# get around threaded scheduler memory leak issue.
-# os.environ["LD_PRELOAD"] = "~/.conda/envs/minian-dev/lib/libjemalloc.so"
+# On Linux, with libjemalloc available (system package or a known .so path), you can
+# work around threaded scheduler memory issues by preloading jemalloc, for example:
+# os.environ["LD_PRELOAD"] = "/usr/lib/x86_64-linux-gnu/libjemalloc.so.2"
 # alternatively one can limit the malloc pool, which is the default for minian
 os.environ["MALLOC_MMAP_THRESHOLD_"] = "16384"

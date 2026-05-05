@@ -122,6 +122,7 @@ words:
   - kdim
   - kdims
   - keepdims
+  - killedworker
   - Kolmogorov
   - ksize
   - kstest

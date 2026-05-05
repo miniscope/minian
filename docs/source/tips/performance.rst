@@ -7,7 +7,7 @@ Here are some tips on working with this setup:
 Dask cluster
 ------------
 
-MiniAn by default would create a dask local cluster for you under the :ref:`pipeline/notebook_1:start cluster` part of the pipeline.
+MiniAn by default would create a dask local cluster for you when you run **start cluster** in the pipeline notebook; see :ref:`tips-pipeline-start-cluster`.
 The relevant line reads like the following:
 
 .. code-block:: python
@@ -63,7 +63,7 @@ Hence, usually the chunk size should be several folds smaller than ``memory_limi
 The downside of having too small chunk size is that your data would be divided into more number of chunks.
 Since each chunk produce some overhead when reading/writing to disk as well as when generating computation graph, having too many chunks would hurt performance.
 
-MiniAn try to find the best chunk size for you using :py:func:`get_optimal_chk <minian.utilities.get_optimal_chk>` under the :ref:`pipeline/notebook_2:loading videos and visualization` part of the pipeline.
+MiniAn try to find the best chunk size for you using :py:func:`get_optimal_chk <minian.utilities.get_optimal_chk>` during :ref:`tips-pipeline-loading-videos` in the pipeline notebook.
 The default is to produce chunks that use around *256MB* of memory (controlled by ``csize`` argument), which is roughly 1/10 of the default ``memory_limit`` for each worker.
 Hence, if you find your workers struggling with memory, and you don't have more physical RAM to spare to increase ``memory_limit``, you may consider decreasing the chunk size.
 Conversely, if you have lots of RAM to spare and you believe you have too many chunks than necessary, you may consider increasing the chunk size (this is rarely necessary though).

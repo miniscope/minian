@@ -2,7 +2,7 @@ Contributing to MiniAn
 ======================
 
 We'd love feedback and contribution from the community!
-:ref:`Fork and clone MiniAn from source <start_guide/install:Install from source>`, make your changes and submit a PR!
+:ref:`Fork and clone MiniAn from source <install_from_source>`, make your changes and submit a PR!
 Below are some book-keeping notes.
 
 Commit Messages
@@ -52,16 +52,6 @@ Packaging for PyPi
 #. ``python3 -m twine upload dist/*``
 
 .. seealso:: `packaging <https://packaging.python.org/tutorials/packaging-projects/>`_
-
-Packaging for conda-forge
--------------------------
-
-#. fork and clone `https://github.com/conda-forge/minian-feedstock`
-#. ``conda config --add channels conda-forge``
-#. ``conda install conda-build``
-#. ``conda install conda-smithy``
-#. ``conda-build recipes/minian``
-#. create a PR to upstream
 
 Build documentation
 -------------------

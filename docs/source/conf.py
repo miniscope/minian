@@ -52,7 +52,6 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.autosectionlabel",
     "m2r2",
-    "toctree",
     "ref_alias",
     "normalize_html_id",
     "nbsplit",
@@ -64,6 +63,11 @@ autodoc_typehints = "none"
 autodoc_member_order = "groupwise"
 autoclass_content = "both"
 autosectionlabel_prefix_document = True
+
+try:
+    import minian.minian_rs  # noqa: F401 optional native extension
+except ImportError:
+    autodoc_mock_imports = ["minian.minian_rs"]
 
 doctest_global_setup = """
 import numpy as np
@@ -135,12 +139,19 @@ exclude_patterns = ["artifact"]
 
 # -- Options for HTML output -------------------------------------------------
 
+# PyData Sphinx Theme navbar shows logo["text"] or Sphinx's docstitle; docstitle
+# defaults to "{project} {release} documentation", so set this for a short name.
+html_title = "MiniAn"
+
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
 # html_theme = "alabaster"
 html_theme = "pydata_sphinx_theme"
-
+html_theme_options = {
+    "github_url": "https://github.com/DeniseCaiLab/minian",
+}
+html_show_sourcelink = False
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
@@ -148,3 +159,18 @@ html_theme = "pydata_sphinx_theme"
 html_static_path = ["_static"]
 
 html_css_files = ["custom.css"]
+
+
+def _register_notebook_artifact_tags(app, _config):
+    """Tag builds without split notebook sources so pipeline/cross_reg pages can show WIP."""
+    from pathlib import Path
+
+    artifact = Path(app.srcdir) / "artifact"
+    if not (artifact / "pipeline.ipynb").is_file():
+        app.tags.add("minian_pipeline_nb_missing")
+    if not (artifact / "cross-registration.ipynb").is_file():
+        app.tags.add("minian_cross_reg_nb_missing")
+
+
+def setup(app):
+    app.connect("config-inited", _register_notebook_artifact_tags)

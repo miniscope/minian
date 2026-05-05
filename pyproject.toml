@@ -75,6 +75,7 @@ docs = [
 [project.urls]
 Homepage = "https://github.com/DeniseCaiLab/minian"
 Documentation = "https://minian.readthedocs.io/"
+Repository = "https://github.com/DeniseCaiLab/minian"
 
 [project.scripts]
 minian-install = "minian.install:main"

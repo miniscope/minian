@@ -18,6 +18,10 @@ run = "uv run mypy minian"
 description = "Run pre-commit (Black on minian/) — needs: uv sync --group dev"
 run = "uv run pre-commit run --all-files"
 
+[tasks.docs-html]
+description = "Build Sphinx HTML locally (output in docs/build/html/) — needs: uv sync --extra docs"
+run = "cd docs && uv run python -m sphinx -M html source build"
+
 [tasks.export-reqs-base]
 description = "Refresh uv.lock and export runtime deps to requirements/requirements-base.txt"
 run = "uv export --format requirements.txt --no-dev --no-annotate --no-header -o requirements/requirements-base.txt"

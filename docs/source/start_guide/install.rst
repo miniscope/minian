@@ -3,6 +3,8 @@ Installation
 
 MiniAn targets **Python 3.12** (see the repository ``pyproject.toml``). You need **FFmpeg** on ``PATH`` for video I/O. Install it with your OS package manager or follow the `FFmpeg download page <https://ffmpeg.org/download.html>`_.
 
+.. _install_from_source:
+
 Install from source with uv
 -----------------------------
 

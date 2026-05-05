@@ -5,7 +5,7 @@ I don't know Python, can I still use the pipeline?
 --------------------------------------------------
 
 Although we like Python and we recommend gaining some understanding of the foundations, we do think it's possible to use pipeline as-is with minimal knowledge of python.
-For start, you can just change ``dpath`` under :ref:`pipeline/notebook_1:set path and parameters` to point it to your data.
+For a start, you can just change ``dpath`` as described in :ref:`tips-pipeline-set-path`.
 Then you should be able to run all the cells in the pipeline without modifying anything.
 
 However, chances are you will like to tweak some parameters.
@@ -19,7 +19,7 @@ The general syntax is:
 
 where ``value`` maybe string, numbers, lists or in some cases another dictionary by itself, depending on the parameter you are changing.
 Once you run this line the ``param_stepX`` dictionary will be updated and you can proceed to the step that use this dictionary.
-The pipeline also has a quick real-world example under :ref:`pipeline/notebook_2:loading videos and visualization`.
+The pipeline also has a quick real-world example in :ref:`tips-pipeline-loading-videos`.
 
 Can I get a table of content for the pipeline?
 ----------------------------------------------
@@ -29,7 +29,9 @@ You can install it with:
 
 .. code-block:: console
 
-    conda install -c conda-forge jupyter_contrib_nbextensions
+    uv pip install jupyter-contrib-nbextensions
+
+Then enable the contrib extensions per the `jupyter_contrib_nbextensions docs <https://jupyter-contrib-nbextensions.readthedocs.io/en/latest/install.html>`_ (for example ``jupyter contrib nbextension install --user``).
 
 Can I have a version of pipeline without all the notes?
 -------------------------------------------------------
@@ -51,11 +53,10 @@ Just note that since this is a different copy of the pipeline, there might be ex
 How can I monitor the progress of some time consuming steps?
 ------------------------------------------------------------
 
-Dask provide a dash board which contains realtime information about all ongoing computations and cache.
-By default you can access it by navigating to `http://localhost:8787/status` in your browser once you have :ref:`started the cluster <pipeline/notebook_1:start cluster>`.
-See :ref:`tips/performance:Monitoring cluster` for more detail.
+MiniAn uses Dask for parallel work; the cluster dashboard shows live tasks, memory, and cache.
+See :ref:`tips/performance:Monitoring cluster` for the dashboard URL (port ``8787`` by default), how to read it, and related troubleshooting.
 
-``KilledWorker`` dammit, what do I do?
+``KilledWorker``, what do I do?
 --------------------------------------
 
 Short answer: sometimes all you need is to try again.
