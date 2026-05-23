@@ -808,9 +808,7 @@ FAST_FUNCTIONS = [
     zr.core.Array,
     darr.chunk.astype,
     darr.core.concatenate_axes,
-    darr.core._vindex_slice,
     darr.core._vindex_merge,
-    darr.core._vindex_transpose,
 ]
 """
 list of fast functions that should be inlined during optimization.
