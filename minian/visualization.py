@@ -1758,7 +1758,7 @@ def visualize_seeds(
         vdims = ["seeds", mask]
     else:
         vdims = ["seeds"]
-        opts_pts["style"]["color"] = "white"
+        opts_pts["color"] = "white"
     im = hv.Image(max_proj, kdims=["width", "height"])
     pts = hv.Points(seeds, kdims=["width", "height"], vdims=vdims)
     return im.options(**opts_im) * pts.options(**opts_pts)
