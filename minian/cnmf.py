@@ -11,7 +11,6 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import pyfftw.interfaces.numpy_fft as numpy_fft
-import pymetis
 import scipy.sparse
 import sparse
 import xarray as xr
@@ -33,6 +32,17 @@ from .utilities import (
     save_minian,
     med_baseline,
 )
+
+try:
+    import pymetis as _pymetis
+
+    _HAS_PYMETIS = True
+except ImportError:
+    # pymetis is the gold-standard k-way graph-partition library but its
+    # only build artifact is from source — no Windows wheels on PyPI for
+    # any version. Fall back to a pure-Python NetworkX partition below.
+    _pymetis = None
+    _HAS_PYMETIS = False
 
 try:
     from numba import jit
@@ -1763,9 +1773,8 @@ def graph_optimize_corr(
         with computed value of correlation.
     """
     # a heuristic to make number of partitions scale with nodes
-    n_cuts, membership = pymetis.part_graph(
-        max(int(np.ceil(G.number_of_nodes() / chunk)), 1), adjacency=adj_list(G)
-    )
+    n_parts = max(int(np.ceil(G.number_of_nodes() / chunk)), 1)
+    membership = _partition_graph(G, n_parts)
     nx.set_node_attributes(
         G, {k: {"part": v} for k, v in zip(sorted(G.nodes), membership)}
     )
@@ -1879,6 +1888,36 @@ def adj_list(G: nx.Graph) -> list[np.ndarray]:
     """
     gdict = nx.to_dict_of_dicts(G)
     return [np.array(list(gdict[k].keys())) for k in sorted(gdict.keys())]
+
+
+def _partition_graph(G: nx.Graph, n_parts: int) -> list[int]:
+    """
+    Partition `G` into `n_parts` chunks, returning a per-node partition index.
+
+    Uses pymetis (min-edge-cut, gold standard) when available. Otherwise falls
+    back to NetworkX's greedy_modularity_communities — pure Python, ships
+    with networkx, slower for very large graphs but lets minian install on
+    platforms without a pymetis wheel (notably Windows).
+
+    The partition quality affects only computation chunking performance in
+    `graph_optimize_corr`, not result correctness.
+    """
+    if _HAS_PYMETIS:
+        _, membership = _pymetis.part_graph(n_parts, adjacency=adj_list(G))
+        return membership
+    from networkx.algorithms.community import greedy_modularity_communities
+
+    nodes_sorted = sorted(G.nodes)
+    if n_parts <= 1:
+        return [0] * len(nodes_sorted)
+    try:
+        comms = list(greedy_modularity_communities(G, best_n=n_parts))
+    except (ValueError, nx.NetworkXError):
+        # Asking for more partitions than the graph can yield. Fall back
+        # further to connected components — every node still gets a label.
+        comms = list(nx.connected_components(G))
+    node_to_part = {n: i for i, c in enumerate(comms) for n in c}
+    return [node_to_part[n] for n in nodes_sorted]
 
 
 @darr.as_gufunc(signature="(p,f),(i),(i)->(i)", output_dtypes=[float])
