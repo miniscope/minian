@@ -509,7 +509,7 @@ class CNMFViewer:
         self.strm_f.add_subscriber(self.callback_f)
         self.strm_uid = Selection1D()
         self.strm_uid.add_subscriber(self.callback_uid)
-        Stream_usub = Stream.define("Stream_usub", usub=param.list())
+        Stream_usub = Stream.define("Stream_usub", usub=param.List())
         self.strm_usub = Stream_usub()
         self.strm_usub.add_subscriber(self.callback_usub)
         self.usub_sel = self.strm_usub.usub
