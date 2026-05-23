@@ -45,8 +45,6 @@ except ImportError:
         return wrapper
 
 
-
-
 def get_noise_fft(
     varr: xr.DataArray, noise_range=(0.25, 0.5), noise_method="logmexp"
 ) -> xr.DataArray:
