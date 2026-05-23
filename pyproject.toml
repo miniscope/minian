@@ -21,7 +21,6 @@ dependencies = [
     "natsort",
     "netcdf4",
     "networkx>=2.4",
-    "numba>=0.52.0",
     "numpy>=1.20.2",
     "opencv-python>=4.2.0.34",
     "pandas>=1.2.3",
@@ -41,7 +40,8 @@ dependencies = [
     "xarray>=0.17.0",
     "zarr",
 ]
-requires-python = ">=3.9"
+
+requires-python = ">=3.10"
 readme = "README.md"
 license = {text = "GPL-3.0"}
 classifiers = [
@@ -57,7 +57,11 @@ Documentation = "https://minian.readthedocs.io/"
 minian-install = "minian.install:main"
 
 [project.optional-dependencies]
+numba = [
+    "numba>=0.52.0",
+]
 test = [
+    "minian[numba]",
     "pytest>=8.4.1",
 ]
 [build-system]
@@ -66,6 +70,13 @@ build-backend = "pdm.backend"
 
 [tool.pdm]
 distribution = true
+
+[tool.pdm.scripts]
+lock.composite = [
+    'pdm lock --with :all --python=">=3.10,<3.12"',
+    'pdm lock --with :all --python=">=3.12,<3.14" --append',
+    'pdm lock --with :all --python=">=3.14" --append'
+]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
