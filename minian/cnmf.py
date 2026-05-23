@@ -877,7 +877,7 @@ def update_temporal(
     A_inter = sparse.tensordot(A_sps, A_sps, axes=[(1, 2), (1, 2)])
     A_usum = np.tile(A_sps.sum(axis=(1, 2)).todense(), (A_sps.shape[0], 1))
     A_usum = A_usum + A_usum.T
-    jac = scipy.sparse.csc_matrix(A_inter / (A_usum - A_inter) > jac_thres)
+    jac = (A_inter / (A_usum - A_inter) > jac_thres).tocsc()
     unit_labels = label_connected(jac)
     YrA = YrA.assign_coords(unit_labels=("unit_id", unit_labels))
     print("updating temporal components")
