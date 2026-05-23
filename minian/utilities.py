@@ -854,6 +854,7 @@ def custom_arr_optimize(
     rename_dict: Optional[dict] = None,
     rewrite_dict: Optional[dict] = None,
     keep_patterns=[],
+    **kwargs,
 ) -> dict:
     """
     Customized implementation of array optimization function.
