@@ -2081,10 +2081,13 @@ def visualize_temporal_update(
     )
     return (
         hv_unit.relabel("Current Unit: Temporal Traces")
-        + hv.NdLayout(
-            {"Simulated Pulse Response": hv_pul, "Spatial Footprint": hv_A},
-            kdims="Current Unit",
-        )
+        # NdLayout in modern HoloViews requires all children to be the same
+        # element type. `hv_pul` is an NdOverlay (datashaded curves) and
+        # `hv_A` is an Image; combine them with `+` (a permissive Layout)
+        # and preserve labels with `.relabel()`. The `Current Unit` kdim
+        # is dropped — it was only acting as a header label here.
+        + hv_pul.relabel("Simulated Pulse Response")
+        + hv_A.relabel("Spatial Footprint")
     ).cols(1)
 
 
