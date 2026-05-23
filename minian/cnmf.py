@@ -8,7 +8,6 @@ import cvxpy as cvx
 import dask as da
 import dask.array as darr
 import networkx as nx
-import numba as nb
 import numpy as np
 import pandas as pd
 import pyfftw.interfaces.numpy_fft as numpy_fft
@@ -34,6 +33,18 @@ from .utilities import (
     save_minian,
     med_baseline,
 )
+
+try:
+    from numba import jit
+except ImportError:
+    from typing import Callable
+
+    def jit(**kwargs) -> Callable:
+        def wrapper(fn: Callable) -> Callable:
+            return fn
+        return wrapper
+
+
 
 
 def get_noise_fft(
@@ -1894,7 +1905,7 @@ def smooth_corr(
     return idx_corr(X, ridx, cidx)
 
 
-@nb.jit(nopython=True, nogil=True, cache=True)
+@jit(nopython=True, nogil=True, cache=True)
 def idx_corr(X: np.ndarray, ridx: np.ndarray, cidx: np.ndarray) -> np.ndarray:
     """
     Compute partial pairwise correlation based on index.
