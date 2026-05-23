@@ -395,6 +395,11 @@ def update_spatial(
                     C_store=C_store,
                     f=f_in,
                 )
+                # update_spatial_block's gufunc returns sparse.COO chunks but
+                # the @as_gufunc decorator declares dense `output_dtypes=float`.
+                # Force sparse meta here so darr.block dispatches consistently
+                # in modern dask (which dispatches by chunk meta, not dtype).
+                cur_blk = cur_blk.map_blocks(sparse.COO, dtype=cur_blk.dtype)
             else:
                 cur_blk = darr.array(sparse.zeros(cur_sub.shape))
             A_new[hblk, wblk, 0] = cur_blk
@@ -407,6 +412,8 @@ def update_spatial(
             C_store=C_store,
             f=f_in,
         )
+        # Same meta mismatch as above: declared dense, actually sparse.
+        A_new = A_new.map_blocks(sparse.COO, dtype=A_new.dtype)
     with da.config.set(**{"optimization.fuse.ave-width": 6}):
         A_new = da.optimize(A_new)[0]
     A_new = xr.DataArray(
