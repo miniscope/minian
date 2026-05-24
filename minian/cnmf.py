@@ -38,9 +38,7 @@ try:
 
     _HAS_PYMETIS = True
 except ImportError:
-    # pymetis is the gold-standard k-way graph-partition library but its
-    # only build artifact is from source — no Windows wheels on PyPI for
-    # any version. Fall back to a pure-Python NetworkX partition below.
+    # pymetis doesn't build windows wheels - fallback to nx if not present
     _pymetis = None
     _HAS_PYMETIS = False
 
