@@ -1429,7 +1429,6 @@ def datashade_ndcurve(
         aggregator=count_cat(kdim),
         color_key=dict(color_key),
         min_alpha=200,
-        normalization="linear",
     )
     if spread:
         ds_ovly = dynspread(ds_ovly)
