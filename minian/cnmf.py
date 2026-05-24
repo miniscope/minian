@@ -1892,7 +1892,7 @@ def _partition_graph(G: nx.Graph, n_parts: int) -> list[int]:
     """
     Partition `G` into `n_parts` chunks, returning a per-node partition index.
 
-    Uses pymetis (min-edge-cut, gold standard) when available. Otherwise falls
+    Uses pymetis when available. Otherwise falls
     back to NetworkX's greedy_modularity_communities — pure Python, ships
     with networkx, slower for very large graphs but lets minian install on
     platforms without a pymetis wheel (notably Windows).
