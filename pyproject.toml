@@ -26,6 +26,7 @@ dependencies = [
     "pandas>=1.2.3",
     "panel>=0.8.0",
     "pyfftw>=0.12.0",
+    "pymetis>=2020.1",
     "rechunker>=0.3.3",
     "scikit-image>=0.18.1",
     "scikit-learn>=0.22.1",
@@ -58,13 +59,6 @@ minian-install = "minian.install:main"
 [project.optional-dependencies]
 numba = [
     "numba>=0.52.0",
-]
-# Faster graph partitioning in graph_optimize_corr. Falls back to a pure-Python
-# NetworkX community-detection routine when pymetis isn't available — same
-# correctness, slower for very large graphs. Optional because pymetis has no
-# Windows wheels on PyPI and the from-source build requires C tooling.
-performance = [
-    "pymetis>=2020.1",
 ]
 test = [
     "minian[numba]",
