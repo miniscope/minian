@@ -2,6 +2,7 @@ import os
 import subprocess
 
 import pandas as pd
+import pytest
 
 
 def test_cross_reg_notebook():
@@ -23,8 +24,10 @@ def test_cross_reg_notebook():
     cents = pd.read_pickle("./demo_data/cents.pkl")
     mappings = pd.read_pickle("./demo_data/mappings.pkl")
     assert len(cents) == 508
-    assert int(cents["height"].sum()) == 99091
-    assert int(cents["width"].sum()) == 213627
+    # Use a relative tolerance: the exact centroid sums drift slightly
+    # (~0.005%) across numpy/scipy/scikit-image versions.
+    assert cents["height"].sum() == pytest.approx(99091, rel=1e-3)
+    assert cents["width"].sum() == pytest.approx(213627, rel=1e-3)
     assert len(mappings) == 431
     assert mappings[("group", "group")].value_counts().to_dict() == {
         ("session2",): 182,
