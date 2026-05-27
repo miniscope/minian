@@ -51,7 +51,7 @@ jobs:
       - name: Install minian and test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[test]' pytest-cov ruff
+          pip install -e '.[test]' pytest-cov ruff -c requirements/ci-constraints.txt
       - name: Lint with ruff
         run: |
           ruff check minian

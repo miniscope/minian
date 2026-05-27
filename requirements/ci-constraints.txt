@@ -1,0 +1,25 @@
+# CI dependency pins — reproduce the snapshot minian's (already-patched)
+# source is verified to run the full pipeline against.
+#
+# minian's cnmf.py/utilities.py on the py39 branch already carry the
+# compatibility fixes (sparse .tocsc(), update_spatial_block sparse meta,
+# custom_arr_optimize **kwargs), and a native conda env runs pipeline.ipynb
+# end-to-end with this *exact* source on the versions below. With the
+# unpinned pyproject, CI resolves bleeding-edge dask 2026 / numpy 2 /
+# pandas 3, which crashes update_temporal's distributed compute
+# (FutureCancelledError: lost dependencies). Supporting the bleeding-edge
+# stack is tracked as future work; until then CI tests this proven snapshot.
+#
+# Only the libraries that differ from the proven set are pinned; everything
+# else (scipy, scikit-image/-learn, zarr, xarray, scs, ecos, ...) already
+# resolves to a compatible version.
+dask==2024.8.2
+distributed==2024.8.2
+numpy==1.26.4
+numba==0.59.1
+pandas==2.3.3
+cvxpy==1.7.5
+sparse==0.15.5
+bokeh==3.4.2
+holoviews==1.20.2
+datashader==0.17.0
