@@ -40,11 +40,18 @@ jobs:
       - name: Set up ffmpeg
         # ffmpeg-python is only a wrapper; the tests/notebooks need the
         # actual ffmpeg/ffprobe binaries (previously provided by conda).
-        uses: FedericoCarboni/setup-ffmpeg@v3
+        # Installed via the OS package manager so it works on the arm64
+        # macOS runners too.
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y ffmpeg
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            brew install ffmpeg
+          fi
       - name: Install minian and test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[test]' pytest-cov ruff
+          pip install -e '.[test]' pytest-cov pytest-rerunfailures ruff
       - name: Lint with ruff
         run: |
           ruff check minian
