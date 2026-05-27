@@ -53,7 +53,7 @@ jobs:
           fi
       - name: Run tests and collect coverage
         run: |
-          pytest -v --color=yes --exitfirst --cov=minian --pyargs minian
+          pytest -v --color=yes --cov=minian --pyargs minian
           mkdir -p artifact
           cp -r img artifact/img
       - name: Generate xml coverage report
