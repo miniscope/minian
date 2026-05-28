@@ -18,53 +18,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # pymetis has no Windows wheel on PyPI and its sdist won't build on
-        # Windows (bundled METIS GKlib requires POSIX `sys/resource.h`); the
-        # Windows job installs it via conda-forge instead (see steps below).
-        os: ["ubuntu-latest", "macos-latest", "windows-latest"]
-        # Scope for this PR: Python 3.10 across all three OS. Extending the
-        # matrix to 3.11+ is tracked as follow-up -- newer Pythons hit
-        # missing upstream wheels (numcodecs cp311+ on macOS, etc.) and
-        # the Windows conda env has additional rough edges on cp314.
+        # windows-latest is dropped: pymetis has no PyPI Windows wheel and
+        # its sdist won't build on Windows (bundled METIS GKlib requires the
+        # POSIX header sys/resource.h). Restoring it through conda-forge is
+        # tracked as follow-up -- conda env activation on Windows runners
+        # interacts poorly with the default GHA shell and bypasses mamba/pip
+        # invocations.
+        os: ["ubuntu-latest", "macos-latest"]
+        # Scope for this PR: Python 3.10 across both OS. Extending the matrix
+        # to 3.11+ is tracked as follow-up -- newer Pythons hit missing
+        # upstream wheels (numcodecs cp311+ on macOS, etc.).
         python-version: ["3.10"]
     defaults:
       run:
-        # On Windows the conda env from setup-miniconda needs to be on PATH;
-        # `bash -el {0}` triggers conda's profile script. On Linux/macOS the
-        # `-l` flag is a no-op for our purposes.
-        shell: bash -el {0}
+        shell: bash
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Set up Python ${{ matrix.python-version }} (Linux/macOS)
-        if: ${{ runner.os != 'Windows' }}
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-
-      - name: Set up Python ${{ matrix.python-version }} via conda-forge (Windows)
-        if: ${{ runner.os == 'Windows' }}
-        uses: conda-incubator/setup-miniconda@v3
-        with:
-          python-version: ${{ matrix.python-version }}
-          miniforge-version: latest
-          channels: conda-forge
-          activate-environment: minian-ci
-          auto-activate-base: false
-          use-mamba: true
-
-      - name: Install native deps via conda (Windows only)
-        if: ${{ runner.os == 'Windows' }}
-        # pymetis: no PyPI Windows wheel (see matrix comment).
-        # ffmpeg: ships actual binaries; matches the Linux/macOS branch below.
-        run: |
-          mamba install -y pymetis ffmpeg
-
-      - name: Set up ffmpeg (Linux/macOS)
-        if: ${{ runner.os != 'Windows' }}
+      - name: Set up ffmpeg
         # ffmpeg-python is only a wrapper; the tests/notebooks need the
         # actual ffmpeg/ffprobe binaries (previously provided by conda).
         # Installed via the OS package manager so it works on the arm64
@@ -75,46 +52,28 @@ jobs:
           elif [ "$RUNNER_OS" = "macOS" ]; then
             brew install ffmpeg
           fi
-
       - name: Install minian and test dependencies
-        # On Windows we run inside a conda env that already has pymetis +
-        # ffmpeg; pdm would install into its own venv (or __pypackages__/)
-        # outside the conda env, leaving the test subprocesses unable to
-        # find ffmpeg.exe. Use plain pip so everything lives in one
-        # environment. Linux/macOS keep the pdm/lockfile flow.
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            python -m pip install ".[test]"
-          else
-            python -m pip install pdm
-            pdm install --with test
-          fi
-
+          python -m pip install pdm
+          pdm install --with test
       - name: Run tests and collect coverage
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            python -m pytest
-          else
-            pdm run test
-          fi
+          pdm run test
           mkdir -p artifact
           cp -r img artifact/img
-
       - name: Generate xml coverage report
         if: ${{ runner.os == 'Linux' }}
         run: |
           pdm run coverage xml
-
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         if: ${{ runner.os == 'Linux' }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
-
       - name: Upload notebook artifacts
         uses: actions/upload-artifact@v4
-        if: ${{ runner.os == 'Linux' && matrix.python-version == '3.12' }}
+        if: ${{ runner.os == 'Linux' && matrix.python-version == '3.10' }}
         with:
           name: notebooks-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifact
