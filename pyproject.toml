@@ -79,10 +79,11 @@ build-backend = "pdm.backend"
 distribution = true
 
 [tool.pdm.scripts]
+# CI exercises only Python 3.10 (see .github/workflows/testandcov.yml).
+# Extending this to multiple Python ranges is a follow-up; pair it with
+# expanding the CI matrix once upstream wheels stabilize for 3.11+.
 lock.composite = [
-    'pdm lock --with :all --python=">=3.10,<3.12"',
-    'pdm lock --with :all --python=">=3.12,<3.14" --append',
-    'pdm lock --with :all --python=">=3.14" --append'
+    'pdm lock --with :all --python=">=3.10,<3.11"',
 ]
 test = "pytest"
 
