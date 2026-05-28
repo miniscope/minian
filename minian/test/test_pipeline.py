@@ -10,6 +10,8 @@ from ..utilities import open_minian
 def test_pipeline_notebook():
     os.makedirs("artifact", exist_ok=True)
     args = [
+        sys.executable,
+        "-m",
         "jupyter",
         "nbconvert",
         "--to",
