@@ -519,6 +519,7 @@ def est_motion_perframe(
         src,
         dst,
         upsample_factor=upsample,
+        normalization=None,
     )
     if mesh_size is None:
         return -sh
