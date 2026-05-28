@@ -63,6 +63,8 @@ numba = [
 test = [
     "minian[numba]",
     "pytest>=8.4.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.14",
 ]
 [build-system]
 requires = ["pdm-backend"]
@@ -77,6 +79,7 @@ lock.composite = [
     'pdm lock --with :all --python=">=3.12,<3.14" --append',
     'pdm lock --with :all --python=">=3.14" --append'
 ]
+test = "pytest"
 
 [tool.commitizen]
 name = "cz_conventional_commits"
@@ -94,6 +97,12 @@ select = ["UP"]
 fixable = ["ALL"]
 
 [tool.pytest.ini_options]
+addopts = [
+    '-v',
+    '--color=tes',
+    '--cov=minian',
+    '--pyargs minian',
+]
 testpaths = [
   "minian/test"
 ]
