@@ -2,7 +2,8 @@ import functools as fct
 import itertools as itt
 import os
 from collections import OrderedDict
-from typing import Callable, Optional, Union
+from typing import Optional, Union
+from collections.abc import Callable
 from uuid import uuid4
 
 import colorcet as cc
@@ -91,7 +92,7 @@ class VArrayViewer:
 
     def __init__(
         self,
-        varr: Union[xr.DataArray, list[xr.DataArray], xr.Dataset],
+        varr: xr.DataArray | list[xr.DataArray] | xr.Dataset,
         framerate=30,
         summary=["mean"],
         meta_dims: list[str] = None,
@@ -414,11 +415,11 @@ class CNMFViewer:
 
     def __init__(
         self,
-        minian: Optional[xr.Dataset] = None,
-        A: Optional[xr.DataArray] = None,
-        C: Optional[xr.DataArray] = None,
-        S: Optional[xr.DataArray] = None,
-        org: Optional[xr.DataArray] = None,
+        minian: xr.Dataset | None = None,
+        A: xr.DataArray | None = None,
+        C: xr.DataArray | None = None,
+        S: xr.DataArray | None = None,
+        org: xr.DataArray | None = None,
         sortNN=True,
     ):
         """
@@ -1215,8 +1216,8 @@ def write_vid_blk(arr, vpath, options):
 
 def write_video(
     arr: xr.DataArray,
-    vname: Optional[str] = None,
-    vpath: Optional[str] = ".",
+    vname: str | None = None,
+    vpath: str | None = ".",
     norm=True,
     options={"crf": "18", "preset": "ultrafast"},
 ) -> str:
@@ -1300,9 +1301,9 @@ def concat_video_recursive(vlist, vname=None):
 def generate_videos(
     varr: xr.DataArray,
     Y: xr.DataArray,
-    A: Optional[xr.DataArray] = None,
-    C: Optional[xr.DataArray] = None,
-    AC: Optional[xr.DataArray] = None,
+    A: xr.DataArray | None = None,
+    C: xr.DataArray | None = None,
+    AC: xr.DataArray | None = None,
     nfm_norm: int = None,
     gain=1.5,
     vpath=".",
@@ -1393,7 +1394,7 @@ def generate_videos(
 
 
 def datashade_ndcurve(
-    ovly: hv.NdOverlay, kdim: Optional[Union[str, list[str]]] = None, spread=False
+    ovly: hv.NdOverlay, kdim: str | list[str] | None = None, spread=False
 ) -> hv.Overlay:
     """
     Apply datashading to an overlay of curves with legends.
@@ -1630,7 +1631,7 @@ def centroid(A: xr.DataArray, verbose=False) -> pd.DataFrame:
 
 
 def visualize_preprocess(
-    fm: xr.DataArray, fn: Optional[Callable] = None, include_org=True, **kwargs
+    fm: xr.DataArray, fn: Callable | None = None, include_org=True, **kwargs
 ) -> hv.HoloMap:
     """
     Generalized visualization of preprocessing functions.
@@ -1714,7 +1715,7 @@ def visualize_preprocess(
 
 
 def visualize_seeds(
-    max_proj: xr.DataArray, seeds: pd.DataFrame, mask: Optional[str] = None
+    max_proj: xr.DataArray, seeds: pd.DataFrame, mask: str | None = None
 ) -> hv.Overlay:
     """
     Visualization of seeds.
@@ -1810,7 +1811,7 @@ def visualize_gmm_fit(
 def visualize_spatial_update(
     A_dict: dict,
     C_dict: dict,
-    kdims: Optional[Union[str, list[str]]] = None,
+    kdims: str | list[str] | None = None,
     norm=True,
     datashading=True,
 ) -> hv.HoloMap:
@@ -1922,7 +1923,7 @@ def visualize_temporal_update(
     g_dict: dict,
     sig_dict: dict,
     A_dict: dict,
-    kdims: Optional[Union[str, list[str]]] = None,
+    kdims: str | list[str] | None = None,
     norm=True,
     datashading=True,
 ) -> hv.HoloMap:
@@ -2132,7 +2133,7 @@ def NNsort(cents: pd.DataFrame) -> pd.Series:
     return result
 
 
-def visualize_motion(motion: xr.DataArray) -> Union[hv.Layout, hv.NdOverlay]:
+def visualize_motion(motion: xr.DataArray) -> hv.Layout | hv.NdOverlay:
     """
     Visualize result of motion estimation.
 

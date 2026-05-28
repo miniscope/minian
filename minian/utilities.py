@@ -8,7 +8,8 @@ from os import listdir
 from os.path import isdir, isfile
 from os.path import join as pjoin
 from pathlib import Path
-from typing import Callable, Optional, Union
+from typing import Optional, Union
+from collections.abc import Callable
 from uuid import uuid4
 
 import _operator
@@ -37,10 +38,10 @@ from tifffile import TiffFile, imread
 def load_videos(
     vpath: str,
     pattern=r"msCam[0-9]+\.avi$",
-    dtype: Union[str, type] = np.float64,
-    downsample: Optional[dict] = None,
+    dtype: str | type = np.float64,
+    downsample: dict | None = None,
     downsample_strategy="subset",
-    post_process: Optional[Callable] = None,
+    post_process: Callable | None = None,
 ) -> xr.DataArray:
     """
     Load multiple videos in a folder and return a `xr.DataArray`.
@@ -276,8 +277,8 @@ def load_avi_perframe(fname: str, fid: int) -> np.ndarray:
 
 
 def open_minian(
-    dpath: str, post_process: Optional[Callable] = None, return_dict=False
-) -> Union[dict, xr.Dataset]:
+    dpath: str, post_process: Callable | None = None, return_dict=False
+) -> dict | xr.Dataset:
     """
     Load an existing minian dataset.
 
@@ -352,7 +353,7 @@ def open_minian_mf(
     sub_dirs: list[str] = [],
     exclude=True,
     **kwargs,
-) -> Union[xr.Dataset, pd.DataFrame]:
+) -> xr.Dataset | pd.DataFrame:
     """
     Open multiple minian datasets across multiple directories.
 
@@ -440,9 +441,9 @@ def open_minian_mf(
 def save_minian(
     var: xr.DataArray,
     dpath: str,
-    meta_dict: Optional[dict] = None,
+    meta_dict: dict | None = None,
     overwrite=False,
-    chunks: Optional[dict] = None,
+    chunks: dict | None = None,
     compute=True,
     mem_limit="500MB",
 ) -> xr.DataArray:
@@ -551,7 +552,7 @@ def save_minian(
     return arr
 
 
-def xrconcat_recursive(var: Union[dict, list], dims: list[str]) -> xr.Dataset:
+def xrconcat_recursive(var: dict | list, dims: list[str]) -> xr.Dataset:
     """
     Recursively concatenate `xr.DataArray` over multiple dimensions.
 
@@ -678,7 +679,7 @@ def get_optimal_chk(
     arr: xr.DataArray,
     dim_grp=[("frame",), ("height", "width")],
     csize=256,
-    dtype: Optional[type] = None,
+    dtype: type | None = None,
 ) -> dict:
     """
     Compute the optimal chunk size across all dimensions of the input array.
@@ -851,8 +852,8 @@ def custom_arr_optimize(
     keys: list,
     fast_funcs: list = FAST_FUNCTIONS,
     inline_patterns=[],
-    rename_dict: Optional[dict] = None,
-    rewrite_dict: Optional[dict] = None,
+    rename_dict: dict | None = None,
+    rewrite_dict: dict | None = None,
     keep_patterns=[],
     **kwargs,
 ) -> dict:
@@ -919,7 +920,7 @@ def custom_arr_optimize(
     return dsk
 
 
-def rewrite_key(key: Union[str, tuple], rwdict: dict) -> str:
+def rewrite_key(key: str | tuple, rwdict: dict) -> str:
     """
     Rewrite a task key according to `rwdict`.
 
@@ -959,7 +960,7 @@ def rewrite_key(key: Union[str, tuple], rwdict: dict) -> str:
 
 
 def custom_fused_keys_renamer(
-    keys: list, max_fused_key_length=120, rename_dict: Optional[dict] = None
+    keys: list, max_fused_key_length=120, rename_dict: dict | None = None
 ) -> str:
     """
     Custom implmentation to create new keys for `fuse` tasks.
@@ -1017,7 +1018,7 @@ def custom_fused_keys_renamer(
         return (_enforce_max_key_limit(concatenated_name),) + first_key[1:]
 
 
-def split_key(key: Union[tuple, str], rename_dict: Optional[dict] = None) -> str:
+def split_key(key: tuple | str, rename_dict: dict | None = None) -> str:
     """
     Split, rename and filter task keys.
 
@@ -1047,7 +1048,7 @@ def split_key(key: Union[tuple, str], rename_dict: Optional[dict] = None) -> str
         return kls[0]
 
 
-def check_key(key: Union[str, tuple], pat: str) -> bool:
+def check_key(key: str | tuple, pat: str) -> bool:
     """
     Check whether `key` contains pattern.
 
@@ -1069,7 +1070,7 @@ def check_key(key: Union[str, tuple], pat: str) -> bool:
         return bool(re.search(pat, key[0]))
 
 
-def check_pat(key: Union[str, tuple], pat_ls: list[str]) -> bool:
+def check_pat(key: str | tuple, pat_ls: list[str]) -> bool:
     """
     Check whether `key` contains any pattern in a list.
 
@@ -1185,7 +1186,7 @@ def unique_keys(keys: list) -> np.ndarray:
     return np.unique(new_keys)
 
 
-def get_keys_pat(pat: str, keys: list, return_all=False) -> Union[list, str]:
+def get_keys_pat(pat: str, keys: list, return_all=False) -> list | str:
     """
     Filter a list of task keys by pattern.
 

@@ -37,7 +37,7 @@ from .utilities import (
 try:
     from numba import jit
 except ImportError:
-    from typing import Callable
+    from collections.abc import Callable
 
     def jit(**kwargs) -> Callable:
         def wrapper(fn: Callable) -> Callable:
@@ -483,8 +483,8 @@ def update_spatial_perpx(
     y: np.ndarray,
     alpha: float,
     sub: sparse.COO,
-    C_store: Union[np.ndarray, zarr.core.Array],
-    f: Optional[np.ndarray],
+    C_store: np.ndarray | zarr.core.Array,
+    f: np.ndarray | None,
 ) -> sparse.COO:
     """
     Update spatial footprints across all the cells for a single pixel.
@@ -670,17 +670,17 @@ def compute_trace(
 def update_temporal(
     A: xr.DataArray,
     C: xr.DataArray,
-    b: Optional[xr.DataArray] = None,
-    f: Optional[xr.DataArray] = None,
-    Y: Optional[xr.DataArray] = None,
-    YrA: Optional[xr.DataArray] = None,
+    b: xr.DataArray | None = None,
+    f: xr.DataArray | None = None,
+    Y: xr.DataArray | None = None,
+    YrA: xr.DataArray | None = None,
     noise_freq=0.25,
     p=2,
     add_lag="p",
     jac_thres=0.1,
     sparse_penal=1,
-    bseg: Optional[np.ndarray] = None,
-    med_wd: Optional[int] = None,
+    bseg: np.ndarray | None = None,
+    med_wd: int | None = None,
     zero_thres=1e-8,
     max_iters=200,
     use_smooth=True,
@@ -1053,7 +1053,7 @@ def lstsq_vec(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 
 def get_ar_coef(
-    y: np.ndarray, sn: float, p: int, add_lag: int, pad: Optional[int] = None
+    y: np.ndarray, sn: float, p: int, add_lag: int, pad: int | None = None
 ) -> np.ndarray:
     """
     Estimate Autoregressive coefficients of order `p` given a timeseries `y`.
@@ -1411,10 +1411,10 @@ def update_temporal_cvxpy(
 def unit_merge(
     A: xr.DataArray,
     C: xr.DataArray,
-    add_list: Optional[list[xr.DataArray]] = None,
+    add_list: list[xr.DataArray] | None = None,
     thres_corr=0.9,
-    noise_freq: Optional[float] = None,
-) -> tuple[xr.DataArray, xr.DataArray, Optional[list[xr.DataArray]]]:
+    noise_freq: float | None = None,
+) -> tuple[xr.DataArray, xr.DataArray, list[xr.DataArray] | None]:
     """
     Merge cells given spatial footprints and temporal components
 

@@ -15,7 +15,7 @@ from .utilities import custom_arr_optimize, xrconcat_recursive
 
 
 def estimate_motion(
-    varr: xr.DataArray, dim="frame", npart=3, chunk_nfm: Optional[int] = None, **kwargs
+    varr: xr.DataArray, dim="frame", npart=3, chunk_nfm: int | None = None, **kwargs
 ) -> xr.DataArray:
     """
     Estimate motion for each frame of the input movie data.
@@ -272,10 +272,10 @@ def est_motion_chunk(
     aggregation="mean",
     upsample=100,
     max_sh=100,
-    circ_thres: Optional[float] = None,
-    mesh_size: Optional[tuple[int, int]] = None,
+    circ_thres: float | None = None,
+    mesh_size: tuple[int, int] | None = None,
     niter=100,
-    bin_thres: Optional[float] = None,
+    bin_thres: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Carry out motion estimation per chunk.
@@ -477,9 +477,9 @@ def est_motion_perframe(
     src: np.ndarray,
     dst: np.ndarray,
     upsample: int,
-    src_ma: Optional[np.ndarray] = None,
-    dst_ma: Optional[np.ndarray] = None,
-    mesh_size: Optional[tuple[int, int]] = None,
+    src_ma: np.ndarray | None = None,
+    dst_ma: np.ndarray | None = None,
+    mesh_size: tuple[int, int] | None = None,
     niter=100,
 ) -> np.ndarray:
     """
@@ -725,8 +725,8 @@ def transform_perframe(
     fm: np.ndarray,
     tx_coef: np.ndarray,
     fill=0,
-    param: Optional[np.ndarray] = None,
-    mesh_size: Optional[tuple[int, int]] = None,
+    param: np.ndarray | None = None,
+    mesh_size: tuple[int, int] | None = None,
 ) -> np.ndarray:
     """
     Transform a single frame.

@@ -138,7 +138,7 @@ def max_proj_frame(varr: xr.DataArray, idx: np.ndarray) -> xr.DataArray:
 
 
 def local_max_roll(
-    fm: np.ndarray, k0: int, k1: int, diff: Union[int, float]
+    fm: np.ndarray, k0: int, k1: int, diff: int | float
 ) -> np.ndarray:
     """
     Compute local maxima of a frame with a range of kernel size.
@@ -279,10 +279,10 @@ def pnr_refine(
     varr: xr.DataArray,
     seeds: pd.DataFrame,
     noise_freq=0.25,
-    thres: Union[float, str] = 1.5,
+    thres: float | str = 1.5,
     q=(0.1, 99.9),
-    med_wnd: Optional[int] = None,
-) -> tuple[pd.DataFrame, xr.DataArray, Optional[GaussianMixture]]:
+    med_wnd: int | None = None,
+) -> tuple[pd.DataFrame, xr.DataArray, GaussianMixture | None]:
     """
     Filter seeds by thresholding peak-to-noise ratio.
 
@@ -555,7 +555,7 @@ def seeds_merge(
     seeds: pd.DataFrame,
     thres_dist=5,
     thres_corr=0.6,
-    noise_freq: Optional[float] = None,
+    noise_freq: float | None = None,
 ) -> pd.DataFrame:
     """
     Merge seeds based on spatial distance and temporal correlation of their
@@ -626,7 +626,7 @@ def initA(
     seeds: pd.DataFrame,
     thres_corr=0.8,
     wnd=10,
-    noise_freq: Optional[float] = None,
+    noise_freq: float | None = None,
 ) -> xr.DataArray:
     """
     Initialize spatial footprints from seeds.
