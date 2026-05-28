@@ -67,7 +67,7 @@ jobs:
       - name: Generate xml coverage report
         if: ${{ runner.os == 'Linux' }}
         run: |
-          coverage xml
+          pdm run coverage xml
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         if: ${{ runner.os == 'Linux' }}
