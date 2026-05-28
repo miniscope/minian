@@ -89,6 +89,13 @@ jobs:
       - name: Install minian and test dependencies
         run: |
           python -m pip install pdm
+          # On Windows we run inside a conda env (for pymetis + ffmpeg);
+          # tell pdm to install into that env directly instead of creating
+          # its own .venv, so all packages live in one environment and
+          # ffmpeg.exe stays on PATH for the test subprocesses.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            pdm config python.use_venv false
+          fi
           pdm install --with test
 
       - name: Run tests and collect coverage
