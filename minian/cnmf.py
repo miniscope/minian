@@ -1,14 +1,13 @@
 import functools as fct
 import os
 import warnings
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Union
 
 import cv2
 import cvxpy as cvx
 import dask as da
 import dask.array as darr
 import networkx as nx
-import numba as nb
 import numpy as np
 import pandas as pd
 import pyfftw.interfaces.numpy_fft as numpy_fft
@@ -34,6 +33,16 @@ from .utilities import (
     save_minian,
     med_baseline,
 )
+
+try:
+    from numba import jit
+except ImportError:
+    from collections.abc import Callable
+
+    def jit(**kwargs) -> Callable:
+        def wrapper(fn: Callable) -> Callable:
+            return fn
+        return wrapper
 
 
 def get_noise_fft(
@@ -84,7 +93,7 @@ def get_noise_fft(
         kwargs=dict(
             noise_range=noise_range, noise_method=noise_method, threads=threads
         ),
-        output_dtypes=[np.float],
+        output_dtypes=[float],
     )
     return sn
 
@@ -235,7 +244,7 @@ def update_spatial(
     normalize=True,
     size_thres=(9, None),
     in_memory=False,
-) -> Tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray]:
+) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray]:
     """
     Update spatial components given the input data and temporal dynamic for each
     cell.
@@ -386,8 +395,13 @@ def update_spatial(
                     C_store=C_store,
                     f=f_in,
                 )
+                # update_spatial_block's gufunc returns sparse.COO chunks but
+                # the @as_gufunc decorator declares dense `output_dtypes=float`.
+                # Force sparse meta here so darr.block dispatches consistently
+                # in modern dask (which dispatches by chunk meta, not dtype).
+                cur_blk = cur_blk.map_blocks(sparse.COO, dtype=cur_blk.dtype)
             else:
-                cur_blk = darr.array(sparse.zeros((cur_sub.shape)))
+                cur_blk = darr.array(sparse.zeros(cur_sub.shape))
             A_new[hblk, wblk, 0] = cur_blk
         A_new = darr.block(A_new.tolist())
     else:
@@ -398,6 +412,8 @@ def update_spatial(
             C_store=C_store,
             f=f_in,
         )
+        # Same meta mismatch as above: declared dense, actually sparse.
+        A_new = A_new.map_blocks(sparse.COO, dtype=A_new.dtype)
     with da.config.set(**{"optimization.fuse.ave-width": 6}):
         A_new = da.optimize(A_new)[0]
     A_new = xr.DataArray(
@@ -437,7 +453,7 @@ def update_spatial(
         )
     else:
         mask = (A_new.sum(["height", "width"]) > 0).compute()
-    print("{} out of {} units dropped".format(len(mask) - mask.sum().values, len(mask)))
+    print(f"{len(mask) - mask.sum().values} out of {len(mask)} units dropped")
     A_new = A_new.sel(unit_id=mask)
     if normalize:
         norm_fac = A_new.max(["height", "width"]).compute()
@@ -467,8 +483,8 @@ def update_spatial_perpx(
     y: np.ndarray,
     alpha: float,
     sub: sparse.COO,
-    C_store: Union[np.ndarray, zarr.core.Array],
-    f: Optional[np.ndarray],
+    C_store: np.ndarray | zarr.core.Array,
+    f: np.ndarray | None,
 ) -> sparse.COO:
     """
     Update spatial footprints across all the cells for a single pixel.
@@ -654,17 +670,17 @@ def compute_trace(
 def update_temporal(
     A: xr.DataArray,
     C: xr.DataArray,
-    b: Optional[xr.DataArray] = None,
-    f: Optional[xr.DataArray] = None,
-    Y: Optional[xr.DataArray] = None,
-    YrA: Optional[xr.DataArray] = None,
+    b: xr.DataArray | None = None,
+    f: xr.DataArray | None = None,
+    Y: xr.DataArray | None = None,
+    YrA: xr.DataArray | None = None,
     noise_freq=0.25,
     p=2,
     add_lag="p",
     jac_thres=0.1,
     sparse_penal=1,
-    bseg: Optional[np.ndarray] = None,
-    med_wd: Optional[int] = None,
+    bseg: np.ndarray | None = None,
+    med_wd: int | None = None,
     zero_thres=1e-8,
     max_iters=200,
     use_smooth=True,
@@ -673,7 +689,7 @@ def update_temporal(
     post_scal=False,
     scs_fallback=False,
     concurrent_update=False,
-) -> Tuple[
+) -> tuple[
     xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray
 ]:
     """
@@ -861,7 +877,7 @@ def update_temporal(
     A_inter = sparse.tensordot(A_sps, A_sps, axes=[(1, 2), (1, 2)])
     A_usum = np.tile(A_sps.sum(axis=(1, 2)).todense(), (A_sps.shape[0], 1))
     A_usum = A_usum + A_usum.T
-    jac = scipy.sparse.csc_matrix(A_inter / (A_usum - A_inter) > jac_thres)
+    jac = (A_inter / (A_usum - A_inter) > jac_thres).tocsc()
     unit_labels = label_connected(jac)
     YrA = YrA.assign_coords(unit_labels=("unit_id", unit_labels))
     print("updating temporal components")
@@ -889,10 +905,10 @@ def update_temporal(
         # issue a warning if expected memory demand is larger than 1G
         if mem_demand > 1e3:
             warnings.warn(
-                "{} cells will be updated togeter, "
-                "which takes roughly {} MB of memory. "
+                f"{cur_YrA.shape[0]} cells will be updated togeter, "
+                f"which takes roughly {mem_demand} MB of memory. "
                 "Consider merging the units "
-                "or changing jac_thres".format(cur_YrA.shape[0], mem_demand)
+                "or changing jac_thres"
             )
         if not warm_start:
             cur_C = None
@@ -992,7 +1008,7 @@ def update_temporal(
         int_ds["g"],
     )
     mask = (S_new.sum("frame") > 0).compute()
-    print("{} out of {} units dropped".format((~mask).sum().values, len(Ymask)))
+    print(f"{(~mask).sum().values} out of {len(Ymask)} units dropped")
     C_new, S_new, b0_new, c0_new, g = (
         C_new[mask],
         S_new[mask],
@@ -1037,7 +1053,7 @@ def lstsq_vec(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 
 def get_ar_coef(
-    y: np.ndarray, sn: float, p: int, add_lag: int, pad: Optional[int] = None
+    y: np.ndarray, sn: float, p: int, add_lag: int, pad: int | None = None
 ) -> np.ndarray:
     """
     Estimate Autoregressive coefficients of order `p` given a timeseries `y`.
@@ -1098,7 +1114,7 @@ def update_temporal_block(
     med_wd=None,
     concurrent=False,
     **kwargs
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Update temporal components given residule traces of a group of cells.
 
@@ -1203,7 +1219,7 @@ def update_temporal_block(
 
 def update_temporal_cvxpy(
     y: np.ndarray, g: np.ndarray, sn: np.ndarray, A=None, bseg=None, **kwargs
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Solve the temporal update optimization problem using `cvxpy`
 
@@ -1378,7 +1394,7 @@ def update_temporal_cvxpy(
                     raise ValueError
             except (cvx.SolverError, ValueError):
                 warnings.warn(
-                    "problem status is {}, returning zero".format(prob.status),
+                    f"problem status is {prob.status}, returning zero",
                     RuntimeWarning,
                 )
                 return [np.zeros(c.shape, dtype=float)] * 4
@@ -1395,10 +1411,10 @@ def update_temporal_cvxpy(
 def unit_merge(
     A: xr.DataArray,
     C: xr.DataArray,
-    add_list: Optional[List[xr.DataArray]] = None,
+    add_list: list[xr.DataArray] | None = None,
     thres_corr=0.9,
-    noise_freq: Optional[float] = None,
-) -> Tuple[xr.DataArray, xr.DataArray, Optional[List[xr.DataArray]]]:
+    noise_freq: float | None = None,
+) -> tuple[xr.DataArray, xr.DataArray, list[xr.DataArray] | None]:
     """
     Merge cells given spatial footprints and temporal components
 
@@ -1416,8 +1432,8 @@ def unit_merge(
         Spatial footprints of the cells.
     C : xr.DataArray
         Temporal component of cells.
-    add_list : List[xr.DataArray], optional
-        List of additional variables to be merged. By default `None`.
+    add_list : list[xr.DataArray], optional
+        list of additional variables to be merged. By default `None`.
     thres_corr : float, optional
         The threshold of correlation. Any pair of spatially overlapping cells
         with correlation higher than this threshold will be transitively grouped
@@ -1433,8 +1449,8 @@ def unit_merge(
         Merged spatial footprints of cells.
     C_merge : xr.DataArray
         Merged temporal components of cells.
-    add_list : List[xr.DataArray], optional
-        List of additional merged variables. Only returned if input `add_list`
+    add_list : list[xr.DataArray], optional
+        list of additional merged variables. Only returned if input `add_list`
         is not `None`.
     """
     print("computing spatial overlap")
@@ -1512,10 +1528,10 @@ def label_connected(adj: np.ndarray, only_connected=False) -> np.ndarray:
     try:
         np.fill_diagonal(adj, 0)
         adj = np.triu(adj)
-        g = nx.convert_matrix.from_numpy_matrix(adj)
+        g = nx.from_numpy_array(adj)
     except:
-        g = nx.convert_matrix.from_scipy_sparse_matrix(adj)
-    labels = np.zeros(adj.shape[0], dtype=np.int)
+        g = nx.from_scipy_sparse_array(adj)
+    labels = np.zeros(adj.shape[0], dtype=int)
     for icomp, comp in enumerate(nx.connected_components(g)):
         comp = list(comp)
         if only_connected and len(comp) == 1:
@@ -1799,7 +1815,7 @@ def graph_optimize_corr(
             npxs.append(len(pixels))
             pixels = set()
             eg_ls = []
-    print("pixel recompute ratio: {}".format(sum(npxs) / G.number_of_nodes()))
+    print(f"pixel recompute ratio: {sum(npxs) / G.number_of_nodes()}")
     print("computing correlations")
     corr_ls = da.compute(corr_ls)[0]
     corr = pd.Series(np.concatenate(corr_ls), index=np.concatenate(idx_ls), name="corr")
@@ -1847,7 +1863,7 @@ def adj_corr(
     )
 
 
-def adj_list(G: nx.Graph) -> List[np.ndarray]:
+def adj_list(G: nx.Graph) -> list[np.ndarray]:
     """
     Generate adjacency list representation from graph.
 
@@ -1858,7 +1874,7 @@ def adj_list(G: nx.Graph) -> List[np.ndarray]:
 
     Returns
     -------
-    adj_ls : List[np.ndarray]
+    adj_ls : list[np.ndarray]
         The adjacency list representation of graph.
     """
     gdict = nx.to_dict_of_dicts(G)
@@ -1894,7 +1910,7 @@ def smooth_corr(
     return idx_corr(X, ridx, cidx)
 
 
-@nb.jit(nopython=True, nogil=True, cache=True)
+@jit(nopython=True, nogil=True, cache=True)
 def idx_corr(X: np.ndarray, ridx: np.ndarray, cidx: np.ndarray) -> np.ndarray:
     """
     Compute partial pairwise correlation based on index.
@@ -1936,7 +1952,7 @@ def idx_corr(X: np.ndarray, ridx: np.ndarray, cidx: np.ndarray) -> np.ndarray:
 
 def update_background(
     Y: xr.DataArray, A: xr.DataArray, C: xr.DataArray, b: xr.DataArray = None
-) -> Tuple[xr.DataArray, xr.DataArray]:
+) -> tuple[xr.DataArray, xr.DataArray]:
     """
     Update background terms given spatial and temporal components of cells.
 

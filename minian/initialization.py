@@ -1,7 +1,7 @@
 import functools as fct
 import itertools as itt
 import os
-from typing import Optional, Tuple, Union
+from typing import Optional, Union
 
 import cv2
 import dask as da
@@ -138,7 +138,7 @@ def max_proj_frame(varr: xr.DataArray, idx: np.ndarray) -> xr.DataArray:
 
 
 def local_max_roll(
-    fm: np.ndarray, k0: int, k1: int, diff: Union[int, float]
+    fm: np.ndarray, k0: int, k1: int, diff: int | float
 ) -> np.ndarray:
     """
     Compute local maxima of a frame with a range of kernel size.
@@ -192,7 +192,7 @@ def gmm_refine(
     n_components=2,
     valid_components=1,
     mean_mask=True,
-) -> Tuple[pd.DataFrame, xr.DataArray, GaussianMixture]:
+) -> tuple[pd.DataFrame, xr.DataArray, GaussianMixture]:
     """
     Filter seeds by fitting a GMM to peak-to-peak values.
 
@@ -279,10 +279,10 @@ def pnr_refine(
     varr: xr.DataArray,
     seeds: pd.DataFrame,
     noise_freq=0.25,
-    thres: Union[float, str] = 1.5,
+    thres: float | str = 1.5,
     q=(0.1, 99.9),
-    med_wnd: Optional[int] = None,
-) -> Tuple[pd.DataFrame, xr.DataArray, Optional[GaussianMixture]]:
+    med_wnd: int | None = None,
+) -> tuple[pd.DataFrame, xr.DataArray, GaussianMixture | None]:
     """
     Filter seeds by thresholding peak-to-noise ratio.
 
@@ -389,7 +389,7 @@ def ptp_q(a: np.ndarray, q: tuple) -> float:
     a : np.ndarray
         Input array.
     q : tuple
-        Tuple specifying low and high percentile values.
+        tuple specifying low and high percentile values.
 
     Returns
     -------
@@ -555,7 +555,7 @@ def seeds_merge(
     seeds: pd.DataFrame,
     thres_dist=5,
     thres_corr=0.6,
-    noise_freq: Optional[float] = None,
+    noise_freq: float | None = None,
 ) -> pd.DataFrame:
     """
     Merge seeds based on spatial distance and temporal correlation of their
@@ -626,7 +626,7 @@ def initA(
     seeds: pd.DataFrame,
     thres_corr=0.8,
     wnd=10,
-    noise_freq: Optional[float] = None,
+    noise_freq: float | None = None,
 ) -> xr.DataArray:
     """
     Initialize spatial footprints from seeds.
@@ -725,8 +725,13 @@ def initA(
             tgt_nods["height"].values,
             tgt_nods["width"].values,
         )
-        cur_corr = pd.concat([src_corr, tgt_corr]).append(
-            {"corr": 1, "height": sd["height"], "width": sd["width"]}, ignore_index=True
+        cur_corr = pd.concat(
+            [
+                src_corr,
+                tgt_corr,
+                pd.DataFrame([{"corr": 1, "height": sd["height"], "width": sd["width"]}]),
+            ],
+            ignore_index=True,
         )
         cur_corr["iheight"] = cur_corr["height"].map(ih_dict)
         cur_corr["iwidth"] = cur_corr["width"].map(iw_dict)
