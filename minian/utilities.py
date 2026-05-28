@@ -34,6 +34,17 @@ from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import lsqr
 from tifffile import TiffFile, imread
 
+# dask >=2025 ships a new TaskSpec optimizer. The legacy `fuse` /
+# `inline_pattern` paths produce graphs the new scheduler can't track,
+# so `custom_arr_optimize` / `custom_delay_optimize` branch on this flag.
+try:
+    from dask.array.optimization import fuse_linear_task_spec
+
+    _DASK_HAS_TASK_SPEC = True
+except ImportError:
+    fuse_linear_task_spec = None
+    _DASK_HAS_TASK_SPEC = False
+
 
 def load_videos(
     vpath: str,
@@ -871,8 +882,9 @@ def custom_arr_optimize(
     inline_patterns : list, optional
         list of patterns of task keys to be inlined. By default `[]`.
     rename_dict : dict, optional
-        Dictionary mapping old task keys to new ones. Only used during fusing of
-        tasks. By default `None`.
+        Dictionary mapping old task key substrings to new ones. Treated as a
+        synonym of `rewrite_dict` (applied post-hoc as aliased renames for
+        dependency-link safety on dask >=2025). By default `None`.
     rewrite_dict : dict, optional
         Dictionary mapping old task key substrings to new ones. Applied at the
         end of optimization to all task keys. By default `None`.
@@ -892,31 +904,39 @@ def custom_arr_optimize(
     """
     # inlining lots of array operations ref:
     # https://github.com/dask/dask/issues/6668
-    if rename_dict:
-        key_renamer = fct.partial(custom_fused_keys_renamer, rename_dict=rename_dict)
-    else:
-        key_renamer = custom_fused_keys_renamer
     keep_keys = []
     if keep_patterns:
         key_ls = list(dsk.keys())
         for pat in keep_patterns:
             keep_keys.extend(list(filter(lambda k: check_key(k, pat), key_ls)))
+    # `rename_fused_keys` was a pre-2025 hook. dask >=2025 silently ignores
+    # it, and the custom renamer breaks dependency tracking on the new
+    # scheduler (FutureCancelledError: lost dependencies). `fuse_keys` /
+    # `fast_functions` are honored by old dask, ignored by new -- safe to leave.
     dsk = darr.optimization.optimize(
         dsk,
         keys,
         fuse_keys=keep_keys,
         fast_functions=fast_funcs,
-        rename_fused_keys=key_renamer,
     )
     if inline_patterns:
         dsk = inline_pattern(dsk, inline_patterns, inline_constants=False)
-    if rewrite_dict:
-        dsk_old = dsk.copy()
-        for key, val in dsk_old.items():
-            key_new = rewrite_key(key, rewrite_dict)
-            if key_new != key:
-                dsk[key_new] = val
-                dsk[key] = key_new
+    # Post-hoc key-rewrite for memory-throttle annotations
+    # (`tensordot` -> `tensordot_restricted` etc.). Relies on the legacy
+    # convention that a tuple-of-(str,*) task value is a key reference,
+    # which dask >=2025's TaskSpec graph no longer honors -- aliased keys
+    # become dangling references there. Skipped on new dask; this loses
+    # throttling at compute_AtC, the YrA optimize, and the viz merge.
+    # TODO: port to `dask.annotate(resources=...)` at the call sites.
+    if not _DASK_HAS_TASK_SPEC:
+        effective_rewrite = rewrite_dict if rewrite_dict is not None else rename_dict
+        if effective_rewrite:
+            dsk_old = dsk.copy()
+            for key, val in dsk_old.items():
+                key_new = rewrite_key(key, effective_rewrite)
+                if key_new != key:
+                    dsk[key_new] = val
+                    dsk[key] = key_new
     return dsk
 
 
@@ -1148,6 +1168,15 @@ def custom_delay_optimize(
     dsk : dict
         Optimized dask graph.
     """
+    if _DASK_HAS_TASK_SPEC:
+        # `optimization.fuse.delayed` defaults to False on dask >=2025, so
+        # `dask.delayed.optimize` is a no-op. Invoke `fuse_linear_task_spec`
+        # directly to keep per-frame chains fused. Skip the legacy
+        # `inline_pattern` / `inline_functions` paths -- they don't compose
+        # with the new TaskSpec graph. Flatten `keys` because nested lists
+        # (e.g. `da.compute([a, b])`) crash the fuser's internal `set(keys)`.
+        return fuse_linear_task_spec(ensure_dict(dsk), list(flatten(keys)))
+    # Legacy path for dask <2025.
     dsk, _ = fuse(ensure_dict(dsk), rename_keys=custom_fused_keys_renamer)
     if inline_patterns:
         dsk = inline_pattern(dsk, inline_patterns, inline_constants=False)
