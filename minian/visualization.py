@@ -1043,7 +1043,7 @@ class AlignViewer:
         # handling meta
         try:
             self.meta_dict = {
-                col: c.unique().tolist() for col, c in mappings["meta"].iteritems()
+                col: c.unique().tolist() for col, c in mappings["meta"].items()
             }
         except KeyError:
             self.meta_dict = None
