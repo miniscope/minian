@@ -22,21 +22,20 @@ jobs:
         # Windows (bundled METIS GKlib requires POSIX `sys/resource.h`); the
         # Windows job installs it via conda-forge instead (see steps below).
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        # 3.14 is intentionally omitted: numcodecs has no cp314 macOS wheel
+        # and the Windows conda env hits distributed-import NameErrors. Add
+        # back once those settle upstream.
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
         exclude:
           # Run only first and last versions on non-linux
           - os: "macos-latest"
             python-version: "3.11"
           - os: "macos-latest"
             python-version: "3.12"
-          - os: "macos-latest"
-            python-version: "3.13"
           - os: "windows-latest"
             python-version: "3.11"
           - os: "windows-latest"
             python-version: "3.12"
-          - os: "windows-latest"
-            python-version: "3.13"
     defaults:
       run:
         # On Windows the conda env from setup-miniconda needs to be on PATH;
