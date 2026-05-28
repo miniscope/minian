@@ -28,7 +28,6 @@ def test_can_load_videos(varr):
     assert varr.shape[0] == 900  # frames
     assert varr.shape[1] == 480  # height
     assert varr.shape[2] == 752  # width
-    return varr
 
 
 def test_remove_background(varr):

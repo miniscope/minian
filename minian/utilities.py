@@ -29,7 +29,7 @@ from dask.utils import ensure_dict
 from distributed.diagnostics.plugin import SchedulerPlugin
 from distributed.scheduler import SchedulerState, cast
 from natsort import natsorted
-from scipy.ndimage.filters import median_filter
+from scipy.ndimage import median_filter
 from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import lsqr
 from tifffile import TiffFile, imread
