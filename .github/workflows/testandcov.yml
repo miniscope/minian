@@ -55,22 +55,6 @@ jobs:
       - name: Lint with ruff
         run: |
           ruff check minian
-      - name: Configure dask cluster and disable interactive plots
-        # Run the pipeline notebook headless (no interactive holoviews/panel
-        # widgets) and with a single dask worker sized to ~75% of the runner's
-        # actual RAM. Multiple small (4GB) workers thrash and lose dependencies
-        # during update_temporal on the newer dask/numpy stack; one fat worker
-        # with room to spare gets through without spilling.
-        run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            TOTAL_GB=$(( $(sysctl -n hw.memsize) / 1024 / 1024 / 1024 ))
-          else
-            TOTAL_GB=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 1024 / 1024 ))
-          fi
-          echo "Runner has ${TOTAL_GB}GB RAM; using 1 dask worker @ ~75%"
-          echo "MINIAN_NWORKERS=1" >> "$GITHUB_ENV"
-          echo "MINIAN_MEM_LIMIT=$(( TOTAL_GB * 3 / 4 ))GB" >> "$GITHUB_ENV"
-          echo "MINIAN_INTERACTIVE=False" >> "$GITHUB_ENV"
       - name: Run tests and collect coverage
         run: |
           pdm run test

@@ -5,7 +5,7 @@
 groups = ["default", "numba", "test"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:0b3d727a8e080398049f062db530f64e282e04457d7e17b00762a1a4242a6388"
+content_hash = "sha256:549ab7523d4ca80dd160fceab33f8872f3aadfe28aad28ab699b0a4a3aff1ba5"
 
 [[metadata.targets]]
 requires_python = ">=3.10,<3.12"
@@ -3248,7 +3248,7 @@ name = "psutil"
 version = "7.2.2"
 requires_python = ">=3.6"
 summary = "Cross-platform lib for process and system monitoring."
-groups = ["default"]
+groups = ["default", "test"]
 files = [
     {file = "psutil-7.2.2-cp313-cp313t-macosx_10_13_x86_64.whl", hash = "sha256:2edccc433cbfa046b980b0df0171cd25bcaeb3a68fe9022db0979e7aa74a826b"},
     {file = "psutil-7.2.2-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:e78c8603dcd9a04c7364f1a3e670cea95d51ee865e4efb3556a3a63adef958ea"},

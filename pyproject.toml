@@ -65,6 +65,7 @@ test = [
     "pytest>=8.4.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.14",
+    "psutil>=7.2.2",
 ]
 [build-system]
 requires = ["pdm-backend"]
@@ -99,9 +100,8 @@ fixable = ["ALL"]
 [tool.pytest.ini_options]
 addopts = [
     '-v',
-    '--color=tes',
+    '--color=yes',
     '--cov=minian',
-    '--pyargs minian',
 ]
 testpaths = [
   "minian/test"
