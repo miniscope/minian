@@ -1,7 +1,9 @@
 """Unit tests for discrete functions in ``minian.cnmf`` on synthetic input."""
 
 import json
+from unittest.mock import patch
 
+import dask.array as da
 import networkx as nx
 import numpy as np
 import pandas as pd
@@ -10,12 +12,14 @@ import scipy.sparse
 import xarray as xr
 from sklearn.neighbors import radius_neighbors_graph
 
+from .. import cnmf
 from ..cnmf import (
     adj_corr,
     filt_fft_vec,
     graph_optimize_corr,
     partition_diagnostics,
     spatial_partition,
+    unit_merge,
 )
 
 
@@ -310,24 +314,32 @@ class TestAdjCorr:
 
     ``test_returns_true_pearson`` pins the output against ``np.corrcoef``
     on the underlying traces (and, with ``freq``, against the same after
-    :func:`filt_fft_vec` lowpass smoothing). The other tests in this
-    class are surface properties (shape, invariance under chunking hints)
-    that only become meaningful because that test anchors the values.
+    :func:`filt_fft_vec` lowpass smoothing). The chunk parametrization
+    in that test also covers chunk-invariance directly: matching
+    np.corrcoef at chunk=4 AND chunk=64 makes it impossible for the two
+    to disagree with each other. The other tests in this class are
+    surface properties (shape, positions invariance) that only become
+    meaningful because that test anchors the values.
     """
 
+    @pytest.mark.parametrize("chunk", [4, 64])
     @pytest.mark.parametrize("freq", [None, 0.05])
-    def test_returns_true_pearson(self, freq, adj_corr_setup):
+    def test_returns_true_pearson(self, freq, chunk, adj_corr_setup):
         # Regression for the vsub.T axis bug (issue #302): adj_corr must
         # match np.corrcoef on the underlying pixel traces. Parametrized
         # on freq because the unsmoothed and smoothed branches of
         # construct_comput go through different gufunc paths -- both had
-        # the bug.
+        # the bug. Parametrized on chunk because that bug made idx_corr
+        # compute correlations between frame slices across the chunk's
+        # pixel subset, so its output depended on which other pixels
+        # happened to share the chunk -- matching np.corrcoef at
+        # multiple chunk sizes is a direct fingerprint of the fix.
         varr, adj, nod_df = adj_corr_setup(
             n=16, t=80, h=25, w=25, radius=8, seed=11
         )
         hs = nod_df["height"].values
         ws = nod_df["width"].values
-        out = adj_corr(varr, adj, nod_df, freq=freq).toarray()
+        out = adj_corr(varr, adj, nod_df, freq=freq, chunk=chunk).toarray()
 
         traces = np.stack(
             [varr.isel(height=hs[k], width=ws[k]).values for k in range(len(nod_df))]
@@ -341,22 +353,6 @@ class TestAdjCorr:
         for i, j in zip(*out.nonzero()):
             truth = np.corrcoef(traces_truth[i], traces_truth[j])[0, 1]
             assert out[i, j] == pytest.approx(truth, abs=1e-5)
-
-    @pytest.mark.parametrize("freq", [None, 0.05])
-    def test_chunk_invariant(self, freq, adj_corr_setup):
-        # The vsub.T bug made `idx_corr` compute correlations between frame
-        # slices across the chunk's pixel subset, so its output depended on
-        # which other pixels happened to share the chunk. Chunk-invariance
-        # is therefore a direct fingerprint of the bug being fixed:
-        # test_returns_true_pearson would pass for any single chunk size
-        # that happened to match np.corrcoef numerically, but only a
-        # genuinely correct implementation also matches across chunk sizes.
-        varr, adj, nod_df = adj_corr_setup(
-            n=16, t=80, h=25, w=25, radius=8, seed=11
-        )
-        small = adj_corr(varr, adj, nod_df, freq=freq, chunk=4).toarray()
-        big = adj_corr(varr, adj, nod_df, freq=freq, chunk=64).toarray()
-        assert np.allclose(small, big, atol=1e-5)
 
     def test_fallback_matches_explicit_positions(self, adj_corr_setup):
         varr, adj, nod_df = adj_corr_setup()
@@ -373,11 +369,16 @@ class TestAdjCorr:
         # Scrambled positions force a different partition tree but every
         # (i, j) correlation must remain the same scalar value. Anchored
         # against np.corrcoef by test_returns_true_pearson.
-        varr, adj, nod_df = adj_corr_setup(seed=7)
-        ref = adj_corr(varr, adj, nod_df, freq=None).toarray()
+        #
+        # `chunk` MUST be smaller than n for partitioning to engage --
+        # otherwise spatial_partition's recursion terminates at the root
+        # (one partition for everyone) and the positions argument is
+        # never read, making the test vacuously pass.
+        varr, adj, nod_df = adj_corr_setup(n=80, seed=7)
+        ref = adj_corr(varr, adj, nod_df, freq=None, chunk=8).toarray()
         bogus = np.random.RandomState(99).uniform(0, 1000, size=(len(nod_df), 2))
         scrambled = adj_corr(
-            varr, adj, nod_df, freq=None, positions=bogus
+            varr, adj, nod_df, freq=None, chunk=8, positions=bogus
         ).toarray()
         assert np.allclose(ref, scrambled)
 
@@ -477,6 +478,51 @@ class TestGraphOptimizeCorr:
         )
         json.dumps(nx.node_link_data(G, edges="links"))
 
+    def test_rejects_positions_node_count_mismatch(self, tiny_varr, line_graph_with_pos_attrs):
+        # If positions is misaligned with sorted(G.nodes), every idx_corr
+        # call would correlate the wrong pixel pairs -- a silent corruption
+        # bug. The raise is the only thing standing between a typo in a
+        # caller and silently-wrong correlations.
+        G = line_graph_with_pos_attrs(4)
+        too_few = np.zeros((3, 2), dtype=float)  # 4 nodes but 3 rows
+        with pytest.raises(ValueError, match="positions has 3 rows but G has 4 nodes"):
+            graph_optimize_corr(tiny_varr, G, freq=None, positions=too_few, chunk=2)
+
+
+# ---------------------------------------------------------------------------
+# unit_merge
+# ---------------------------------------------------------------------------
+
+
+class TestUnitMerge:
+    """Contract violations that should fail loudly rather than silently
+    corrupt downstream centroid computation."""
+
+    def test_rejects_zero_mass_footprints(self):
+        # The centroid formula `mom / mass` produces NaN when mass == 0,
+        # which would in turn make spatial_partition reject the centroids
+        # at a confusing call site downstream. unit_merge catches the bad
+        # input at the source and names the offending unit_id.
+        A_data = np.zeros((2, 4, 4), dtype=float)
+        A_data[0, 1, 1] = 1.0  # unit 10 has mass; unit 20 is all-zero
+        A = xr.DataArray(
+            da.from_array(A_data, chunks=(1, 4, 4)),
+            dims=("unit_id", "height", "width"),
+            coords={
+                "unit_id": [10, 20],
+                "height": np.arange(4),
+                "width": np.arange(4),
+            },
+        )
+        # C is unused before the raise; pass a dummy with matching unit_id.
+        C = xr.DataArray(
+            np.zeros((2, 5), dtype=float),
+            dims=("unit_id", "frame"),
+            coords={"unit_id": [10, 20], "frame": np.arange(5)},
+        )
+        with pytest.raises(ValueError, match="zero-mass footprints.*unit_id=\\[20\\]"):
+            unit_merge(A, C)
+
 
 # ---------------------------------------------------------------------------
 # partition_diagnostics
@@ -539,9 +585,8 @@ class TestPartitionDiagnostics:
         # _canonicalize_edge_pairs collapses both to unique (i<j) pairs; without
         # that, symmetric adj would double cross_edges and edges_per_partition.
         _, membership, adj = line_graph_membership(10, chunk=2)
-        from scipy.sparse import tril
         diag_sym = partition_diagnostics(membership, adj=adj)
-        diag_tri = partition_diagnostics(membership, adj=tril(adj, k=-1))
+        diag_tri = partition_diagnostics(membership, adj=scipy.sparse.tril(adj, k=-1))
         for key in ("total_edges", "cross_edges", "cross_fraction"):
             assert diag_sym[key] == diag_tri[key]
         assert (
@@ -598,9 +643,6 @@ class TestChunkKwargPlumbing:
         # adj_corr's downstream csr_matrix construction still works on
         # the real DataFrame return; the mock just records call args
         # alongside it.
-        from unittest.mock import patch
-        from .. import cnmf
-
         varr, adj, nod_df = adj_corr_setup(n=20, h=30, w=30, t=50, radius=5)
 
         with patch.object(
@@ -610,3 +652,37 @@ class TestChunkKwargPlumbing:
             adj_corr(varr, adj, nod_df, freq=None, chunk=5)
         forwarded = [call.kwargs["chunk"] for call in spy.call_args_list]
         assert forwarded == [20, 5]
+
+
+# ---------------------------------------------------------------------------
+# visualize_spatial_partition contract
+# ---------------------------------------------------------------------------
+
+
+class TestVisualizeSpatialPartition:
+    """The visualization layer is mostly covered by notebook execution in
+    test_pipeline.py; here we just pin the explicit contract violation
+    raise so that misaligned inputs fail loudly instead of silently
+    misrendering every point."""
+
+    def test_rejects_misaligned_positions_membership(self):
+        # Deferred import: the visualization module pulls in panel/bokeh
+        # at import time, which is heavier than the rest of the test
+        # file needs.
+        from ..visualization import visualize_spatial_partition
+
+        max_proj = xr.DataArray(
+            np.zeros((10, 10), dtype="float32"),
+            dims=("height", "width"),
+            coords={"height": np.arange(10), "width": np.arange(10)},
+        )
+        positions = np.zeros((5, 2), dtype=float)
+        membership = np.zeros(4, dtype=int)  # length mismatch
+        adj = scipy.sparse.csr_matrix((5, 5))
+        with pytest.raises(
+            ValueError,
+            match="positions has 5 rows but membership has 4",
+        ):
+            visualize_spatial_partition(
+                max_proj, positions, membership, adj=adj, n_frames=100
+            )
