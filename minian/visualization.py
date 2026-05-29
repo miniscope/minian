@@ -214,7 +214,7 @@ class VArrayViewer:
             )
             self.xyrange = RangeXY(source=im).rename(x_range="w", y_range="h")
             if not self._layout:
-                hv_box = hv.Polygons([]).options(
+                hv_box = hv.Rectangles([]).options(
                     fill_alpha=0.3, line_color="white"
                 )
                 self.str_box = BoxEdit(source=hv_box)
