@@ -1789,9 +1789,10 @@ def graph_optimize_corr(
             for d, dd in idx_dict.items()
         }
         vsub = varr.sel(**idx_arr).data
-        if len(idx_arr) > 1:  # vectorized indexing
-            vsub = vsub.T
-        else:
+        # `idx_corr` wants (N_items, T_frames). Vectorized indexing already
+        # produces that orientation; single-dim indexing needs a rechunk so
+        # the trace axis is contiguous for the numba kernel.
+        if len(idx_arr) == 1:
             vsub = vsub.rechunk(-1)
         with da.config.set(**{"optimization.fuse.ave-width": vsub.shape[0]}):
             return da.optimize(smooth_corr(vsub, ridx, cidx, freq=freq))[0]
