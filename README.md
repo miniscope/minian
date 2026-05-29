@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/denisecailab/minian/assets/844306/358d9a24-bc0d-40d0-8747-4c43693ce270" alt="image">
+  ![minian logo](img/minian_logo.png)
 </p>
 
 
