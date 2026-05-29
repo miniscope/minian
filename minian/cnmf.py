@@ -44,11 +44,6 @@ except ImportError:
         return wrapper
 
 
-#: Default target size for :func:`spatial_partition`. Forwarded by every
-#: ``chunk`` kwarg in this module and ``initialization.py``.
-DEFAULT_PARTITION_CHUNK = 600
-
-
 def get_noise_fft(
     varr: xr.DataArray, noise_range=(0.25, 0.5), noise_method="logmexp"
 ) -> xr.DataArray:
@@ -1418,7 +1413,7 @@ def unit_merge(
     add_list: list[xr.DataArray] | None = None,
     thres_corr=0.9,
     noise_freq: float | None = None,
-    chunk: int = DEFAULT_PARTITION_CHUNK,
+    chunk: int = 600,
 ) -> tuple[xr.DataArray, xr.DataArray, list[xr.DataArray] | None]:
     """
     Merge cells given spatial footprints and temporal components
@@ -1749,7 +1744,7 @@ def graph_optimize_corr(
     G: nx.Graph,
     freq: float,
     idx_dims=["height", "width"],
-    chunk: int = DEFAULT_PARTITION_CHUNK,
+    chunk: int = 600,
     step_size=50,
     positions: np.ndarray | None = None,
 ) -> pd.DataFrame:
@@ -1890,7 +1885,7 @@ def adj_corr(
     nod_df: pd.DataFrame,
     freq: float,
     positions: np.ndarray | None = None,
-    chunk: int = DEFAULT_PARTITION_CHUNK,
+    chunk: int = 600,
 ) -> scipy.sparse.csr_matrix:
     """
     Compute correlation in an optimized fashion given an adjacency matrix and

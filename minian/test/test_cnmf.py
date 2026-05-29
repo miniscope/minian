@@ -12,7 +12,6 @@ import xarray as xr
 from sklearn.neighbors import radius_neighbors_graph
 
 from ..cnmf import (
-    DEFAULT_PARTITION_CHUNK,
     adj_corr,
     graph_optimize_corr,
     partition_diagnostics,
@@ -356,7 +355,7 @@ class TestChunkKwargPlumbing:
     def test_chunk_default_matches_constant(self, func):
         sig = inspect.signature(func)
         assert "chunk" in sig.parameters
-        assert sig.parameters["chunk"].default == DEFAULT_PARTITION_CHUNK
+        assert sig.parameters["chunk"].default == 600
 
     def test_adj_corr_returns_true_pearson(self):
         # Regression for the vsub.T axis bug: adj_corr must match
