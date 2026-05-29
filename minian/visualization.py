@@ -2199,7 +2199,7 @@ def visualize_spatial_partition(
     membership: np.ndarray,
     adj: "scisps.spmatrix | None" = None,
     n_frames: int | None = None,
-) -> "hv.Overlay | hv.Layout":
+) -> "hv.Overlay | pn.layout.Row":
     """
     Render a precomputed k-d tree spatial partition.
 
@@ -2226,9 +2226,10 @@ def visualize_spatial_partition(
 
     Returns
     -------
-    hvres : hv.Overlay or hv.Layout
+    hvres : hv.Overlay or pn.layout.Row
         ``hv.Overlay`` if neither ``adj`` nor ``n_frames`` is supplied;
-        otherwise an ``hv.Layout`` stacking the overlay above 1-3 histograms.
+        otherwise a ``pn.layout.Row`` with the spatial overlay on the left
+        and a ``pn.layout.Column`` of 1-3 diagnostic histograms on the right.
     """
     from .cnmf import partition_diagnostics
 
@@ -2245,7 +2246,10 @@ def visualize_spatial_partition(
     )
     n_parts = diag["n_parts"]
     h, w = max_proj.sizes["height"], max_proj.sizes["width"]
-    asp = w / h
+    # Fix both overlay dimensions so the histogram column can be sized to
+    # match the overlay's height exactly.
+    overlay_frame_width = 600
+    overlay_frame_height = int(round(overlay_frame_width * h / w))
     # Resolve hex colors per point. Bypasses bokeh's color mapper, which
     # degenerates when n_parts == 1 (vmin == vmax) and otherwise has fiddly
     # categorical-factor ordering. Modular indexing wraps cleanly past 256.
@@ -2256,7 +2260,11 @@ def visualize_spatial_partition(
         "partition": membership,
         "color": [palette[int(p) % len(palette)] for p in membership],
     })
-    opts_im = dict(frame_width=600, aspect=asp, cmap="Greys_r")
+    opts_im = dict(
+        frame_width=overlay_frame_width,
+        frame_height=overlay_frame_height,
+        cmap="Greys_r",
+    )
     title_parts = [f"{n_parts} partitions"]
     if adj is not None:
         title_parts.append(
@@ -2278,8 +2286,40 @@ def visualize_spatial_partition(
     if adj is None and n_frames is None:
         return overlay
 
+    # Collect the histogram specs first so we know how many cells the right
+    # column needs before sizing each one.
+    hist_specs = []
+    sizes = diag["sizes"]
+    hist_specs.append((
+        sizes,
+        "nodes per partition",
+        f"Nodes / partition (min {sizes.min()}, max {sizes.max()}, median {int(np.median(sizes))})",
+    ))
+    if adj is not None:
+        eps = diag["edges_per_partition"]
+        hist_specs.append((
+            eps,
+            "intra-partition edges",
+            f"Edges / partition (min {eps.min()}, max {eps.max()}, "
+            f"cross {diag['cross_edges']}/{diag['total_edges']})",
+        ))
+    if n_frames is not None:
+        mem = diag["mem_mb"]
+        hist_specs.append((
+            mem,
+            "MiB per partition",
+            f"Memory / partition @ {n_frames} frames "
+            f"(min {mem.min():.1f}, max {mem.max():.1f} MiB)",
+        ))
+
+    # Split the overlay height across the histogram column so the right edge
+    # of the row lines up with the bottom of the image. Floor at 100 px to
+    # keep axis labels legible if the overlay is very short.
+    hist_frame_height = max(100, overlay_frame_height // len(hist_specs))
     hist_opts = dict(
-        frame_width=300, frame_height=180, tools=["hover"],
+        frame_width=360,
+        frame_height=hist_frame_height,
+        tools=["hover"],
     )
 
     def _hist(values: np.ndarray, label: str, title: str) -> hv.Histogram:
@@ -2294,26 +2334,5 @@ def visualize_spatial_partition(
             title=title, xlabel=label, ylabel="# partitions", **hist_opts
         )
 
-    sizes = diag["sizes"]
-    panels = [overlay, _hist(
-        sizes,
-        "nodes per partition",
-        f"Nodes / partition (min {sizes.min()}, max {sizes.max()}, median {int(np.median(sizes))})",
-    )]
-    if adj is not None:
-        eps = diag["edges_per_partition"]
-        panels.append(_hist(
-            eps,
-            "intra-partition edges",
-            f"Edges / partition (min {eps.min()}, max {eps.max()}, "
-            f"cross {diag['cross_edges']}/{diag['total_edges']})",
-        ))
-    if n_frames is not None:
-        mem = diag["mem_mb"]
-        panels.append(_hist(
-            mem,
-            "MiB per partition",
-            f"Memory / partition @ {n_frames} frames "
-            f"(min {mem.min():.1f}, max {mem.max():.1f} MiB)",
-        ))
-    return hv.Layout(panels).cols(1)
+    hist_panels = [_hist(*spec) for spec in hist_specs]
+    return pn.layout.Row(overlay, pn.layout.Column(*hist_panels))
