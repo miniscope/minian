@@ -28,6 +28,8 @@ jobs:
           python-version: "3.11"
         - os: "windows-latest"
           python-version: "3.12"
+        - os: "windows-latest"
+          python-version: "3.13"
         # TODO: resolve macOS numcodecs pin without 3.14 wheels
         - os: "macos-latest"
           python-version: "3.14"
