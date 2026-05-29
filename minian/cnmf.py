@@ -1961,6 +1961,16 @@ def spatial_partition(
         )
     if target_chunk < 1:
         raise ValueError(f"target_chunk must be >= 1; got {target_chunk}")
+    # NaN/inf would silently bucket all such rows together via argsort's
+    # NaN ordering; force the upstream caller (e.g. unit_merge's zero-mass
+    # footprint fallback) to handle them first.
+    if positions.size and not np.isfinite(positions).all():
+        n_bad = int((~np.isfinite(positions).all(axis=1)).sum())
+        raise ValueError(
+            f"positions must be finite; got {n_bad} row(s) with NaN or inf. "
+            "Replace non-finite coordinates before calling spatial_partition "
+            "(unit_merge does this with a FOV-centre fallback)."
+        )
     n = positions.shape[0]
     membership = np.empty(n, dtype=np.int64)
     if n == 0:

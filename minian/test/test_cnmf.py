@@ -13,6 +13,7 @@ from sklearn.neighbors import radius_neighbors_graph
 
 from ..cnmf import (
     adj_corr,
+    filt_fft_vec,
     graph_optimize_corr,
     partition_diagnostics,
     spatial_partition,
@@ -93,6 +94,17 @@ class TestSpatialPartition:
             spatial_partition(np.zeros((4, 2)), target_chunk=0)
         with pytest.raises(ValueError, match="target_chunk"):
             spatial_partition(np.zeros((4, 2)), target_chunk=-3)
+
+    def test_rejects_non_finite_positions(self):
+        # NaN/inf rows would silently cluster via argsort's NaN handling.
+        # The partitioner must fail loud so the upstream caller installs
+        # a fallback (see unit_merge's zero-mass footprint handling).
+        bad_nan = np.array([[0.0, 0.0], [1.0, 1.0], [np.nan, np.nan]])
+        with pytest.raises(ValueError, match="positions must be finite"):
+            spatial_partition(bad_nan, target_chunk=2)
+        bad_inf = np.array([[0.0, 0.0], [np.inf, 1.0]])
+        with pytest.raises(ValueError, match="positions must be finite"):
+            spatial_partition(bad_inf, target_chunk=2)
 
 
 # ---------------------------------------------------------------------------
@@ -222,17 +234,19 @@ class TestGraphOptimizeCorrContract:
             graph_optimize_corr(self._tiny_varr(), G, freq=None, positions=None)
 
     def test_membership_attrs_are_plain_int(self):
-        # JSON-serializable; spatial_partition returns np.int64 and we cast.
+        # graph_optimize_corr writes a "part" attr on every node; it must be
+        # a plain int (spatial_partition returns np.int64) so the graph
+        # round-trips through json.dumps. Probe the function's side effect
+        # directly rather than re-casting in the test.
         G = self._build_graph(4)
-        membership = spatial_partition(
-            np.array([[float(i), float(i)] for i in range(4)]), target_chunk=2
-        )
-        nx.set_node_attributes(
-            G, {k: {"part": int(v)} for k, v in zip(sorted(G.nodes), membership)}
-        )
+        graph_optimize_corr(self._tiny_varr(), G, freq=None, chunk=2)
+        parts = nx.get_node_attributes(G, "part")
+        assert set(parts) == set(G.nodes)
+        assert all(type(p) is int for p in parts.values())
+        # End-to-end: the populated graph survives a JSON round-trip.
         payload = json.dumps(nx.node_link_data(G, edges="links"))
-        parts = {n["id"]: n["part"] for n in json.loads(payload)["nodes"]}
-        assert all(isinstance(p, int) for p in parts.values())
+        round_tripped = {n["id"]: n["part"] for n in json.loads(payload)["nodes"]}
+        assert round_tripped == parts
 
 
 # ---------------------------------------------------------------------------
@@ -241,16 +255,13 @@ class TestGraphOptimizeCorrContract:
 
 
 class TestUnitMergeCentroidPathway:
-    """Behaviour of spatial_partition under the NaN / FOV-centre fallback
-    that unit_merge installs when a footprint has zero mass."""
+    """Behaviour of spatial_partition under the FOV-centre fallback that
+    unit_merge installs when a footprint has zero mass.
 
-    def test_nan_positions_do_not_crash_partition(self):
-        positions = np.array([
-            [0.0, 0.0], [1.0, 1.0], [np.nan, np.nan], [2.0, 2.0], [3.0, 3.0],
-        ])
-        membership = spatial_partition(positions, target_chunk=2)
-        assert membership.shape == (5,)
-        assert (membership >= 0).all()
+    The partitioner now rejects non-finite positions outright (see
+    TestSpatialPartition.test_rejects_non_finite_positions); these tests
+    exercise the post-fallback path where every centroid is finite.
+    """
 
     def test_finite_fallback_gives_balanced_partition(self):
         # 5 zero-mass units parked at the FOV centre, mixed with 16 spread
@@ -352,14 +363,18 @@ class TestChunkKwargPlumbing:
     @pytest.mark.parametrize(
         "func", [adj_corr, unit_merge, seeds_merge, initA]
     )
-    def test_chunk_default_matches_constant(self, func):
+    def test_chunk_default_is_600(self, func):
         sig = inspect.signature(func)
         assert "chunk" in sig.parameters
         assert sig.parameters["chunk"].default == 600
 
-    def test_adj_corr_returns_true_pearson(self):
-        # Regression for the vsub.T axis bug: adj_corr must match
-        # np.corrcoef on the underlying pixel traces and be chunk-invariant.
+    @pytest.mark.parametrize("freq", [None, 0.05])
+    def test_adj_corr_returns_true_pearson(self, freq):
+        # Regression for the vsub.T axis bug (issue #302): adj_corr must
+        # match np.corrcoef on the underlying pixel traces and be
+        # chunk-invariant. The unsmoothed and smoothed branches of
+        # construct_comput go through different gufunc paths -- both had
+        # the bug, so both are checked here.
         rng = np.random.RandomState(11)
         n, t, h, w = 16, 80, 25, 25
         varr = xr.DataArray(
@@ -374,17 +389,23 @@ class TestChunkKwargPlumbing:
         ws = rng.randint(0, w, size=n)
         nod_df = pd.DataFrame({"height": hs, "width": ws})
         adj = radius_neighbors_graph(nod_df.values, radius=8).astype(bool)
-        out = adj_corr(varr, adj, nod_df, freq=None).toarray()
+        out = adj_corr(varr, adj, nod_df, freq=freq).toarray()
 
         traces = np.stack(
             [varr.isel(height=hs[k], width=ws[k]).values for k in range(n)]
-        )
+        ).astype("float32")
+        if freq is not None:
+            # filt_fft_vec mutates in place; copy to keep `traces` clean for
+            # later inspection if this assertion fails.
+            traces_truth = filt_fft_vec(traces.copy(), freq, "low")
+        else:
+            traces_truth = traces
         for i, j in zip(*out.nonzero()):
-            truth = np.corrcoef(traces[i], traces[j])[0, 1]
+            truth = np.corrcoef(traces_truth[i], traces_truth[j])[0, 1]
             assert out[i, j] == pytest.approx(truth, abs=1e-5)
 
-        small = adj_corr(varr, adj, nod_df, freq=None, chunk=4).toarray()
-        big = adj_corr(varr, adj, nod_df, freq=None, chunk=64).toarray()
+        small = adj_corr(varr, adj, nod_df, freq=freq, chunk=4).toarray()
+        big = adj_corr(varr, adj, nod_df, freq=freq, chunk=64).toarray()
         assert np.allclose(small, big, atol=1e-5)
 
     def test_chunk_kwarg_is_forwarded_to_graph_optimize_corr(self):
