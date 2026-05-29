@@ -1,3 +1,10 @@
+<p align="center">
+
+![minian logo](img/minian_logo.png)
+
+</p>
+
+
 [![pytest status](https://github.com/denisecailab/minian/workflows/pytest/badge.svg?branch=master)](https://github.com/DeniseCaiLab/minian/actions?query=workflow%3Apytest)
 [![codecov](https://codecov.io/gh/DeniseCaiLab/minian/branch/master/graph/badge.svg)](https://codecov.io/gh/DeniseCaiLab/minian)
 [![conda version](https://img.shields.io/conda/vn/conda-forge/minian.svg)](https://anaconda.org/conda-forge/minian)
