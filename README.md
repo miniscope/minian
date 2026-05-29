@@ -1,5 +1,7 @@
 <p align="center">
-  ![minian logo](img/minian_logo.png)
+
+![minian logo](img/minian_logo.png)
+
 </p>
 
 
