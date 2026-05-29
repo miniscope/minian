@@ -4,41 +4,43 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - bokeh=1.4.0
-  - cvxpy>=1.1.11
-  - dask=2021.2.0
-  - datashader=0.12.1
-  - distributed=2021.2.0
-  - ecos>=2.0.7
-  - ffmpeg
-  - ffmpeg-python>=0.2.0
+  - python~=3.10
+  - pip
+  - bokeh~=2.4.3
+  - dask~=2022.9.2
+  - datashader~=0.14.2
+  - distributed~=2022.9.2
+  - ecos>=2.0.10
+  - ffmpeg>=4.4
   - fftw
-  - holoviews=1.12.7
+  - holoviews~=1.15.1
   - jupyter
-  - matplotlib-base=3.2
+  - matplotlib-base~=3.6.0
   - natsort
   - netcdf4
-  - networkx=2.4
-  - numba=0.52.0
-  - numpy=1.20.2
-  - opencv=4.2.0
-  - pandas=1.2.3
-  - panel=0.8.0
-  - param=1.9
-  - pyfftw=0.12.0
-  - python=3.8
-  - scikit-image=0.18.1
-  - scikit-learn=0.22.1
-  - scipy>=1.4.1
+  - networkx~=2.8.7
+  - numba~=0.56
+  - numpy~=1.23
+  - opencv>=4.6
+  - pandas~=1.5.0
+  - panel~=0.14.0
+  - param~=1.12.2
+  - pyfftw~=0.12.0
+  - scikit-image~=0.19.3
+  - scikit-learn~=1.1.2
+  - scipy~=1.9.1
   - scs
-  - simpleitk=2.0.2
+  - simpleitk~=2.1.1
   - sk-video
-  - statsmodels>=0.11.1
+  - statsmodels>=0.13.2
   - tifffile
-  - xarray=0.16.2
-  - zarr
-  - sparse=0.11.2
-  - pymetis=2020.1
-  - rechunker=0.3.3
-  - medpy=0.4.0
-  - jinja2=2.11.3
+  - xarray~=2022.9.0
+  - zarr>=2.12
+  - sparse~=0.13.0
+  - pymetis~=2022.1
+  - rechunker~=0.5.0
+  - medpy~=0.4.0
+  - jinja2~=3.1.2
+  - pip:
+    - cvxpy>=1.2.1
+    - ffmpeg-python>=0.2.0

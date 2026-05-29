@@ -837,10 +837,10 @@ class TaskAnnotation(SchedulerPlugin):
         for tk in tasks.keys():
             for pattern, annt in self.annt_dict.items():
                 if re.search(pattern, tk):
-                    ts = parent._tasks.get(tk)
+                    ts = parent.tasks.get(tk)
                     res = annt.get("resources", None)
                     if res:
-                        ts._resource_restrictions = res
+                        ts.resource_restrictions = res
                     pri = annt.get("priority", None)
                     if pri:
                         pri_org = list(ts._priority)
@@ -856,6 +856,7 @@ def custom_arr_optimize(
     rename_dict: Optional[dict] = None,
     rewrite_dict: Optional[dict] = None,
     keep_patterns=[],
+    flush=True,
 ) -> dict:
     """
     Customized implementation of array optimization function.

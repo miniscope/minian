@@ -24,6 +24,8 @@ from scipy.signal import butter, lfilter, welch
 from scipy.sparse import dia_matrix
 from skimage import morphology as moph
 from sklearn.linear_model import LassoLars
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.stattools import acovf
 
 from .utilities import (
@@ -386,6 +388,8 @@ def update_spatial(
                     C_store=C_store,
                     f=f_in,
                 )
+                if not isinstance(cur_blk, sparse.SparseArray):
+                    cur_blk = cur_blk.map_blocks(sparse.COO)
             else:
                 cur_blk = darr.array(sparse.zeros((cur_sub.shape)))
             A_new[hblk, wblk, 0] = cur_blk
@@ -512,8 +516,11 @@ def update_spatial_perpx(
     if (f is not None) and sub[-1]:
         C = np.concatenate([C, f.reshape((-1, 1))], axis=1)
         idx = np.concatenate([idx, np.array(len(sub) - 1).reshape(-1)])
-    clf = LassoLars(alpha=alpha, positive=True)
-    coef = clf.fit(C, y).coef_
+    model = make_pipeline(
+        StandardScaler(with_mean=False),
+        LassoLars(alpha=alpha, positive=True, normalize=False),
+    )
+    coef = model.fit(C, y).named_steps["lassolars"].coef_
     mask = coef > 0
     coef = coef[mask]
     idx = idx[mask]
@@ -611,7 +618,7 @@ def compute_trace(
     """
     fms = Y.coords["frame"]
     uid = A.coords["unit_id"]
-    Y = Y.data
+    Y = Y.data.map_blocks(sparse.COO)
     A = darr.from_array(A.data.map_blocks(sparse.COO).compute(), chunks=-1)
     C = C.data.map_blocks(sparse.COO).T
     b = (
@@ -620,10 +627,10 @@ def compute_trace(
         .reshape((1, Y.shape[1], Y.shape[2]))
         .compute()
     )
-    f = f.fillna(0).data.reshape((-1, 1))
+    f = f.fillna(0).data.reshape((-1, 1)).map_blocks(sparse.COO)
     AtA = darr.tensordot(A, A, axes=[(1, 2), (1, 2)]).compute()
     A_norm = (
-        (1 / (A ** 2).sum(axis=(1, 2)))
+        (1 / (A**2).sum(axis=(1, 2)))
         .map_blocks(
             lambda a: sparse.diagonalize(sparse.COO(a)), chunks=(A.shape[0], A.shape[0])
         )
@@ -648,7 +655,9 @@ def compute_trace(
         dims=["frame", "unit_id"],
         coords={"frame": fms, "unit_id": uid},
     )
-    return YrA.transpose("unit_id", "frame")
+    YrA = YrA.transpose("unit_id", "frame")
+    YrA.data = YrA.data.map_blocks(lambda x: x.todense())
+    return YrA
 
 
 def update_temporal(
@@ -833,7 +842,7 @@ def update_temporal(
         \mathbf{b_0} \\right \\rVert ^2 + \\alpha \\left \\lvert \mathbf{G}
         \mathbf{c} \\right \\rvert \\\\
         & \\text{subject to}
-        & & \mathbf{c} \geq 0, \; \mathbf{G} \mathbf{c} \geq 0 
+        & & \mathbf{c} \geq 0, \; \mathbf{G} \mathbf{c} \geq 0
         \\end{aligned}
 
     Where :math:`\mathbf{y}` is the estimated residule trace (`YrA`) for the
@@ -855,10 +864,12 @@ def update_temporal(
     if YrA is None:
         YrA = compute_trace(Y, A, b, C, f).persist()
     Ymask = (YrA > 0).any("frame").compute()
+    if hasattr(Ymask.data, "todense"):
+        Ymask.data = Ymask.data.todense()
     A, C, YrA = A.sel(unit_id=Ymask), C.sel(unit_id=Ymask), YrA.sel(unit_id=Ymask)
     print("grouping overlaping units")
     A_sps = (A.data.map_blocks(sparse.COO) > 0).compute().astype(np.float32)
-    A_inter = sparse.tensordot(A_sps, A_sps, axes=[(1, 2), (1, 2)])
+    A_inter = sparse.tensordot(A_sps, A_sps, axes=[(1, 2), (1, 2)]).todense()
     A_usum = np.tile(A_sps.sum(axis=(1, 2)).todense(), (A_sps.shape[0], 1))
     A_usum = A_usum + A_usum.T
     jac = scipy.sparse.csc_matrix(A_inter / (A_usum - A_inter) > jac_thres)
@@ -1066,7 +1077,7 @@ def get_ar_coef(
     else:
         max_lag = p + add_lag
     cov = acovf(y, fft=True)
-    C_mat = toeplitz(cov[:max_lag], cov[:p]) - sn ** 2 * np.eye(max_lag, p)
+    C_mat = toeplitz(cov[:max_lag], cov[:p]) - sn**2 * np.eye(max_lag, p)
     g = lstsq(C_mat, cov[1 : max_lag + 1])[0]
     if pad:
         res = np.zeros(pad)
@@ -1165,6 +1176,8 @@ def update_temporal_block(
         excluded=["pad", "add_lag"],
         signature="(f),(),()->(l)",
     )
+    if hasattr(YrA, "todense"):
+        YrA = YrA.todense()
     if normalize:
         amean = YrA.sum(axis=1).mean()
         norm_factor = YrA.shape[1] / amean

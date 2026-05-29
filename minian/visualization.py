@@ -19,7 +19,7 @@ import scipy.sparse as scisps
 import sklearn.mixture
 import skvideo.io
 import xarray as xr
-from bokeh.palettes import Category10_10, Viridis256
+from bokeh.palettes import Category10_10
 from dask.diagnostics import ProgressBar
 from datashader import count_cat
 from holoviews.operation.datashader import datashade, dynspread
@@ -208,14 +208,12 @@ class VArrayViewer:
             except ValueError:
                 curds = self.ds_sub
             fim = fct.partial(img, ds=curds)
-            im = hv.DynamicMap(fim, streams=[self.strm_f]).opts(
+            im = hv.DynamicMap(fim, streams=[self.strm_f]).options(
                 frame_width=500, aspect=self._w / self._h, cmap="Viridis"
             )
             self.xyrange = RangeXY(source=im).rename(x_range="w", y_range="h")
             if not self._layout:
-                hv_box = hv.Polygons([]).opts(
-                    style={"fill_alpha": 0.3, "line_color": "white"}
-                )
+                hv_box = hv.Polygons([]).options(fill_alpha=0.3, line_color="white")
                 self.str_box = BoxEdit(source=hv_box)
                 im_ovly = im * hv_box
             else:
@@ -230,15 +228,17 @@ class VArrayViewer:
                     cur_im = hv.Image(
                         ds.sel(frame=f).compute(), kdims=["width", "height"]
                     )
-                return hv.operation.histogram(cur_im, num_bins=50).opts(
+                return hv.operation.histogram(cur_im, num_bins=50).options(
                     xlabel="fluorescence", ylabel="freq"
                 )
 
             fhist = fct.partial(hist, ds=curds)
-            his = hv.DynamicMap(fhist, streams=[self.strm_f, self.xyrange]).opts(
+            his = hv.DynamicMap(fhist, streams=[self.strm_f, self.xyrange]).options(
                 frame_height=int(500 * self._h / self._w), width=150, cmap="Viridis"
             )
-            im_ovly = (im_ovly << his).map(lambda p: p.opts(style=dict(cmap="Viridis")))
+            im_ovly = (im_ovly << his).map(
+                lambda p: hv.opts.apply_groups(p, style=dict(cmap="Viridis"))
+            )
             return im_ovly
 
         if self._layout and self.meta_dicts:
@@ -261,11 +261,10 @@ class VArrayViewer:
                 hvsum = hvsum.layout(list(self.meta_dicts.keys()))
             except:
                 pass
-            vl = hv.DynamicMap(lambda f: hv.VLine(f), streams=[self.strm_f]).opts(
-                style=dict(color="red")
-            )
+            vl = hv.DynamicMap(lambda f: hv.VLine(f), streams=[self.strm_f])
+            vl = hv.opts.apply_groups(vl, style=dict(color="red"))
             summ = (hvsum * vl).map(
-                lambda p: p.opts(frame_width=500, aspect=3), [hv.RGB, hv.Curve]
+                lambda p: p.options(frame_width=500, aspect=3), [hv.RGB, hv.Curve]
             )
             hvobj = (ims + summ).cols(1)
         else:
@@ -673,7 +672,7 @@ class CNMFViewer:
             ).to(hv.Curve, "frame")
         cur_vl = hv.DynamicMap(
             lambda f, y: hv.VLine(f) if f else hv.VLine(0), streams=[self.strm_f]
-        ).opts(style=dict(color="red"))
+        ).options(color="red")
         cur_cv = hv.Curve([], kdims=["frame"], vdims=["Internsity (A.U.)"])
         self.strm_f.source = cur_cv
         h_cv = len(self._w) // 8
@@ -688,14 +687,17 @@ class CNMFViewer:
                 .add_dimension("time", 0, 0),
                 "trace",
             )
-            .opts(plot=dict(shared_xaxis=True))
+            .options(shared_xaxis=True)
             .map(
-                lambda p: p.opts(plot=dict(frame_height=h_cv, frame_width=w_cv)), hv.RGB
+                lambda p: hv.opts.apply_groups(
+                    p, plot=dict(frame_height=h_cv, frame_width=w_cv)
+                ),
+                hv.RGB,
             )
             * cur_vl
         )
-        temp_comp[temp_comp.keys()[0]] = temp_comp[temp_comp.keys()[0]].opts(
-            plot=dict(height=h_cv + 75)
+        temp_comp[temp_comp.keys()[0]] = hv.opts.apply_groups(
+            temp_comp[temp_comp.keys()[0]], plot=dict(height=h_cv + 75)
         )
         return pn.panel(temp_comp)
 
@@ -921,7 +923,9 @@ class CNMFViewer:
 
     def _spatial_all(self):
         metas = self.metas
-        Asum = hv.Image(self.Asum.sel(**metas), ["width", "height"]).opts(
+        Asum = hv.Image(self.Asum.sel(**metas), ["width", "height"])
+        Asum = hv.opts.apply_groups(
+            Asum,
             plot=dict(frame_height=len(self._h), frame_width=len(self._w)),
             style=dict(cmap="Viridis"),
         )
@@ -931,33 +935,33 @@ class CNMFViewer:
                 kdims=["width", "height", "unit_id"],
             )
             .to(hv.Points, ["width", "height"])
-            .opts(
-                style=dict(
-                    alpha=0.1,
-                    line_alpha=0,
-                    size=5,
-                    nonselection_alpha=0.1,
-                    selection_alpha=0.9,
-                )
+            .options(
+                alpha=0.1,
+                line_alpha=0,
+                size=5,
+                nonselection_alpha=0.1,
+                selection_alpha=0.9,
             )
             .collate()
             .overlay("unit_id")
-            .opts(plot=dict(tools=["hover", "box_select"]))
         )
+        cents = hv.opts.apply_groups(cents, plot=dict(tools=["hover", "box_select"]))
         self.strm_uid.source = cents
         fim = fct.partial(hv.Image, kdims=["width", "height"])
-        AC = hv.DynamicMap(fim, streams=[self.pipAC]).opts(
+        AC = hv.DynamicMap(fim, streams=[self.pipAC])
+        AC = hv.opts.apply_groups(
+            AC,
             plot=dict(frame_height=len(self._h), frame_width=len(self._w)),
             style=dict(cmap="Viridis"),
         )
-        mov = hv.DynamicMap(fim, streams=[self.pipmov]).opts(
+        mov = hv.DynamicMap(fim, streams=[self.pipmov])
+        mov = hv.opts.apply_groups(
+            mov,
             plot=dict(frame_height=len(self._h), frame_width=len(self._w)),
             style=dict(cmap="Viridis"),
         )
         lab = fct.partial(hv.Labels, kdims=["width", "height"], vdims=["unit_id"])
-        ulab = hv.DynamicMap(lab, streams=[self.pipusub]).opts(
-            style=dict(text_color="red")
-        )
+        ulab = hv.DynamicMap(lab, streams=[self.pipusub]).options(text_color="red")
         return pn.panel(Asum * cents + AC * ulab + mov)
 
     def update_spatial_all(self):
@@ -1145,7 +1149,7 @@ class AlignViewer:
                     im_ovly[:, :, 3],
                 ),
                 kdims=["width", "height"],
-            ).opts(**im_opts)
+            ).options(**im_opts)
         )
 
     def update_meta(self):
@@ -1418,10 +1422,7 @@ def datashade_ndcurve(
     var = np.unique(ovly.dimension_values(kdim)).tolist()
     color_key = [(v, Category10_10[iv]) for iv, v in enumerate(var)]
     color_pts = hv.NdOverlay(
-        {
-            k: hv.Points([0, 0], label=str(k)).opts(style=dict(color=v))
-            for k, v in color_key
-        }
+        {k: hv.Points([0, 0], label=str(k)).options(color=v) for k, v in color_key}
     )
     ds_ovly = datashade(
         ovly,
@@ -1680,8 +1681,8 @@ def visualize_preprocess(
     }
 
     def _vis(f):
-        im = hv.Image(f, kdims=["width", "height"]).opts(**opts_im)
-        cnt = hv.operation.contours(im).opts(**opts_cnt)
+        im = hv.opts.apply_groups(hv.Image(f, kdims=["width", "height"]), **opts_im)
+        cnt = hv.opts.apply_groups(hv.operation.contours(im), **opts_cnt)
         return im, cnt
 
     if fn is not None:
@@ -1699,18 +1700,20 @@ def visualize_preprocess(
             )
             im_dict[p_str] = cur_im
             cnt_dict[p_str] = cur_cnt
-        hv_im = Dynamic(hv.HoloMap(im_dict, kdims=list(pkey)).opts(**opts_im))
-        hv_cnt = datashade(
-            hv.HoloMap(cnt_dict, kdims=list(pkey)), precompute=True, cmap=Viridis256
-        ).opts(**opts_cnt)
+        hv_im = hv.opts.apply_groups(
+            Dynamic(hv.HoloMap(im_dict, kdims=list(pkey)), **opts_im)
+        )
+        hv_cnt = hv.opts.apply_groups(
+            datashade(
+                hv.HoloMap(cnt_dict, kdims=list(pkey)), precompute=True, cmap="Viridis"
+            ),
+            **opts_cnt
+        )
         if include_org:
             im, cnt = _vis(fm)
-            im = im.relabel("Before").opts(**opts_im)
-            cnt = (
-                datashade(cnt, precompute=True, cmap=Viridis256)
-                .relabel("Before")
-                .opts(**opts_cnt)
-            )
+            im = hv.opts.apply_groups(im.relabel("Before"), **opts_im)
+            cnt = datashade(cnt, precompute=True, cmap="Viridis").relabel("Before")
+            cnt = hv.opts.apply_groups(cnt, **opts_cnt)
         return (im + cnt + hv_im + hv_cnt).cols(2)
     else:
         im, cnt = _vis(fm)
@@ -1749,7 +1752,7 @@ def visualize_seeds(
     """
     h, w = max_proj.sizes["height"], max_proj.sizes["width"]
     asp = w / h
-    pt_cmap = {True: "white", False: "red"}
+    pt_cmap = ["red", "white"]
     opts_im = dict(plot=dict(frame_width=600, aspect=asp), style=dict(cmap="Viridis"))
     opts_pts = dict(
         plot=dict(
@@ -1768,7 +1771,7 @@ def visualize_seeds(
         opts_pts["style"]["color"] = "white"
     im = hv.Image(max_proj, kdims=["width", "height"])
     pts = hv.Points(seeds, kdims=["width", "height"], vdims=vdims)
-    return im.opts(**opts_im) * pts.opts(**opts_pts)
+    return hv.opts.apply_groups(im, **opts_im) * hv.opts.apply_groups(pts, **opts_pts)
 
 
 def visualize_gmm_fit(
@@ -1805,14 +1808,15 @@ def visualize_gmm_fit(
     hist = np.histogram(values, bins=bins, density=True)
     gss_dict = dict()
     for igss, (mu, sig) in enumerate(zip(gmm.means_, gmm.covariances_)):
-        gss = gaussian(hist[1], np.asscalar(mu), np.asscalar(np.sqrt(sig)))
+        gss = gaussian(hist[1], mu.item(), np.sqrt(sig).item())
         gss_dict[igss] = hv.Curve((hist[1], gss))
-    return (
-        hv.Histogram(((hist[0] - hist[0].min()) / np.ptp(hist[0]), hist[1])).opts(
-            style=dict(alpha=0.6, fill_color="gray")
+    return hv.opts.apply_groups(
+        hv.Histogram(((hist[0] - hist[0].min()) / np.ptp(hist[0]), hist[1])).options(
+            alpha=0.6, fill_color="gray"
         )
-        * hv.NdOverlay(gss_dict)
-    ).opts(plot=dict(height=350, width=500))
+        * hv.NdOverlay(gss_dict),
+        plot={"height": 350, "width": 500},
+    )
 
 
 def visualize_spatial_update(
@@ -1885,8 +1889,11 @@ def visualize_spatial_update(
         cents_df = centroid(A)
         hv_pts_dict[key] = hv.Points(
             cents_df, kdims=["width", "height"], vdims=["unit_id"]
-        ).opts(
-            plot=dict(tools=["hover"]), style=dict(fill_alpha=0.2, line_alpha=0, size=8)
+        )
+        hv_pts_dict[key] = hv.opts.apply_groups(
+            hv_pts_dict[key],
+            plot=dict(tools=["hover"]),
+            style=dict(fill_alpha=0.2, line_alpha=0, size=8),
         )
         hv_A_dict[key] = hv.Image(
             A.sum("unit_id").rename("A"), kdims=["width", "height"]
@@ -1908,19 +1915,16 @@ def visualize_spatial_update(
         hv_C = datashade(hv_C)
     else:
         hv_C = Dynamic(hv_C)
-    hv_A = hv_A.opts(frame_width=400, aspect=w / h, colorbar=True, cmap="viridis")
-    hv_Ab = hv_Ab.opts(frame_width=400, aspect=w / h, colorbar=True, cmap="viridis")
+    hv_A = hv_A.options(frame_width=400, aspect=w / h, colorbar=True, cmap="viridis")
+    hv_Ab = hv_Ab.options(frame_width=400, aspect=w / h, colorbar=True, cmap="viridis")
     hv_C = hv_C.map(
-        lambda cr: cr.opts(frame_width=500, frame_height=50),
+        lambda cr: cr.options(frame_width=500, frame_height=50),
         hv.RGB if datashading else hv.Curve,
     )
-    return (
-        hv.NdLayout(
-            {"pseudo-color": (hv_pts * hv_A), "binary": (hv_pts * hv_Ab)},
-            kdims="Spatial Matrix",
-        ).cols(1)
-        + hv_C.relabel("Temporal Components")
-    )
+    return hv.NdLayout(
+        {"pseudo-color": (hv_pts * hv_A), "binary": (hv_pts * hv_Ab)},
+        kdims="Spatial Matrix",
+    ).cols(1) + hv_C.relabel("Temporal Components")
 
 
 def visualize_temporal_update(
@@ -2078,18 +2082,21 @@ def visualize_temporal_update(
         hv_unit = Dynamic(hv_unit)
     hv_pul = Dynamic(hv_pul)
     hv_unit = hv_unit.map(
-        lambda p: p.opts(plot=dict(frame_height=400, frame_width=1000))
+        lambda p: hv.opts.apply_groups(p, plot=dict(frame_height=400, frame_width=1000))
     )
-    hv_pul = hv_pul.opts(plot=dict(frame_width=500, aspect=w / h)).redim(
-        t=hv.Dimension("t", soft_range=pul_range)
-    )
-    hv_A = hv_A.opts(
-        plot=dict(frame_width=500, aspect=w / h), style=dict(cmap="Viridis")
+    hv_pul = hv.opts.apply_groups(
+        hv_pul, plot=dict(frame_width=500, aspect=w / h)
+    ).redim(t=hv.Dimension("t", soft_range=pul_range))
+    hv_A = hv.opts.apply_groups(
+        hv_A, plot=dict(frame_width=500, aspect=w / h), style=dict(cmap="Viridis")
     )
     return (
         hv_unit.relabel("Current Unit: Temporal Traces")
         + hv.NdLayout(
-            {"Simulated Pulse Response": hv_pul, "Spatial Footprint": hv_A},
+            {
+                "Simulated Pulse Response": hv.NdOverlay(hv_pul),
+                "Spatial Footprint": hv.NdOverlay(hv_A),
+            },
             kdims="Current Unit",
         )
     ).cols(1)
@@ -2124,7 +2131,7 @@ def NNsort(cents: pd.DataFrame) -> pd.Series:
         result.loc[idu_next] = NNord
         remain_list.remove(idu_next)
         for k in range(1, int(np.ceil(np.log2(len(result)))) + 1):
-            qry = kdtree.query(cents_hw.loc[idu_next], 2 ** k)
+            qry = kdtree.query(cents_hw.loc[idu_next], 2**k)
             NNs = qry[1][np.isfinite(qry[0])].squeeze()
             NNs = NNs[np.sort(np.unique(NNs, return_index=True)[1])]
             NNs = np.array(result.iloc[NNs].index)
@@ -2177,21 +2184,21 @@ def visualize_motion(motion: xr.DataArray) -> Union[hv.Layout, hv.NdOverlay]:
         mwidth = mwidth.assign_coords(grid=np.arange(mwidth.sizes["grid"]))
         return (
             (
-                hv.Image(mheight.rename("height_motion"), kdims=["frame", "grid"]).opts(
-                    title="height_motion", **opts_im
-                )
-                + hv.Image(mwidth.rename("width_motion"), kdims=["frame", "grid"]).opts(
-                    title="width_motion", **opts_im
-                )
+                hv.Image(
+                    mheight.rename("height_motion"), kdims=["frame", "grid"]
+                ).options(title="height_motion", **opts_im)
+                + hv.Image(
+                    mwidth.rename("width_motion"), kdims=["frame", "grid"]
+                ).options(title="width_motion", **opts_im)
             )
             .cols(1)
-            .opts(show_title=True)
+            .options(show_title=True)
         )
     else:
         opts_cv = {"frame_width": 500, "tools": ["hover"], "aspect": 2}
         return hv.NdOverlay(
             dict(
-                width=hv.Curve(motion.sel(shift_dim="width")).opts(**opts_cv),
-                height=hv.Curve(motion.sel(shift_dim="height")).opts(**opts_cv),
+                width=hv.Curve(motion.sel(shift_dim="width")).options(**opts_cv),
+                height=hv.Curve(motion.sel(shift_dim="height")).options(**opts_cv),
             )
         )

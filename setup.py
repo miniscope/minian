@@ -38,5 +38,5 @@ setuptools.setup(
             "minian-install = minian.install:main",
         ],
     },
-    python_requires=">=3.8",
+    python_requires=">=3.9",
 )

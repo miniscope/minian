@@ -617,7 +617,7 @@ def check_temp(fm: np.ndarray, max_sh: int) -> float:
     if perimeter <= 0:
         return 0
     area = cv2.contourArea(cont)
-    circularity = 4 * np.pi * (area / (perimeter ** 2))
+    circularity = 4 * np.pi * (area / (perimeter**2))
     return circularity
 
 

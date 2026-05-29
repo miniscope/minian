@@ -23,11 +23,11 @@ def test_cross_reg_notebook():
     cents = pd.read_pickle("./demo_data/cents.pkl")
     mappings = pd.read_pickle("./demo_data/mappings.pkl")
     assert len(cents) == 508
-    assert int(cents["height"].sum()) == 99091
-    assert int(cents["width"].sum()) == 213627
-    assert len(mappings) == 431
+    assert int(cents["height"].sum()) == 99096
+    assert int(cents["width"].sum()) == 213628
+    assert len(mappings) == 430
     assert mappings[("group", "group")].value_counts().to_dict() == {
-        ("session2",): 182,
-        ("session1",): 172,
-        ("session1", "session2"): 77,
+        ("session2",): 181,
+        ("session1",): 171,
+        ("session1", "session2"): 78,
     }
