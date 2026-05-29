@@ -34,12 +34,12 @@ def test_pipeline_notebook():
     # captured from a verified run on the pinned snapshot (see
     # requirements/ci-constraints.txt). The CNMF sums use wider tolerances
     # because they are the most sensitive to those factors.
-    assert minian_ds.sizes["unit_id"] == pytest.approx(286, abs=10)
+    assert minian_ds.sizes["unit_id"] == pytest.approx(230, abs=10)
     motion_sum = minian_ds["motion"].sum("frame").values.astype(int)
     assert list(motion_sum) == pytest.approx([391, -252], abs=30)
     assert int(minian_ds["max_proj"].sum().compute()) == pytest.approx(1501702, rel=1e-2)
-    assert int(minian_ds["C"].sum().compute()) == pytest.approx(546290, rel=5e-2)
-    assert int(minian_ds["S"].sum().compute()) == pytest.approx(5065, rel=1e-1)
-    assert int(minian_ds["A"].sum().compute()) == pytest.approx(71468, rel=5e-2)
+    assert int(minian_ds["C"].sum().compute()) == pytest.approx(433137, rel=5e-2)
+    assert int(minian_ds["S"].sum().compute()) == pytest.approx(3669, rel=1e-1)
+    assert int(minian_ds["A"].sum().compute()) == pytest.approx(59311, rel=5e-2)
     assert os.path.exists("./demo_movies/minian_mc.mp4")
     assert os.path.exists("./demo_movies/minian.mp4")

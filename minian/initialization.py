@@ -19,7 +19,13 @@ from skimage.morphology import disk
 from sklearn.mixture import GaussianMixture
 from sklearn.neighbors import KDTree, radius_neighbors_graph
 
-from .cnmf import adj_corr, filt_fft, graph_optimize_corr, label_connected
+from .cnmf import (
+    DEFAULT_PARTITION_CHUNK,
+    adj_corr,
+    filt_fft,
+    graph_optimize_corr,
+    label_connected,
+)
 from .utilities import local_extreme, med_baseline, save_minian, sps_lstsq
 
 
@@ -556,6 +562,7 @@ def seeds_merge(
     thres_dist=5,
     thres_corr=0.6,
     noise_freq: float | None = None,
+    chunk: int = DEFAULT_PARTITION_CHUNK,
 ) -> pd.DataFrame:
     """
     Merge seeds based on spatial distance and temporal correlation of their
@@ -595,7 +602,7 @@ def seeds_merge(
     print("computing distance")
     nng = radius_neighbors_graph(seeds[["height", "width"]], thres_dist)
     print("computing correlations")
-    adj = adj_corr(varr, nng, seeds[["height", "width"]], noise_freq)
+    adj = adj_corr(varr, nng, seeds[["height", "width"]], noise_freq, chunk=chunk)
     print("merging seeds")
     adj = adj > thres_corr
     adj = adj + adj.T
@@ -627,6 +634,7 @@ def initA(
     thres_corr=0.8,
     wnd=10,
     noise_freq: float | None = None,
+    chunk: int = DEFAULT_PARTITION_CHUNK,
 ) -> xr.DataArray:
     """
     Initialize spatial footprints from seeds.
@@ -689,7 +697,7 @@ def initA(
         sdg.add_edges_from([(cur_sd, n) for n in nns if n != cur_sd])
     sdg.remove_nodes_from(list(nx.isolates(sdg)))
     sdg = nx.convert_node_labels_to_integers(sdg)
-    corr_df = graph_optimize_corr(varr, sdg, noise_freq)
+    corr_df = graph_optimize_corr(varr, sdg, noise_freq, chunk=chunk)
     print("building spatial matrix")
     corr_df = corr_df[corr_df["corr"] > thres_corr]
     nod_df = pd.DataFrame.from_dict(dict(sdg.nodes(data=True)), orient="index")

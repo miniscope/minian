@@ -11,7 +11,6 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import pyfftw.interfaces.numpy_fft as numpy_fft
-import pymetis
 import scipy.sparse
 import sparse
 import xarray as xr
@@ -43,6 +42,11 @@ except ImportError:
         def wrapper(fn: Callable) -> Callable:
             return fn
         return wrapper
+
+
+#: Default target size for :func:`spatial_partition`. Forwarded by every
+#: ``chunk`` kwarg in this module and ``initialization.py``.
+DEFAULT_PARTITION_CHUNK = 600
 
 
 def get_noise_fft(
@@ -1414,6 +1418,7 @@ def unit_merge(
     add_list: list[xr.DataArray] | None = None,
     thres_corr=0.9,
     noise_freq: float | None = None,
+    chunk: int = DEFAULT_PARTITION_CHUNK,
 ) -> tuple[xr.DataArray, xr.DataArray, list[xr.DataArray] | None]:
     """
     Merge cells given spatial footprints and temporal components
@@ -1469,7 +1474,35 @@ def unit_merge(
         )
     print("computing temporal correlation")
     nod_df = pd.DataFrame({"unit_id": A.coords["unit_id"].values})
-    adj = adj_corr(C, A_inter, nod_df, freq=noise_freq)
+    # Footprint centroids for spatial_partition. Computed in a single
+    # dask.compute so the three reductions share one pass over A.
+    mass, mom_h, mom_w = da.compute(
+        A.sum(["height", "width"]).data,
+        (A * A.coords["height"]).sum(["height", "width"]).data,
+        (A * A.coords["width"]).sum(["height", "width"]).data,
+    )
+    mass = np.asarray(mass, dtype=float)
+    cen_h = np.asarray(mom_h, dtype=float) / mass
+    cen_w = np.asarray(mom_w, dtype=float) / mass
+    # Zero-mass footprints would NaN out the centroid; park them at the FOV
+    # centre so the partitioner clusters them rather than receiving NaN.
+    bad = ~np.isfinite(cen_h) | ~np.isfinite(cen_w)
+    if bad.any():
+        warnings.warn(
+            f"unit_merge: {int(bad.sum())} unit(s) have zero-mass footprints; "
+            "centroid positions replaced with FOV centre for partition "
+            "assignment (likely upstream update_spatial pruned to empty).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        h_mid = float(A.coords["height"].mean().item())
+        w_mid = float(A.coords["width"].mean().item())
+        cen_h = np.where(bad, h_mid, cen_h)
+        cen_w = np.where(bad, w_mid, cen_w)
+    centroids = np.stack([cen_h, cen_w], axis=1)
+    adj = adj_corr(
+        C, A_inter, nod_df, freq=noise_freq, positions=centroids, chunk=chunk
+    )
     print("labeling units to be merged")
     adj = adj > thres_corr
     adj = adj + adj.T
@@ -1716,8 +1749,9 @@ def graph_optimize_corr(
     G: nx.Graph,
     freq: float,
     idx_dims=["height", "width"],
-    chunk=600,
+    chunk: int = DEFAULT_PARTITION_CHUNK,
     step_size=50,
+    positions: np.ndarray | None = None,
 ) -> pd.DataFrame:
     """
     Compute correlation in an optimized fashion given a computation graph.
@@ -1728,9 +1762,10 @@ def graph_optimize_corr(
     timeseries are stored in `varr` and indexed with node attributes. The
     function can carry out smoothing of timeseries before computation of
     correlation. To minimize re-computation of smoothing for each pixel, the
-    graph is first partitioned using a minial-cut algorithm. Then the
-    computation is performed in chunks with size `chunk`, with nodes from the
-    same partition being in the same chunk as much as possible.
+    graph is first partitioned spatially via a k-d tree median split on node
+    positions. Then the computation is performed in chunks with size `chunk`,
+    with nodes from the same partition being in the same chunk as much as
+    possible.
 
     Parameters
     ----------
@@ -1754,6 +1789,11 @@ def graph_optimize_corr(
         Step size to iterate through all edges. If too small then the iteration
         will take a long time. If too large then the variances in the actual
         chunksize of computation will be large. By default `50`.
+    positions : np.ndarray, optional
+        `(N, 2)` array of 2D coordinates per node, in `sorted(G.nodes)`
+        order. If `None`, positions are read from each node's ``"height"``
+        and ``"width"`` attributes. Supply explicitly when the graph nodes
+        don't carry those attrs (e.g. `unit_merge` hands in centroids).
 
     Returns
     -------
@@ -1762,12 +1802,32 @@ def graph_optimize_corr(
         representing the node index of the edge (correlation), and column "corr"
         with computed value of correlation.
     """
-    # a heuristic to make number of partitions scale with nodes
-    n_cuts, membership = pymetis.part_graph(
-        max(int(np.ceil(G.number_of_nodes() / chunk)), 1), adjacency=adj_list(G)
-    )
+    nodes_sorted = sorted(G.nodes)
+    if positions is None:
+        try:
+            positions = np.array(
+                [[G.nodes[n]["height"], G.nodes[n]["width"]] for n in nodes_sorted],
+                dtype=float,
+            )
+        except KeyError as e:
+            raise ValueError(
+                "graph_optimize_corr: positions=None fallback requires every "
+                "node to carry 'height' and 'width' attributes (missing key "
+                f"{e!s}). Either add these attrs when constructing G, or pass "
+                "positions= explicitly (e.g. footprint centroids for unit_merge)."
+            ) from e
+    else:
+        positions = np.asarray(positions)
+    if positions.shape[0] != len(nodes_sorted):
+        raise ValueError(
+            f"graph_optimize_corr: positions has {positions.shape[0]} rows "
+            f"but G has {len(nodes_sorted)} nodes; they must match in "
+            "sorted(G.nodes) order."
+        )
+    membership = spatial_partition(positions, target_chunk=chunk)
+    # Plain int -- keeps the graph JSON-serializable.
     nx.set_node_attributes(
-        G, {k: {"part": v} for k, v in zip(sorted(G.nodes), membership)}
+        G, {k: {"part": int(v)} for k, v in zip(nodes_sorted, membership)}
     )
     eg_df = nx.to_pandas_edgelist(G)
     part_map = nx.get_node_attributes(G, "part")
@@ -1825,7 +1885,12 @@ def graph_optimize_corr(
 
 
 def adj_corr(
-    varr: xr.DataArray, adj: np.ndarray, nod_df: pd.DataFrame, freq: float
+    varr: xr.DataArray,
+    adj: np.ndarray,
+    nod_df: pd.DataFrame,
+    freq: float,
+    positions: np.ndarray | None = None,
+    chunk: int = DEFAULT_PARTITION_CHUNK,
 ) -> scipy.sparse.csr_matrix:
     """
     Compute correlation in an optimized fashion given an adjacency matrix and
@@ -1848,6 +1913,11 @@ def adj_corr(
     freq : float
         Cut-off frequency for the optional smoothing. If `None` then no
         smoothing will be done.
+    positions : np.ndarray, optional
+        `(N, 2)` array of 2D positions per node used for spatial chunking.
+        If `None`, falls back to the ``height`` / ``width`` columns of
+        `nod_df`. Supply explicitly when the indexing columns aren't 2D
+        coordinates (`unit_merge` hands in footprint centroids).
 
     Returns
     -------
@@ -1858,28 +1928,132 @@ def adj_corr(
     G = nx.Graph()
     G.add_nodes_from([(i, d) for i, d in enumerate(nod_df.to_dict("records"))])
     G.add_edges_from([(s, t) for s, t in zip(*adj.nonzero())])
-    corr_df = graph_optimize_corr(varr, G, freq, idx_dims=nod_df.columns)
+    corr_df = graph_optimize_corr(
+        varr, G, freq, idx_dims=nod_df.columns, chunk=chunk, positions=positions
+    )
     return scipy.sparse.csr_matrix(
         (corr_df["corr"], (corr_df["source"], corr_df["target"])), shape=adj.shape
     )
 
 
-def adj_list(G: nx.Graph) -> list[np.ndarray]:
+def spatial_partition(
+    positions: np.ndarray, target_chunk: int
+) -> np.ndarray:
     """
-    Generate adjacency list representation from graph.
+    Partition 2D points into balanced groups via k-d tree median split.
+
+    For graphs whose edges only connect geometrically close nodes (as in
+    `graph_optimize_corr`), a spatial split balances node counts and
+    minimizes cross-partition edges simultaneously.
 
     Parameters
     ----------
-    G : nx.Graph
-        The input graph.
+    positions : np.ndarray
+        `(N, 2)` array of 2D coordinates, one row per node.
+    target_chunk : int
+        Maximum allowed partition size. Leaves end up at or below this
+        size, so partition count is approximately `ceil(N / target_chunk)`.
 
     Returns
     -------
-    adj_ls : list[np.ndarray]
-        The adjacency list representation of graph.
+    membership : np.ndarray
+        Integer partition label per row, dense in `[0, n_parts)`.
     """
-    gdict = nx.to_dict_of_dicts(G)
-    return [np.array(list(gdict[k].keys())) for k in sorted(gdict.keys())]
+    positions = np.asarray(positions, dtype=float)
+    if positions.ndim != 2 or positions.shape[1] != 2:
+        raise ValueError(
+            f"positions must be (N, 2); got shape {positions.shape}"
+        )
+    if target_chunk < 1:
+        raise ValueError(f"target_chunk must be >= 1; got {target_chunk}")
+    n = positions.shape[0]
+    membership = np.empty(n, dtype=np.int64)
+    if n == 0:
+        return membership
+    next_label = [0]
+
+    def recurse(idx: np.ndarray) -> None:
+        if len(idx) <= target_chunk:
+            membership[idx] = next_label[0]
+            next_label[0] += 1
+            return
+        pts = positions[idx]
+        # Split on the longer axis -> squarer tiles -> shorter perimeter ->
+        # fewer cross-partition edges.
+        axis = int(np.argmax(pts.max(axis=0) - pts.min(axis=0)))
+        order = np.argsort(pts[:, axis], kind="stable")
+        mid = len(idx) // 2
+        recurse(idx[order[:mid]])
+        recurse(idx[order[mid:]])
+
+    recurse(np.arange(n))
+    return membership
+
+
+def partition_diagnostics(
+    membership: np.ndarray,
+    adj: "scipy.sparse.spmatrix | None" = None,
+    n_frames: int | None = None,
+    bytes_per_sample: int = 4,
+) -> dict:
+    """
+    Compute quality statistics for a spatial partition.
+
+    Parameters
+    ----------
+    membership : np.ndarray
+        ``(N,)`` integer partition label per node.
+    adj : scipy.sparse.spmatrix, optional
+        ``(N, N)`` adjacency, symmetric or triangular. Self-loops and
+        duplicates are collapsed. When omitted, edge stats are skipped.
+    n_frames : int, optional
+        Length of the time axis. When supplied, ``mem_mb`` is included.
+    bytes_per_sample : int, optional
+        Per-sample dtype size in bytes (default 4 = float32). Ignored if
+        ``n_frames`` is None.
+
+    Returns
+    -------
+    diag : dict
+        Always: ``"sizes"`` (nodes per partition), ``"n_parts"``.
+        With ``adj``: ``"edges_per_partition"``, ``"cross_edges"``,
+        ``"total_edges"``, ``"cross_fraction"``.
+        With ``n_frames``: ``"mem_mb"`` (MiB per partition).
+    """
+    membership = np.asarray(membership, dtype=np.int64)
+    sizes = np.bincount(membership) if membership.size else np.zeros(0, dtype=np.int64)
+    diag: dict = {"sizes": sizes, "n_parts": int(len(sizes))}
+    if n_frames is not None:
+        diag["mem_mb"] = sizes.astype(float) * n_frames * bytes_per_sample / (1024 ** 2)
+    if adj is not None:
+        # Canonicalize to unique undirected pairs (i < j); handles symmetric
+        # or triangular adj uniformly and drops self-loops.
+        src, tgt = adj.nonzero()
+        lo = np.minimum(src, tgt)
+        hi = np.maximum(src, tgt)
+        keep = lo != hi
+        lo, hi = lo[keep], hi[keep]
+        if lo.size:
+            pairs = np.unique(np.column_stack([lo, hi]), axis=0)
+        else:
+            pairs = np.empty((0, 2), dtype=np.int64)
+        if pairs.size:
+            part_a = membership[pairs[:, 0]]
+            part_b = membership[pairs[:, 1]]
+            intra = part_a == part_b
+            edges_per_partition = np.bincount(
+                part_a[intra], minlength=diag["n_parts"]
+            )
+            cross_edges = int((~intra).sum())
+        else:
+            edges_per_partition = np.zeros(diag["n_parts"], dtype=np.int64)
+            cross_edges = 0
+        total = int(pairs.shape[0])
+        diag["edges_per_partition"] = edges_per_partition
+        diag["cross_edges"] = cross_edges
+        diag["total_edges"] = total
+        diag["cross_fraction"] = (cross_edges / total) if total else 0.0
+    return diag
 
 
 @darr.as_gufunc(signature="(p,f),(i),(i)->(i)", output_dtypes=[float])

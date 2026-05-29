@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 
 import pandas as pd
 import pytest
@@ -8,6 +9,9 @@ import pytest
 def test_cross_reg_notebook():
     os.makedirs("artifact", exist_ok=True)
     args = [
+        # Resolve jupyter via the active interpreter for Windows portability.
+        sys.executable,
+        "-m",
         "jupyter",
         "nbconvert",
         "--to",
