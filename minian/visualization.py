@@ -2197,15 +2197,16 @@ def visualize_spatial_partition(
     max_proj: xr.DataArray,
     positions: np.ndarray,
     membership: np.ndarray,
-    adj: "scisps.spmatrix | None" = None,
-    n_frames: int | None = None,
-) -> "hv.Overlay | pn.layout.Row":
+    adj: "scisps.spmatrix",
+    n_frames: int,
+) -> "pn.layout.Row":
     """
-    Render a precomputed k-d tree spatial partition.
+    Render a precomputed k-d tree spatial partition with diagnostics.
 
     Scatters node positions on top of ``max_proj``, colored by partition
-    label. With ``adj`` and/or ``n_frames`` supplied, adds diagnostic
-    histograms for tuning ``target_chunk`` before a pipeline run.
+    label, alongside three histograms (nodes / intra-partition edges /
+    memory per partition) for tuning ``target_chunk`` before a pipeline
+    run.
 
     Parameters
     ----------
@@ -2217,19 +2218,19 @@ def visualize_spatial_partition(
     membership : np.ndarray
         ``(N,)`` integer partition label per node, matching ``positions``
         row order. Produced by :func:`minian.cnmf.spatial_partition`.
-    adj : scipy.sparse.spmatrix, optional
-        ``(N, N)`` adjacency (symmetric or triangular). Adds the intra-
-        partition edges histogram and the cross-partition fraction.
-    n_frames : int, optional
-        Length of the time axis. Adds a memory-per-partition histogram
-        (MiB, assuming float32).
+    adj : scipy.sparse.spmatrix
+        ``(N, N)`` adjacency (symmetric or triangular). Drives the intra-
+        partition edges histogram and the cross-partition fraction in
+        the overlay title.
+    n_frames : int
+        Length of the time axis, used for the memory-per-partition
+        histogram (MiB, assuming float32).
 
     Returns
     -------
-    hvres : hv.Overlay or pn.layout.Row
-        ``hv.Overlay`` if neither ``adj`` nor ``n_frames`` is supplied;
-        otherwise a ``pn.layout.Row`` with the spatial overlay on the left
-        and a ``pn.layout.Column`` of 1-3 diagnostic histograms on the right.
+    pn.layout.Row
+        Spatial overlay on the left and a ``pn.layout.Column`` of three
+        diagnostic histograms on the right.
     """
     from .cnmf import partition_diagnostics
 
@@ -2241,10 +2242,12 @@ def visualize_spatial_partition(
             f"{positions.shape[0]} rows but membership has "
             f"{membership.shape[0]}; they must align row-for-row."
         )
-    diag = partition_diagnostics(
-        membership, adj=adj, n_frames=n_frames
-    )
+    diag = partition_diagnostics(membership, adj=adj, n_frames=n_frames)
     n_parts = diag["n_parts"]
+    sizes = diag["sizes"]
+    eps = diag["edges_per_partition"]
+    mem = diag["mem_mb"]
+
     h, w = max_proj.sizes["height"], max_proj.sizes["width"]
     # Fix both overlay dimensions so the histogram column can be sized to
     # match the overlay's height exactly.
@@ -2265,11 +2268,6 @@ def visualize_spatial_partition(
         frame_height=overlay_frame_height,
         cmap="Greys_r",
     )
-    title_parts = [f"{n_parts} partitions"]
-    if adj is not None:
-        title_parts.append(
-            f"cross-partition edges: {diag['cross_fraction']:.1%}"
-        )
     opts_pts = dict(
         size=6,
         color="color",
@@ -2277,44 +2275,39 @@ def visualize_spatial_partition(
         line_alpha=0,
         fill_alpha=0.9,
         show_legend=False,
-        title=" — ".join(title_parts),
+        title=(
+            f"{n_parts} partitions"
+            f" — cross-partition edges: {diag['cross_fraction']:.1%}"
+        ),
     )
     overlay = hv.Image(max_proj, kdims=["width", "height"]).opts(**opts_im) * hv.Points(
         pts_df, kdims=["width", "height"], vdims=["partition", "color"]
     ).opts(**opts_pts)
 
-    if adj is None and n_frames is None:
-        return overlay
-
-    # Collect the histogram specs first so we know how many cells the right
-    # column needs before sizing each one.
-    hist_specs = []
-    sizes = diag["sizes"]
-    hist_specs.append((
-        sizes,
-        "nodes per partition",
-        f"Nodes / partition (min {sizes.min()}, max {sizes.max()}, median {int(np.median(sizes))})",
-    ))
-    if adj is not None:
-        eps = diag["edges_per_partition"]
-        hist_specs.append((
+    hist_specs = [
+        (
+            sizes,
+            "nodes per partition",
+            f"Nodes / partition (min {sizes.min()}, max {sizes.max()}, "
+            f"median {int(np.median(sizes))})",
+        ),
+        (
             eps,
             "intra-partition edges",
             f"Edges / partition (min {eps.min()}, max {eps.max()}, "
             f"cross {diag['cross_edges']}/{diag['total_edges']})",
-        ))
-    if n_frames is not None:
-        mem = diag["mem_mb"]
-        hist_specs.append((
+        ),
+        (
             mem,
             "MiB per partition",
             f"Memory / partition @ {n_frames} frames "
             f"(min {mem.min():.1f}, max {mem.max():.1f} MiB)",
-        ))
+        ),
+    ]
 
-    # Split the overlay height across the histogram column so the right edge
-    # of the row lines up with the bottom of the image. Floor at 100 px to
-    # keep axis labels legible if the overlay is very short.
+    # Split the overlay height across the three histograms so the right
+    # edge of the row lines up with the bottom of the image. Floor at
+    # 100 px to keep axis labels legible if the overlay is very short.
     hist_frame_height = max(100, overlay_frame_height // len(hist_specs))
     hist_opts = dict(
         frame_width=360,
@@ -2336,3 +2329,53 @@ def visualize_spatial_partition(
 
     hist_panels = [_hist(*spec) for spec in hist_specs]
     return pn.layout.Row(overlay, pn.layout.Column(*hist_panels))
+
+
+def visualize_seeds_merge_partition(
+    seeds: pd.DataFrame,
+    max_proj: xr.DataArray,
+    n_frames: int,
+    *,
+    thres_dist: float,
+    chunk: int,
+) -> "pn.layout.Row":
+    """
+    Preview the spatial partition :func:`minian.initialization.seeds_merge`
+    will use internally, before running the merge itself.
+
+    Wraps :func:`visualize_spatial_partition` with the same seed filtering
+    and radius-neighbour graph construction that ``seeds_merge`` does
+    internally, so the rendered partition matches the one the merge will
+    use for the current ``thres_dist`` / ``chunk``.
+
+    Parameters
+    ----------
+    seeds : pd.DataFrame
+        Seeds dataframe, including the ``mask_ks`` and ``mask_pnr`` columns
+        produced upstream by ``ks_refine`` and ``pnr_refine``.
+    max_proj : xr.DataArray
+        Max projection background for the overlay.
+    n_frames : int
+        Number of frames (e.g. ``Y_hw_chk.sizes["frame"]``); drives the
+        memory-per-partition histogram.
+    thres_dist : float
+        Radius for the seed-neighbour graph (``param_seeds_merge["thres_dist"]``).
+    chunk : int
+        Target partition size (``param_seeds_merge["chunk"]``).
+
+    Returns
+    -------
+    pn.layout.Row
+        Same row layout returned by :func:`visualize_spatial_partition`.
+    """
+    from sklearn.neighbors import radius_neighbors_graph
+
+    from .cnmf import spatial_partition
+
+    seeds_in = seeds[seeds["mask_ks"] & seeds["mask_pnr"]].reset_index(drop=True)
+    positions = seeds_in[["height", "width"]].values
+    adj = radius_neighbors_graph(positions, radius=thres_dist).astype(bool)
+    membership = spatial_partition(positions, target_chunk=chunk)
+    return visualize_spatial_partition(
+        max_proj, positions, membership, adj=adj, n_frames=n_frames
+    )

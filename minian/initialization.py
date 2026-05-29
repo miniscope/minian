@@ -696,7 +696,14 @@ def initA(
         sdg.add_edges_from([(cur_sd, n) for n in nns if n != cur_sd])
     sdg.remove_nodes_from(list(nx.isolates(sdg)))
     sdg = nx.convert_node_labels_to_integers(sdg)
-    corr_df = graph_optimize_corr(varr, sdg, noise_freq, chunk=chunk)
+    sdg_nodes = sorted(sdg.nodes)
+    sdg_positions = np.array(
+        [[sdg.nodes[n]["height"], sdg.nodes[n]["width"]] for n in sdg_nodes],
+        dtype=float,
+    )
+    corr_df = graph_optimize_corr(
+        varr, sdg, noise_freq, sdg_positions, chunk=chunk
+    )
     print("building spatial matrix")
     corr_df = corr_df[corr_df["corr"] > thres_corr]
     nod_df = pd.DataFrame.from_dict(dict(sdg.nodes(data=True)), orient="index")
