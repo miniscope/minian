@@ -1858,6 +1858,9 @@ def graph_optimize_corr(
             npxs.append(len(pixels))
             pixels = set()
             eg_ls = []
+    n_edges = len(eg_df)
+    cross_pct = f"{len(egd_diff) / n_edges:.1%}" if n_edges else "n/a (no edges)"
+    print(f"cross-partition edges: {cross_pct}")
     print(f"node recompute ratio: {sum(npxs) / G.number_of_nodes()}")
     print("computing correlations")
     corr_ls = da.compute(corr_ls)[0]
