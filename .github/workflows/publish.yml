@@ -1,11 +1,11 @@
 name: Publish to PyPI
 
-# Triggered by pushing a tag of the form `vX.Y.Z` (matching commitizen's
-# tag_format in pyproject.toml). The workflow validates that the tag matches
-# the version declared in pyproject.toml, builds an sdist + wheel, and
-# publishes via PyPI Trusted Publishing (OIDC) — no API token stored in the
-# repo. The PyPI project must be configured with this repo, this workflow
-# filename, and the `pypi` environment as a trusted publisher.
+# Triggered by pushing a tag of the form `vX.Y.Z`. The package version is
+# derived from the tag via pdm-backend's SCM source (configured in
+# pyproject.toml), so no version file needs to be updated before tagging.
+# The build is published via PyPI Trusted Publishing (OIDC) — no API token
+# stored in the repo. The PyPI project must be configured with this repo,
+# this workflow filename, and the `pypi` environment as a trusted publisher.
 #
 # Manual `workflow_dispatch` runs only build the artifacts (no publish), so
 # the build can be exercised without cutting a release.
@@ -24,6 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # pdm-backend's SCM source reads the latest matching tag via
+          # `git describe`, which needs the tag history to be present.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -31,34 +35,13 @@ jobs:
           python-version: '3.12'
 
       - name: Install build backend
-        run: python -m pip install --upgrade pip build
-
-      - name: Verify tag matches pyproject.toml version
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          python -c "
-          import re, os, sys
-          tag_version = os.environ['REF_NAME'].removeprefix('v')
-          with open('pyproject.toml') as f:
-              text = f.read()
-          m = re.search(r'^version = \"([^\"]+)\"', text, flags=re.M)
-          if not m:
-              sys.exit('No version field in pyproject.toml')
-          pyproj_version = m.group(1)
-          if tag_version != pyproj_version:
-              sys.exit(f'Tag {tag_version!r} does not match pyproject version {pyproj_version!r}. Run `cz bump` before tagging.')
-          print(f'Tag and pyproject version agree: {tag_version}')
-          "
+        run: python -m pip install --upgrade pip build twine
 
       - name: Build sdist and wheel
         run: python -m build
 
       - name: Check distributions
-        run: |
-          python -m pip install twine
-          python -m twine check dist/*
+        run: python -m twine check dist/*
 
       - uses: actions/upload-artifact@v4
         with:
