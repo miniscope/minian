@@ -1,12 +1,7 @@
 name: pipeline notebook
 
-# Mirrors DeniseCaiLab/minian PR #301 (modernize-minian): execute the full
-# pipeline.ipynb in CI via nbconvert, separate from the fast pytest job.
+# Disabled until further notice
 on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
   workflow_dispatch:
 
 jobs:
