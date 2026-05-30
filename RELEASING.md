@@ -10,19 +10,17 @@ that ends up on PyPI is whatever you tag.
 
 ## First PyPI release
 
-The first PyPI release is planned as `v2.0.0`, even though older `v1.x.x`
-tags exist in the repo history. Those legacy tags were never published to
-PyPI — they're only on conda-forge — so PyPI's version history starts fresh
-at v2. SCM-derived dev builds between tags will read off the latest tag
-present in the repo (e.g. builds today resolve as `1.2.1.dev<n>+g<sha>` until
-`v2.0.0` is cut).
+Legacy `v1.x.x` tags exist in the repo history but were never published to
+PyPI (they're only on conda-forge). The first PyPI version number hasn't
+been decided — bumping to `v2.0.0` is one option, continuing from the
+latest `v1.x` tag is another. SCM-derived dev builds between tags read
+off the latest tag present in the repo (e.g. builds today resolve as
+`1.2.1.dev<n>+g<sha>`).
 
 ## One-time PyPI setup
 
 On https://pypi.org, register `miniscope/minian` as a trusted publisher for
-the `minian` project (currently pending the [PEP 541][pep541] transfer):
-
-[pep541]: https://peps.python.org/pep-0541/
+the `minian` project:
 
 - **PyPI Project Name:** `minian`
 - **Owner:** `miniscope`
@@ -30,13 +28,13 @@ the `minian` project (currently pending the [PEP 541][pep541] transfer):
 - **Workflow name:** `publish.yml`
 - **Environment name:** `pypi`
 
+If the project doesn't exist on PyPI yet, use a
+[pending publisher](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/) —
+PyPI creates the project on the first successful publish.
+
 Then in this repo's GitHub settings, create an environment named `pypi`
 (optionally with required reviewers for an extra approval gate; recommended:
 restrict deployment to `v*` tags).
-
-If `minian` is not yet claimed on PyPI, do the initial release with a
-[pending publisher](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
-instead — same fields, but PyPI creates the project on first successful run.
 
 ## Cutting a release
 
@@ -52,12 +50,12 @@ pdm run cz bump
 git push origin master --follow-tags
 ```
 
-If you need to override the version manually (e.g., the first v2 release
-that jumps over inferred versions), tag directly:
+If you need to override the version manually (e.g., to jump over
+inferred versions for the first PyPI release), tag directly:
 
 ```bash
-git tag -a v2.0.0 -m "Release v2.0.0"
-git push origin v2.0.0
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push origin vX.Y.Z
 ```
 
 The `Publish to PyPI` workflow runs automatically on `v*` tag pushes. It
