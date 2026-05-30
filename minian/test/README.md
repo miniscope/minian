@@ -11,6 +11,8 @@ MiniAn uses [pytest](https://docs.pytest.org/).
   uv sync --group dev
   ```
 
+  With [PDM](https://pdm-project.org/) instead: `pdm install --group dev` (or `pdm install --with test`), then `pdm run rs-dev` and `pdm run test`.
+
 - **FFmpeg**
 - **`minian.minian_rs`**: some tests call the Rust extension. After `uv sync`, build it once from the repo root, e.g. `uv run maturin develop --manifest-path src-rust/Cargo.toml`, or `mise run rs-dev` if you use the repo `.mise.toml`.
 - **`demo_movies/`** at the repo root (optional): a few pipeline tests skip if this folder or `msCam*.avi` clips are missing.

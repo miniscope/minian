@@ -42,6 +42,40 @@ If you use `mise <https://mise.jdx.dev/>`_ with the repo ``.mise.toml``, the sam
 
 Run entry points through ``uv run`` so they use the project environment, for example ``uv run minian-pipeline --help``, ``uv run minian-cross-reg --help``, or ``uv run jupyter notebook``.
 
+Install from source with PDM (optional)
+---------------------------------------
+
+`PDM <https://pdm-project.org/>`_ reads the same ``pyproject.toml`` as uv (``[project]``, ``[dependency-groups]``, optional ``docs`` / ``test`` extras). The build still uses **maturin** for ``minian_rs``.
+
+.. code-block:: console
+
+    git clone https://github.com/DeniseCaiLab/minian.git
+    cd minian
+    pdm install
+
+Runtime dependencies only. For the full developer set (pytest, Black, maturin, mypy, …):
+
+.. code-block:: console
+
+    pdm install --group dev
+
+or, matching older MiniAn CI that used a ``test`` extra:
+
+.. code-block:: console
+
+    pdm install --with test
+
+Add documentation dependencies with ``pdm install --group dev --extra docs`` (or ``pdm install --with test --extra docs``).
+
+Build the Rust extension and run tests:
+
+.. code-block:: console
+
+    pdm run rs-dev
+    pdm run test
+
+Lockfile for PDM-only workflows: ``pdm lock`` or ``pdm run lock`` (includes ``dev`` groups plus ``docs`` and ``test`` extras). uv continues to use ``uv.lock``; both lockfiles can coexist in the repository.
+
 Install from PyPI
 -----------------
 

@@ -71,6 +71,16 @@ docs = [
     "pydata-sphinx-theme>=0.16.1",
     "sphinx>=8.1.3",
 ]
+# Pytest-only extra for ``pdm install --with test`` (modernize-minian CI pattern).
+# Full developer tooling lives in [dependency-groups] dev (uv: ``--group dev``,
+# PDM: ``--group dev``). Group name ``test`` must not also appear under
+# [dependency-groups] (PDM forbids duplicating optional-extra names).
+test = [
+    "coverage[toml]>=7.0.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-rerunfailures>=15.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/DeniseCaiLab/minian"
@@ -110,6 +120,17 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=15.0",
 ]
+
+[tool.pdm]
+distribution = true
+
+[tool.pdm.scripts]
+# Parallels uv/CI usage; maturin remains the PEP 517 build backend above.
+test = "pytest --pyargs minian"
+test-cov = "pytest -v --color=yes --cov=minian --cov-report=xml --cov-report=term --pyargs minian"
+doctest = "sphinx-build -M doctest docs/source docs/build"
+rs-dev = "maturin develop --manifest-path src-rust/Cargo.toml"
+lock = "pdm lock --group :all -G docs,test"
 
 [tool.pytest.ini_options]
 filterwarnings = [

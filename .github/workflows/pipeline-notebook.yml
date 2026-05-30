@@ -1,0 +1,74 @@
+name: pipeline notebook
+
+# Mirrors DeniseCaiLab/minian PR #301 (modernize-minian): execute the full
+# pipeline.ipynb in CI via nbconvert, separate from the fast pytest job.
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  execute-pipeline-notebook:
+    name: Execute pipeline.ipynb · py ${{ matrix.python-version }} · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12"]
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up ffmpeg
+        # ffmpeg-python is only a wrapper; the notebook needs ffmpeg/ffprobe
+        # binaries (same rationale as modernize-minian testandcov.yml).
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y ffmpeg
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            brew install ffmpeg
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install minian
+        run: uv sync --group dev
+
+      - name: Configure CI cluster limits
+        # Same env vars as modernize-minian minian/test/conftest.py (pytest_sessionstart).
+        run: |
+          echo "MINIAN_NWORKERS=1" >> "${GITHUB_ENV}"
+          echo "MINIAN_MEM_LIMIT=6.00GB" >> "${GITHUB_ENV}"
+          echo "MINIAN_INTERACTIVE=False" >> "${GITHUB_ENV}"
+
+      - name: Execute pipeline notebook
+        run: |
+          mkdir -p artifact
+          if [ -d img ]; then cp -R img artifact/; fi
+          uv run python -m jupyter nbconvert \
+            --to notebook \
+            --output-dir artifact \
+            --output pipeline.ipynb \
+            --execute notebooks/pipeline.ipynb \
+            --ExecutePreprocessor.timeout=-1
+
+      - name: Upload notebook artifacts
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v6
+        with:
+          name: notebooks-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifact
