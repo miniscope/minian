@@ -24,17 +24,6 @@ da.config.set(
         # "optimization.fuse.subgraphs": False,
         # "distributed.scheduler.allowed-failures": 1,
         "array.slicing.split_large_chunks": False,
-        # Force tasks-based rechunking instead of dask >=2025's default
-        # P2P shuffle. P2P is more memory-efficient when the cluster has
-        # spare worker capacity, but under memory pressure it surfaces as
-        # `FutureCancelledError: _finalize_store-... cancelled for reason:
-        # lost dependencies` (a paused/spilling worker has its in-flight
-        # P2P task cancelled, which cascades to every dependent task).
-        # Hit reliably in update_temporal where five concurrent
-        # `var.chunk({"unit_id": 1})` rechunks race for memory. Tasks-
-        # based rechunk spills more predictably and survives memory
-        # pauses. Honored only on dask >=2024.x; older dask ignores it.
-        "array.rechunk.method": "tasks",
     }
 )
 # ref: https://github.com/dask/dask/issues/3530
