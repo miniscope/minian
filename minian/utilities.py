@@ -902,22 +902,6 @@ def custom_arr_optimize(
     :doc:`dask:optimize`
     `dask.array.optimization.optimize`
     """
-    # On dask >=2025 the legacy fuse_keys / fast_functions / key-rewrite
-    # path produces graphs the TaskSpec scheduler can't track, surfacing
-    # at compute time as `FutureCancelledError: <task> cancelled for
-    # reason: lost dependencies`. The trigger we hit in practice is
-    # `update_temporal`'s `keep_patterns=["^update_temporal_block"]`
-    # override: it forces `fuse_keys` to be non-empty, and that interacts
-    # badly with TaskSpec's expression-layer optimisation. Return the
-    # graph unchanged on new dask; TaskSpec does its own optimisation
-    # internally and the legacy hooks here would just interfere.
-    # TODO: port the `tensordot` / `rechunk-merge` memory-throttle
-    # rewrites to `dask.annotate(resources=...)` at the call sites in
-    # cnmf.py / visualization.py so MEM throttling is restored on new
-    # dask -- those annotations are currently lost on this path.
-    if _DASK_HAS_TASK_SPEC:
-        return dsk
-    # Legacy path for dask <2025.
     # inlining lots of array operations ref:
     # https://github.com/dask/dask/issues/6668
     keep_keys = []
@@ -925,6 +909,10 @@ def custom_arr_optimize(
         key_ls = list(dsk.keys())
         for pat in keep_patterns:
             keep_keys.extend(list(filter(lambda k: check_key(k, pat), key_ls)))
+    # `rename_fused_keys` was a pre-2025 hook. dask >=2025 silently ignores
+    # it, and the custom renamer breaks dependency tracking on the new
+    # scheduler (FutureCancelledError: lost dependencies). `fuse_keys` /
+    # `fast_functions` are honored by old dask, ignored by new -- safe to leave.
     dsk = darr.optimization.optimize(
         dsk,
         keys,
@@ -933,14 +921,22 @@ def custom_arr_optimize(
     )
     if inline_patterns:
         dsk = inline_pattern(dsk, inline_patterns, inline_constants=False)
-    effective_rewrite = rewrite_dict if rewrite_dict is not None else rename_dict
-    if effective_rewrite:
-        dsk_old = dsk.copy()
-        for key, val in dsk_old.items():
-            key_new = rewrite_key(key, effective_rewrite)
-            if key_new != key:
-                dsk[key_new] = val
-                dsk[key] = key_new
+    # Post-hoc key-rewrite for memory-throttle annotations
+    # (`tensordot` -> `tensordot_restricted` etc.). Relies on the legacy
+    # convention that a tuple-of-(str,*) task value is a key reference,
+    # which dask >=2025's TaskSpec graph no longer honors -- aliased keys
+    # become dangling references there. Skipped on new dask; this loses
+    # throttling at compute_AtC, the YrA optimize, and the viz merge.
+    # TODO: port to `dask.annotate(resources=...)` at the call sites.
+    if not _DASK_HAS_TASK_SPEC:
+        effective_rewrite = rewrite_dict if rewrite_dict is not None else rename_dict
+        if effective_rewrite:
+            dsk_old = dsk.copy()
+            for key, val in dsk_old.items():
+                key_new = rewrite_key(key, effective_rewrite)
+                if key_new != key:
+                    dsk[key_new] = val
+                    dsk[key] = key_new
     return dsk
 
 
