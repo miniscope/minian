@@ -275,16 +275,25 @@ class TestSpatialPartitionContractViolations:
 
 @pytest.fixture
 def synthetic_varr():
-    """Factory: build an (H, W, T) random xr.DataArray with named coords."""
+    """Factory: build a (frame, height, width) random xr.DataArray.
+
+    Dim order matches what ``minian.utilities.load_videos`` produces and
+    what ``apply_transform`` / ``save_minian`` preserve through the
+    pipeline. xarray's vectorized ``sel`` is dim-order sensitive (it
+    places the new "pixels" dim at the position of the first replaced
+    dim), so testing against a fixture in the opposite order would let
+    a transpose bug in ``construct_comput`` slip past every assertion
+    in this file.
+    """
     def _build(height: int, width: int, frames: int, seed: int = 0):
         rng = np.random.RandomState(seed)
         return xr.DataArray(
-            rng.standard_normal((height, width, frames)).astype("float32"),
-            dims=("height", "width", "frame"),
+            rng.standard_normal((frames, height, width)).astype("float32"),
+            dims=("frame", "height", "width"),
             coords={
+                "frame": np.arange(frames),
                 "height": np.arange(height),
                 "width": np.arange(width),
-                "frame": np.arange(frames),
             },
         )
     return _build

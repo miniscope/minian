@@ -1825,21 +1825,16 @@ def graph_optimize_corr(
             for d, dd in idx_dict.items()
         }
         vsub = varr.sel(**idx_arr).data
-        # `idx_corr` wants (N_items, T_frames). Vectorized indexing already
-        # returns that orientation; single-dim indexing still needs a
-        # rechunk so the trace axis is contiguous for the numba kernel.
-        #
-        # Prior code did `vsub = vsub.T` on the multi-dim branch, which
-        # flipped the array to (T_frames, N_items). idx_corr then computed
-        # Pearson corr between frame slices rather than between pixel
-        # traces, and the result depended on which other pixels shared the
-        # chunk (so it was not chunk-invariant). The accidental behaviour
-        # approximated the intended rule because seeds are added in
-        # row-major order and the radius-neighbor graph only proposes
-        # spatially adjacent pairs, which is why it survived for years.
-        # Full trace + per-seed impact estimate: issue #302. Regression
-        # pinned by test_adj_corr_returns_true_pearson.
-        if len(idx_arr) == 1:
+        # `idx_corr` wants (N_items, T_frames). xarray's vectorized sel
+        # places the new "pixels" dim at the position of the first replaced
+        # dim, so for the pipeline's `(frame, height, width)` varr the
+        # multi-dim sel returns `(frame, pixels)` and needs a transpose;
+        # single-dim sel returns `(unit_id, frame)` already in the right
+        # orientation but still needs a rechunk so the trace axis is
+        # contiguous for the numba kernel.
+        if len(idx_arr) > 1:  # vectorized indexing
+            vsub = vsub.T
+        else:
             vsub = vsub.rechunk(-1)
         with da.config.set(**{"optimization.fuse.ave-width": vsub.shape[0]}):
             return da.optimize(smooth_corr(vsub, ridx, cidx, freq=freq))[0]
