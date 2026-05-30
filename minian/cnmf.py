@@ -1479,9 +1479,12 @@ def unit_merge(
     mass = np.asarray(mass, dtype=float)
     if (mass <= 0).any():
         bad_ids = A.coords["unit_id"].values[mass <= 0]
+        # Cast each id to a plain Python scalar so the message reads
+        # `unit_id=[20]` instead of `unit_id=[np.int64(20)]` on numpy 2.x.
+        bad_ids_py = [v.item() if hasattr(v, "item") else v for v in bad_ids]
         raise ValueError(
-            f"unit_merge received {len(bad_ids)} unit(s) with zero-mass "
-            f"footprints (unit_id={list(bad_ids)}). update_spatial drops "
+            f"unit_merge received {len(bad_ids_py)} unit(s) with zero-mass "
+            f"footprints (unit_id={bad_ids_py}). update_spatial drops "
             "empty footprints via size_thres / mask, so an empty footprint "
             "reaching unit_merge indicates an upstream pipeline bug."
         )
