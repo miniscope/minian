@@ -1858,7 +1858,7 @@ def graph_optimize_corr(
             npxs.append(len(pixels))
             pixels = set()
             eg_ls = []
-    print(f"pixel recompute ratio: {sum(npxs) / G.number_of_nodes()}")
+    print(f"node recompute ratio: {sum(npxs) / G.number_of_nodes()}")
     print("computing correlations")
     corr_ls = da.compute(corr_ls)[0]
     corr = pd.Series(np.concatenate(corr_ls), index=np.concatenate(idx_ls), name="corr")
