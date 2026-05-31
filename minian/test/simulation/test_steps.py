@@ -10,6 +10,7 @@ here; ``render`` therefore composites the planted footprint.
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from minian.simulation import (
     Acquisition,
@@ -147,13 +148,10 @@ def test_place_somata_is_reproducible():
     assert scenes[0] == scenes[1]
 
 
-def test_neurite_stubs_not_implemented():
-    acq = _acq()
-    step = PlaceSomata(density_per_mm2=2000.0, n_neurite_stubs=1).build(
-        acq, np.random.default_rng(8)
-    )
-    with pytest.raises(NotImplementedError, match="neurite"):
-        step(Scene.zeros(acq))
+def test_neurite_stubs_rejected_at_construction():
+    # Unimplemented in v1: rejected when the spec is built, not deep in the run.
+    with pytest.raises(ValidationError, match="n_neurite_stubs"):
+        PlaceSomata(density_per_mm2=2000.0, n_neurite_stubs=1)
 
 
 # --- cell_activity ---------------------------------------------------------

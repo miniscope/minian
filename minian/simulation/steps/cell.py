@@ -18,14 +18,20 @@ Step 5b); until it lands, ``render`` composites the planted footprint directly.
 
 from __future__ import annotations
 
+import math
+from typing import TYPE_CHECKING
+
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
 from minian.simulation.scene import Cell, Scene
 from minian.simulation.steps.base import Step
 
-# Guards a division when a footprint or kernel is degenerate (sub-pixel soma,
-# etc.); far below any physically meaningful intensity.
+if TYPE_CHECKING:
+    from minian.simulation.spec import Optics
+
+# Guards the noise normalization for a degenerate (flat) low-pass field; far
+# below any physically meaningful intensity.
 _EPS = 1e-12
 
 
@@ -66,18 +72,19 @@ def soma_footprint(
         noise = gaussian_filter(
             rng.standard_normal((h, w)), sigma=max(radius_px / 2.0, 1.0)
         )
-        noise /= np.abs(noise).max() + _EPS
+        noise /= max(noise.max(), -noise.min()) + _EPS  # scale to ~[-1, 1]
         r_eff = radius_px * (1.0 + irregularity * noise)
     else:
         r_eff = radius_px
+    # A 0/1 membership mask is already peak-normalized (max == 1) by construction.
     footprint = (dist <= r_eff).astype(float)
-    if footprint.max() <= 0:
+    if not footprint.any():
         # Sub-pixel soma: keep at least the nearest pixel lit so the cell is
         # never silently empty.
         iy = int(np.clip(round(cy), 0, h - 1))
         ix = int(np.clip(round(cx), 0, w - 1))
         footprint[iy, ix] = 1.0
-    return footprint / footprint.max()
+    return footprint
 
 
 class PlaceSomataStep(Step):
@@ -97,12 +104,7 @@ class PlaceSomataStep(Step):
     domain = "cell"
 
     def __call__(self, scene: Scene) -> None:
-        spec = self.spec
-        if spec.n_neurite_stubs > 0:
-            raise NotImplementedError(
-                "PlaceSomataStep models the soma body only in migration Step 5a; "
-                "n_neurite_stubs > 0 (proximal dendrite lobes) arrives in a later step."
-            )
+        spec = self.spec  # n_neurite_stubs > 0 is rejected at spec construction (v1)
         acq, rng = self.acq, self.rng
         shape = (acq.image_sensor.n_px_height, acq.image_sensor.n_px_width)
         fov_h_um, fov_w_um = acq.fov_um
@@ -155,7 +157,7 @@ class PlaceSomataStep(Step):
         while len(centers) < count and attempts < max_attempts:
             attempts += 1
             cand = draw()
-            if all(_dist3(cand, c) >= min_distance_um for c in centers):
+            if all(math.dist(cand, c) >= min_distance_um for c in centers):
                 centers.append(cand)
         return centers
 
@@ -170,11 +172,6 @@ class PlaceSomataStep(Step):
         mu = (np.log(snr_spec.low) + np.log(snr_spec.high)) / 2.0
         sigma = (np.log(snr_spec.high) - np.log(snr_spec.low)) / 4.0
         return np.exp(rng.normal(mu, sigma, size=n))
-
-
-def _dist3(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
-    """Euclidean distance between two ``(z, y, x)`` points, µm."""
-    return float(np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2))
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +278,7 @@ class CellActivityStep(Step):
 # ---------------------------------------------------------------------------
 
 
-def resolve_focal_plane(cells: list[Cell], optics) -> float:
+def resolve_focal_plane(cells: list[Cell], optics: Optics) -> float:
     """Resolve ``Optics.focal_plane_um`` to a concrete depth, µm.
 
     A numeric focal plane is used as-is. ``"auto"`` resolves to the **median

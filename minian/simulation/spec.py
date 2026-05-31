@@ -347,7 +347,7 @@ class StepSpec(_Base):
     domain: ClassVar[Literal["cell", "tissue", "motion", "sensor"]]
     kind: str
 
-    def build(self, acq: Acquisition, rng) -> object:
+    def build(self, acq: Acquisition, rng) -> Step:
         """Return the executable step (a callable that mutates a Scene).
 
         Unimplemented until migration Step 5 — at this stage these classes are
@@ -404,7 +404,8 @@ class PlaceSomata(StepSpec):
     n_neurite_stubs: int = Field(
         ge=0,
         default=0,
-        description="Short proximal dendrite lobes (offset, dimmer). 0 for v1 tests.",
+        description="Short proximal dendrite lobes (offset, dimmer). Not implemented "
+        "in v1 (soma body only) — must be 0 until the feature lands.",
     )
     depth_range_um: tuple[float, float] = Field(
         default=(0.0, 200.0), description="(min, max) depth into tissue, µm."
@@ -422,6 +423,17 @@ class PlaceSomata(StepSpec):
             raise ValueError(f"depth_range_um min ({lo}) must be ≥ 0.")
         if hi < lo:
             raise ValueError(f"depth_range_um max ({hi}) must be ≥ min ({lo}).")
+        return v
+
+    @field_validator("n_neurite_stubs")
+    @classmethod
+    def _stubs_unimplemented(cls, v: int) -> int:
+        # Fail fast at construction rather than deferring a NotImplementedError to
+        # the step body deep inside a run; the soma body is all v1 models.
+        if v > 0:
+            raise ValueError(
+                f"n_neurite_stubs={v} is not implemented in v1 (soma body only); leave at 0."
+            )
         return v
 
     def build(self, acq: Acquisition, rng) -> Step:
