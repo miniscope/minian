@@ -15,8 +15,11 @@ Migration Step 5a lands the minimal runnable chain (``place_somata`` →
 from minian.simulation.steps.base import Step
 from minian.simulation.steps.cell import (
     CellActivityStep,
+    CellOpticsStep,
     PlaceSomataStep,
     calcium_kernel,
+    degrade_footprint,
+    resolve_focal_plane,
     soma_footprint,
 )
 from minian.simulation.steps.sensor import SensorStep
@@ -24,10 +27,13 @@ from minian.simulation.steps.tissue import RenderStep
 
 __all__ = [
     "CellActivityStep",
+    "CellOpticsStep",
     "PlaceSomataStep",
     "RenderStep",
     "SensorStep",
     "Step",
     "calcium_kernel",
+    "degrade_footprint",
+    "resolve_focal_plane",
     "soma_footprint",
 ]

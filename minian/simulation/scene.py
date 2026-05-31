@@ -49,8 +49,13 @@ class Cell:
       ``place_somata``; the ideal CNMF target.
     * ``trace`` / ``spikes`` — the noise-free calcium trace ``C`` and spike
       train ``S`` from ``cell_activity``.
-    * ``footprint_observed`` / ``in_focus`` / ``detectable`` — the optically
-      degraded footprint and the per-cell flags from the ``optics`` step (5b).
+    * ``footprint_observed`` / ``in_focus`` / ``optical_brightness`` — the
+      optically degraded footprint, the geometric in-focus flag, and the
+      depth-driven peak-brightness scalar, all from the ``optics`` step (5b).
+    * ``detectable`` is *not* an optics-only property and so is **not** set by
+      the optics step: it is a whole-pipeline flag (optical brightness ×
+      illumination falloff, judged against the sensor noise floor) assembled in
+      ``finalize()`` (Step 6), per spec §8.
 
     ``center_um`` is ``(z, y, x)`` in µm (depth first); pixel coordinates are a
     conversion away via ``acq.um_to_px`` and are not stored, to avoid drift.
@@ -63,6 +68,7 @@ class Cell:
     trace: np.ndarray | None = None
     spikes: np.ndarray | None = None
     in_focus: bool | None = None
+    optical_brightness: float | None = None
     detectable: bool | None = None
 
 

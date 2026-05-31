@@ -285,6 +285,16 @@ class Acquisition(_Base):
         invariant the conservation test asserts. ``focal_um`` is the resolved
         (numeric) focal depth; ``diffraction_sigma_um > 0`` always, so ``σ_tot``
         is never zero.
+
+        Two distinct quantities come out, consumed separately by the optics step
+        (5b): ``sigma_px`` is the PSF width the footprint is *convolved* with,
+        and the footprint's brightness then scales by ``attenuation(z)`` **alone**
+        — the convolution itself produces the defocus peak drop, so applying
+        ``brightness`` to the footprint too would double-count it. The returned
+        ``brightness`` is instead the *point-source peak* scalar: how far a
+        cell's peak signal sits above the noise, i.e. the per-cell effective
+        brightness used (with the illumination field and sensor floor) to decide
+        detectability at ``finalize()``.
         """
         sigma_0 = math.hypot(self.optics.diffraction_sigma_um, self.tissue.scatter_sigma_um(z_um))
         sigma_total = math.hypot(sigma_0, self.optics.defocus_sigma_um(z_um, focal_um))
@@ -455,12 +465,20 @@ class CellOptics(StepSpec):
 
     No tunable fields: blur and attenuation are fully determined by each cell's
     ``z`` plus the physical ``Optics``/``Tissue`` constants on ``Acquisition``.
-    Writes the observed (degraded) footprint to ground truth alongside the
-    planted (sharp) one, and sets per-cell ``in_focus`` / ``detectable`` flags.
+    Writes the observed (degraded) footprint alongside the planted (sharp) one,
+    sets the geometric ``in_focus`` flag, and stores the per-cell
+    ``optical_brightness`` peak scalar. ``detectable`` is *not* set here — it is
+    a whole-pipeline flag (optics × illumination vs the sensor noise floor)
+    assembled in ``finalize()`` (Step 6).
     """
 
     domain: ClassVar[str] = "cell"
     kind: Literal["optics"] = "optics"
+
+    def build(self, acq: Acquisition, rng) -> Step:
+        from minian.simulation.steps.cell import CellOpticsStep
+
+        return CellOpticsStep(self, acq, rng)
 
 
 class Render(StepSpec):

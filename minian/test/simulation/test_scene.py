@@ -108,6 +108,7 @@ def test_cell_defaults_are_unpopulated():
         is cell.trace
         is cell.spikes
         is cell.in_focus
+        is cell.optical_brightness
         is cell.detectable
         is None
     )

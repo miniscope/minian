@@ -14,6 +14,7 @@ import pytest
 from minian.simulation import (
     Acquisition,
     CellActivity,
+    CellOptics,
     ImageSensor,
     Optics,
     PlaceSomata,
@@ -24,10 +25,13 @@ from minian.simulation import (
 )
 from minian.simulation.steps import (
     CellActivityStep,
+    CellOpticsStep,
     PlaceSomataStep,
     RenderStep,
     SensorStep,
     calcium_kernel,
+    degrade_footprint,
+    resolve_focal_plane,
     soma_footprint,
 )
 from minian.simulation.scene import Cell
@@ -294,6 +298,159 @@ def test_sensor_is_reproducible():
         SensorStep(Sensor(), acq, np.random.default_rng(3))(scene)
         outs.append(scene.movie.values.copy())
     np.testing.assert_array_equal(outs[0], outs[1])
+
+
+# --- optics (5b) -----------------------------------------------------------
+
+
+def _cell_with_footprint(acq, z, radius_um=4.0):
+    """A single centered cell carrying a clean planted disk at depth ``z``."""
+    h, w = acq.image_sensor.n_px_height, acq.image_sensor.n_px_width
+    fp = soma_footprint(
+        (h, w), (h / 2, w / 2), acq.um_to_px(radius_um), 0.0, np.random.default_rng(0)
+    )
+    y_um, x_um = (h / 2) * acq.pixel_size_um, (w / 2) * acq.pixel_size_um
+    return Cell(center_um=(z, y_um, x_um), snr=4.0, footprint_planted=fp)
+
+
+def test_degrade_footprint_blur_conserves_sum_and_drops_peak():
+    fp = soma_footprint(
+        (64, 64),
+        (32.0, 32.0),
+        radius_px=6.0,
+        irregularity=0.0,
+        rng=np.random.default_rng(0),
+    )
+    out = degrade_footprint(fp, sigma_px=2.0, attenuation=1.0)
+    assert out.sum() == pytest.approx(
+        fp.sum(), rel=1e-3
+    )  # convolution conserves integral
+    assert out.max() < fp.max()  # ...but spreads light, so the peak drops
+
+
+def test_degrade_footprint_attenuation_scales_integral():
+    fp = soma_footprint(
+        (64, 64),
+        (32.0, 32.0),
+        radius_px=6.0,
+        irregularity=0.0,
+        rng=np.random.default_rng(0),
+    )
+    full = degrade_footprint(fp, sigma_px=2.0, attenuation=1.0)
+    half = degrade_footprint(fp, sigma_px=2.0, attenuation=0.5)
+    assert half.sum() == pytest.approx(0.5 * full.sum())
+
+
+def test_resolve_focal_plane_auto_is_median_and_numeric_passes_through():
+    acq = _acq()
+    cells = [_cell_with_footprint(acq, z) for z in (0.0, 50.0, 100.0, 150.0, 200.0)]
+    assert resolve_focal_plane(cells, acq.optics) == 100.0
+    assert resolve_focal_plane([], acq.optics) == 0.0  # empty scene -> surface
+    numeric = _acq(optics=Optics(magnification=8.0, focal_plane_um=42.0))
+    assert resolve_focal_plane(cells, numeric.optics) == 42.0
+
+
+def test_optics_in_focus_surface_cell_is_barely_degraded():
+    # z=0, focal auto -> 0: no scatter, no defocus, atten=1 -> only diffraction.
+    acq = _acq(n_px=64)
+    scene = Scene.zeros(acq)
+    scene.cells.append(_cell_with_footprint(acq, z=0.0))
+    CellOpticsStep(CellOptics(), acq, np.random.default_rng(0))(scene)
+    cell = scene.cells[0]
+    assert cell.in_focus is True
+    assert cell.optical_brightness == pytest.approx(1.0)
+    assert cell.footprint_observed.sum() == pytest.approx(
+        cell.footprint_planted.sum(), rel=1e-2
+    )
+    assert cell.detectable is None  # deferred to finalize (Step 6)
+
+
+def test_optics_deeper_cell_is_broader_and_dimmer():
+    # Both in focus (focal == z, defocus 0), so the difference is pure depth:
+    # scatter broadens the footprint and attenuation removes light.
+    def run(z):
+        acq = _acq(n_px=80, optics=Optics(magnification=8.0, focal_plane_um=z))
+        scene = Scene.zeros(acq)
+        scene.cells.append(_cell_with_footprint(acq, z=z))
+        CellOpticsStep(CellOptics(), acq, np.random.default_rng(0))(scene)
+        return scene.cells[0]
+
+    shallow, deep = run(10.0), run(180.0)
+    assert deep.optical_brightness < shallow.optical_brightness  # attenuation
+    assert deep.footprint_observed.sum() < shallow.footprint_observed.sum()
+    assert (
+        deep.footprint_observed.max() < shallow.footprint_observed.max()
+    )  # broader + dimmer
+
+
+def test_optics_defocus_conserves_observed_integral():
+    # Fixed depth, sweep the focal plane: defocus broadens the footprint but
+    # (being a convolution) conserves its integral; attenuation(z) is fixed.
+    z, sums = 50.0, []
+    for focal in (48.0, 50.0, 52.0):
+        acq = _acq(n_px=80, optics=Optics(magnification=8.0, focal_plane_um=focal))
+        scene = Scene.zeros(acq)
+        scene.cells.append(_cell_with_footprint(acq, z=z, radius_um=3.0))
+        CellOpticsStep(CellOptics(), acq, np.random.default_rng(0))(scene)
+        sums.append(scene.cells[0].footprint_observed.sum())
+    assert sums == pytest.approx([sums[0]] * 3, rel=1e-2)
+
+
+def test_optics_in_focus_flag_respects_depth_of_field():
+    acq = _acq(
+        n_px=64,
+        optics=Optics(magnification=8.0, focal_plane_um=80.0, depth_of_field_um=15.0),
+    )
+    scene = Scene.zeros(acq)
+    for z in (70.0, 80.0, 96.0):  # within DOF, at plane, just outside DOF
+        scene.cells.append(_cell_with_footprint(acq, z=z))
+    CellOpticsStep(CellOptics(), acq, np.random.default_rng(0))(scene)
+    assert [c.in_focus for c in scene.cells] == [True, True, False]
+
+
+def test_optics_makes_render_use_the_degraded_footprint():
+    # Render a deep cell from its planted footprint, then again after optics:
+    # the optically degraded render is dimmer (blurred + attenuated).
+    acq = _acq(n_px=40, duration_s=1.0)
+    rng = np.random.default_rng(1)
+    scene = Scene.zeros(acq)
+    PlaceSomata(
+        density_per_mm2=2000.0, soma_radius_um=4.0, depth_range_um=(120.0, 120.0)
+    ).build(acq, rng)(scene)
+    CellActivity(active_rate_hz=5.0).build(acq, rng)(scene)
+
+    RenderStep(Render(), acq, rng)(scene)  # observed still None -> uses planted
+    planted_peak = scene.movie.values.max()
+
+    scene.movie.values[:] = 0.0
+    CellOpticsStep(CellOptics(), acq, rng)(scene)
+    RenderStep(Render(), acq, rng)(scene)  # now uses footprint_observed
+    observed_peak = scene.movie.values.max()
+
+    assert all(c.footprint_observed is not None for c in scene.cells)
+    assert observed_peak < planted_peak
+
+
+def test_optics_chain_with_sensor_runs_end_to_end():
+    acq = _acq(n_px=40, duration_s=1.5, bit_depth=8)
+    rng = np.random.default_rng(99)
+    scene = Scene.zeros(acq)
+    steps = [
+        PlaceSomata(
+            density_per_mm2=3000.0, soma_radius_um=4.0, depth_range_um=(0.0, 120.0)
+        ),
+        CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
+        CellOptics(),
+        Render(),
+        Sensor(photons_per_unit=120.0),
+    ]
+    for sspec in steps:
+        sspec.build(acq, rng)(scene)
+    assert all(c.footprint_observed is not None for c in scene.cells)
+    movie = scene.movie.values
+    np.testing.assert_array_equal(movie, np.round(movie))
+    assert movie.min() >= 0.0 and movie.max() <= 255.0
+    assert movie.max() > 0.0 and movie.var() > 0.0
 
 
 # --- the minimal chain -----------------------------------------------------
