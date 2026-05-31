@@ -6,6 +6,9 @@ static ``AnyStep`` discriminated union, ``cache_key`` behavior, and the §11
 cross-field validators (hard fails and advisory warnings).
 """
 
+import math
+
+import numpy as np
 import pytest
 from pydantic import ValidationError
 
@@ -211,3 +214,135 @@ def test_large_motion_warns():
 def test_build_not_implemented():
     with pytest.raises(NotImplementedError, match="Step 5"):
         Render().build(_tiny_acquisition(), None)
+
+
+# --- Layer-2 physics helpers (Step 3) --------------------------------------
+# Diffraction
+
+
+def test_diffraction_sigma_matches_closed_form():
+    opt = Optics(na=0.45, emission_nm=525.0)
+    assert opt.diffraction_sigma_um == pytest.approx(0.21 * 0.525 / 0.45)
+
+
+def test_diffraction_sigma_decreases_with_na():
+    assert Optics(na=0.6).diffraction_sigma_um < Optics(na=0.3).diffraction_sigma_um
+
+
+# Defocus
+
+
+def test_defocus_zero_at_focal_plane():
+    assert Optics(na=0.45).defocus_sigma_um(80.0, 80.0) == 0.0
+
+
+def test_defocus_symmetric_and_grows_with_distance():
+    opt = Optics(na=0.45)
+    assert opt.defocus_sigma_um(60.0, 80.0) == pytest.approx(opt.defocus_sigma_um(100.0, 80.0))
+    assert opt.defocus_sigma_um(120.0, 80.0) > opt.defocus_sigma_um(100.0, 80.0)
+
+
+def test_defocus_grows_with_na():
+    assert Optics(na=0.6).defocus_sigma_um(120.0, 80.0) > Optics(na=0.3).defocus_sigma_um(120.0, 80.0)
+
+
+# Scatter / attenuation
+
+
+def test_attenuation_monotonic_and_bounded():
+    t = Tissue(scatter_mfp_um=100.0)
+    assert t.attenuation(0.0) == pytest.approx(1.0)
+    assert t.attenuation(200.0) < t.attenuation(50.0) < t.attenuation(0.0)
+    assert 0.0 < t.attenuation(500.0) <= 1.0
+
+
+def test_scatter_sigma_monotonic_and_zero_at_surface():
+    t = Tissue(scatter_blur_per_um=0.02)
+    assert t.scatter_sigma_um(0.0) == 0.0
+    assert t.scatter_sigma_um(50.0) < t.scatter_sigma_um(200.0)
+    assert t.scatter_sigma_um(100.0) == pytest.approx(2.0)
+
+
+# Combined per-cell optics
+
+
+def test_cell_optics_in_focus_surface_cell_is_undegraded():
+    # z=0, focal=0: no scatter, no defocus → brightness 1, σ = diffraction only.
+    acq = _tiny_acquisition()
+    sigma_px, brightness = acq.cell_optics(0.0, 0.0)
+    assert brightness == pytest.approx(1.0)
+    assert sigma_px == pytest.approx(acq.optics.diffraction_sigma_um / acq.pixel_size_um)
+
+
+def test_cell_optics_defocus_conserves_integrated_intensity():
+    # Integrated intensity ∝ σ_tot²·brightness = sigma_px²·brightness (px² is a
+    # constant factor). Defocus broadens σ and drops the peak but leaves the
+    # integral untouched — only attenuation removes light — so the product is
+    # invariant to the focal plane for a fixed depth.
+    acq = _tiny_acquisition()
+    z = 60.0
+    integrals = []
+    for focal in (0.0, 30.0, 60.0, 120.0, 200.0):
+        sigma_px, brightness = acq.cell_optics(z, focal)
+        integrals.append(sigma_px**2 * brightness)
+    assert integrals == pytest.approx([integrals[0]] * len(integrals))
+    # ...and that conserved integral equals the pure (defocus-free) value.
+    sigma_0_px = math.hypot(acq.optics.diffraction_sigma_um, acq.tissue.scatter_sigma_um(z)) / acq.pixel_size_um
+    assert integrals[0] == pytest.approx(sigma_0_px**2 * acq.tissue.attenuation(z))
+
+
+def test_cell_optics_depth_blurs_and_dims():
+    # Deeper cell: scatter broadens σ and attenuation drops brightness.
+    acq = _tiny_acquisition()
+    shallow_sigma, shallow_b = acq.cell_optics(10.0, 10.0)  # in focus
+    deep_sigma, deep_b = acq.cell_optics(180.0, 180.0)  # in focus, but deep
+    assert deep_sigma > shallow_sigma
+    assert deep_b < shallow_b
+
+
+# Sensor model
+
+
+def _flat_sensor_acq(**sensor_kw):
+    sensor_kw.setdefault("n_px_height", 64)
+    sensor_kw.setdefault("n_px_width", 64)
+    return ImageSensor(**sensor_kw)
+
+
+def test_photons_to_counts_are_integer_valued_and_clipped():
+    sensor = _flat_sensor_acq(bit_depth=8, read_noise_e=2.0)
+    rng = np.random.default_rng(0)
+    photons = np.full((64, 64), 50.0)
+    counts = sensor.photons_to_counts(photons, rng)
+    assert np.all(counts == np.floor(counts))  # integer-valued
+    assert counts.min() >= 0.0
+    assert counts.max() <= 2**8 - 1
+    # Saturation: a huge photon flux clips to the ADC ceiling.
+    saturated = sensor.photons_to_counts(np.full((64, 64), 1e6), rng)
+    assert np.all(saturated == 2**8 - 1)
+
+
+def test_photons_to_counts_poisson_mean():
+    # With 12-bit headroom (no clipping), mean counts ≈ photons·QE·gain.
+    sensor = _flat_sensor_acq(quantum_efficiency=0.7, gain_adu_per_e=1.0, read_noise_e=2.0, bit_depth=12)
+    rng = np.random.default_rng(1)
+    photons = np.full((256, 256), 100.0)
+    counts = sensor.photons_to_counts(photons, rng)
+    assert counts.mean() == pytest.approx(100.0 * 0.7, abs=1.0)
+
+
+def test_photons_to_counts_read_noise_adds_variance():
+    # Shot noise alone vs shot + read noise: the latter has larger variance.
+    rng = np.random.default_rng(2)
+    photons = np.full((256, 256), 100.0)
+    quiet = _flat_sensor_acq(read_noise_e=0.0, bit_depth=12).photons_to_counts(photons, rng)
+    noisy = _flat_sensor_acq(read_noise_e=10.0, bit_depth=12).photons_to_counts(photons, rng)
+    assert noisy.var() > quiet.var()
+
+
+def test_photons_to_counts_gain_scales_counts():
+    rng = np.random.default_rng(3)
+    photons = np.full((256, 256), 100.0)
+    low = _flat_sensor_acq(gain_adu_per_e=1.0, read_noise_e=2.0, bit_depth=16).photons_to_counts(photons, rng)
+    high = _flat_sensor_acq(gain_adu_per_e=4.0, read_noise_e=2.0, bit_depth=16).photons_to_counts(photons, rng)
+    assert high.mean() == pytest.approx(4.0 * low.mean(), rel=0.05)

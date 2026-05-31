@@ -15,11 +15,14 @@ Two layers, by design (see ``proposals/simulation-spec.md`` §2):
   variance — *derived* from Layer 1 by small, documented, individually-testable
   helpers.
 
-This file (migration Step 2) defines the full Layer-1 surface, the unit
-conversions, and the static ``AnyStep`` union. The Layer-2 physics helpers
-(diffraction/defocus/scatter/sensor math) land in Step 3; the executable steps
-that ``build()`` returns land in Step 5. Until then ``StepSpec.build()`` is
-intentionally unimplemented — these classes are the schema, not the engine.
+This file defines the full Layer-1 surface, the unit conversions, the static
+``AnyStep`` union (migration Step 2), and the Layer-2 physics helpers —
+``Optics.diffraction_sigma_um``/``defocus_sigma_um``, ``Tissue.attenuation``/
+``scatter_sigma_um``, the combined ``Acquisition.cell_optics``, and the
+``ImageSensor.photons_to_counts`` sensor model (Step 3). The executable steps
+that ``build()`` returns land in Step 5; until then ``StepSpec.build()`` is
+intentionally unimplemented — these classes are the schema plus its physics,
+not the execution engine.
 
 Units convention: **everything physical is in seconds and µm/mm — never frames
 or pixels.** ``Acquisition`` owns every conversion to pixels/frames.
@@ -28,9 +31,12 @@ or pixels.** ``Acquisition`` owns every conversion to pixels/frames.
 from __future__ import annotations
 
 import hashlib
+import math
 import warnings
 from collections import Counter
 from typing import Annotated, ClassVar, Literal
+
+import numpy as np
 
 from pydantic import (
     BaseModel,
@@ -94,6 +100,35 @@ class Optics(_Base):
         description="±range around the focal plane treated as 'in focus' for detectability.",
     )
 
+    # ---- Layer-2 helpers: small, documented, individually-testable approximations ----
+
+    @property
+    def diffraction_sigma_um(self) -> float:
+        """Diffraction-limited PSF width (Gaussian σ), µm.
+
+        A Gaussian stand-in for the Airy disk: the diffraction FWHM is
+        ``≈ 0.51·λ/NA`` and ``σ = FWHM / 2.355 ≈ 0.21·λ/NA``. Ignores
+        aberrations and the finite Airy tails — adequate for showing how NA and
+        emission wavelength set the resolution floor. Smaller NA ⇒ larger σ
+        (blurrier). At NA 0.45, λ ≈ 525 nm this is σ ≈ 0.24 µm.
+        """
+        return 0.21 * (self.emission_nm / 1000.0) / self.na
+
+    def defocus_sigma_um(self, z_um: float, focal_um: float) -> float:
+        """Out-of-focus blur (Gaussian σ), µm, for a cell at depth ``z_um``.
+
+        Geometric defocus broadens linearly with the distance from the focal
+        plane: ``σ ≈ NA·|z − z_focal|``. Symmetric about the focal plane (zero
+        at ``z == focal_um``) and larger for higher NA (shallower depth of
+        field). INTENSITY-CONSERVING: defocus spreads light without losing it,
+        so the matching peak drop is applied in
+        :meth:`Acquisition.cell_optics`; that is what separates defocus
+        (spreads) from scatter (attenuates). ``focal_um`` is passed explicitly
+        because :attr:`focal_plane_um` may be ``"auto"``, resolved to a concrete
+        depth by the optics step before this is called.
+        """
+        return self.na * abs(z_um - focal_um)
+
 
 class ImageSensor(_Base):
     """Physical and noise properties of the bare image sensor (the detector).
@@ -116,6 +151,32 @@ class ImageSensor(_Base):
     gain_adu_per_e: float = Field(gt=0, default=1.0, description="Camera gain, ADU per electron.")
     bit_depth: int = Field(gt=0, default=8, description="ADC bit depth; counts clipped to [0, 2^bit_depth − 1].")
 
+    def photons_to_counts(self, photons: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+        """Forward sensor model: incident photons → digitized ADC counts.
+
+        The only place fluorescence becomes integer counts (spec §6)::
+
+            e⁻     = Poisson(photons · quantum_efficiency)   # shot noise
+            e⁻    += Normal(0, read_noise_e)                 # read noise, electrons
+            adu    = e⁻ · gain_adu_per_e
+            counts = clip(floor(adu), 0, 2**bit_depth − 1)
+
+        Shot noise is Poisson on the *detected* electrons: photon arrival is
+        Poisson and detection thins it by QE, which stays Poisson. Read noise is
+        additive Gaussian in electrons. Quantization is ``floor`` (an ADC
+        truncates), and counts are clipped to the converter's representable
+        range. ``photons`` is the per-pixel expected photon count — the
+        ``Sensor`` step produces it from scene intensity × its
+        ``photons_per_unit`` exposure scale. Returns a float array holding
+        integer-valued counts (the float container is set by
+        ``Output.store_dtype``).
+        """
+        photons = np.asarray(photons, dtype=float)
+        electrons = rng.poisson(photons * self.quantum_efficiency).astype(float)
+        electrons += rng.normal(0.0, self.read_noise_e, size=electrons.shape)
+        counts = np.floor(electrons * self.gain_adu_per_e)
+        return np.clip(counts, 0.0, 2**self.bit_depth - 1)
+
 
 class Tissue(_Base):
     """Light-scattering properties of the imaged tissue, as a function of depth.
@@ -135,6 +196,30 @@ class Tissue(_Base):
         default=0.02,
         description="Linear broadening of the footprint per µm of depth (µm sigma per µm depth).",
     )
+
+    # ---- Layer-2 helpers: scattering as a function of absolute depth ----
+
+    def attenuation(self, z_um: float) -> float:
+        """Fraction of emission light surviving scatter from depth ``z_um`` — in (0, 1].
+
+        Beer–Lambert exponential decay ``exp(−z / mfp)`` over the mean free path
+        ``scatter_mfp_um``. Monotonically decreasing in depth and equal to 1 at
+        the surface (``z = 0``). Genuinely *removes* light — unlike defocus — so
+        a deep cell is irreversibly dimmer, which is exactly the irreducible
+        limit the module teaches. Typical mouse-cortex emission MFP ≈ 50–200 µm.
+        """
+        return math.exp(-z_um / self.scatter_mfp_um)
+
+    def scatter_sigma_um(self, z_um: float) -> float:
+        """Scatter-induced footprint broadening (Gaussian σ), µm, at depth ``z_um``.
+
+        Linear phenomenological model ``σ = scatter_blur_per_um · z``: deeper
+        cells scatter more on the way out and so appear both larger and dimmer
+        (see :meth:`attenuation`). Monotonically increasing in depth and zero at
+        the surface. Unlike defocus this is not intensity-conserving — it
+        co-occurs with attenuation.
+        """
+        return self.scatter_blur_per_um * z_um
 
 
 class Acquisition(_Base):
@@ -178,6 +263,32 @@ class Acquisition(_Base):
     def s_to_frame(self, s: float) -> float:
         """Convert a duration (seconds) to a (fractional) frame count."""
         return s * self.fps
+
+    def cell_optics(self, z_um: float, focal_um: float) -> tuple[float, float]:
+        """Combined per-cell optical degradation: ``(sigma_px, brightness)``.
+
+        Folds the three Layer-2 effects into the two numbers the optics step
+        applies to a footprint — a blur width (pixels) and a brightness scale.
+        Blurs add in quadrature; brightness factors multiply (spec §2)::
+
+            σ_0   = hypot(diffraction_sigma_um, scatter_sigma_um(z))   # all but defocus
+            σ_tot = hypot(σ_0, defocus_sigma_um(z, focal))
+            brightness = (σ_0² / σ_tot²) · attenuation(z)
+            sigma_px   = σ_tot / pixel_size_um
+
+        The ``σ_0²/σ_tot²`` factor is the peak drop that makes defocus
+        intensity-conserving (a 2-D Gaussian's peak × area is constant), so only
+        ``attenuation(z)`` actually removes light. Consequently
+        ``sigma_px² · brightness`` is independent of the focal plane — the
+        invariant the conservation test asserts. ``focal_um`` is the resolved
+        (numeric) focal depth; ``diffraction_sigma_um > 0`` always, so ``σ_tot``
+        is never zero.
+        """
+        sigma_0 = math.hypot(self.optics.diffraction_sigma_um, self.tissue.scatter_sigma_um(z_um))
+        sigma_total = math.hypot(sigma_0, self.optics.defocus_sigma_um(z_um, focal_um))
+        brightness = (sigma_0**2 / sigma_total**2) * self.tissue.attenuation(z_um)
+        sigma_px = sigma_total / self.pixel_size_um
+        return sigma_px, brightness
 
 
 # ---------------------------------------------------------------------------
