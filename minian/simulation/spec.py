@@ -1,0 +1,575 @@
+"""Typed, serializable specification for the ``minian.simulation`` pipeline.
+
+This module defines the *contract* the simulator consumes: a tree of pydantic
+v2 models describing the acquisition (a real, physical interface), an ordered
+list of pipeline steps, and output formatting. It is the inverse of the minian
+analysis pipeline expressed as data — the same ``Spec`` object a training
+notebook walks through, a test parametrizes over, and a cache keys on.
+
+Two layers, by design (see ``proposals/simulation-spec.md`` §2):
+
+* **Layer 1 — what you read off a datasheet.** ``Optics.na``,
+  ``Optics.magnification``, ``Tissue.scatter_mfp_um`` and friends. Every knob a
+  user touches here is a real, measurable property of a real scope or sample.
+* **Layer 2 — what a step consumes.** Pixel size, PSF sigma, attenuation, noise
+  variance — *derived* from Layer 1 by small, documented, individually-testable
+  helpers.
+
+This file (migration Step 2) defines the full Layer-1 surface, the unit
+conversions, and the static ``AnyStep`` union. The Layer-2 physics helpers
+(diffraction/defocus/scatter/sensor math) land in Step 3; the executable steps
+that ``build()`` returns land in Step 5. Until then ``StepSpec.build()`` is
+intentionally unimplemented — these classes are the schema, not the engine.
+
+Units convention: **everything physical is in seconds and µm/mm — never frames
+or pixels.** ``Acquisition`` owns every conversion to pixels/frames.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import warnings
+from collections import Counter
+from typing import Annotated, ClassVar, Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    field_validator,
+    model_validator,
+)
+
+
+class SpecWarning(UserWarning):
+    """Advisory warning for unusual-but-legal spec configurations.
+
+    The simulator distinguishes *invalid* configs (which raise) from *unusual*
+    ones (which warn but still run) — e.g. a focal plane outside the cell depth
+    range, or steps listed out of the natural physical order.
+    """
+
+
+class _Base(BaseModel):
+    """Common config for every spec model.
+
+    ``extra="forbid"`` turns a mistyped field name into a construction-time
+    error instead of a silently-ignored value. ``frozen=True`` makes specs
+    immutable, which is what lets a recording be identified by its spec: the
+    cache keys off the canonical JSON form (see ``Spec.cache_key``).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+# ---------------------------------------------------------------------------
+# Physical interface — Acquisition / Optics / Tissue (Layer 1 + unit conversions)
+# ---------------------------------------------------------------------------
+
+
+class Optics(_Base):
+    """Objective optics — the measurable lens properties of a 1-photon scope.
+
+    Layer-2 phenomenological quantities (diffraction sigma, defocus blur) are
+    *derived* from these fields; their math arrives in migration Step 3. Pixel
+    size is a joint optics×sensor quantity (sensor pitch / magnification) and so
+    lives on ``Acquisition``, not here.
+
+    Typical 1-photon miniscope ranges: NA 0.3–0.6, magnification ~5–10×, GCaMP
+    emission ~510–540 nm.
+    """
+
+    na: float = Field(gt=0, default=0.45, description="Numerical aperture of the GRIN objective.")
+    magnification: float = Field(gt=0, default=8.0, description="Optical magnification (sensor side / object side).")
+    emission_nm: float = Field(gt=0, default=525.0, description="Fluorophore emission wavelength, nm (GCaMP ≈ 525).")
+    focal_plane_um: float | Literal["auto"] = Field(
+        default="auto",
+        description="Depth of the in-focus plane, µm into tissue; 'auto' resolves to the "
+        "median realized cell depth when the optics step runs.",
+    )
+    depth_of_field_um: float = Field(
+        gt=0,
+        default=15.0,
+        description="±range around the focal plane treated as 'in focus' for detectability.",
+    )
+
+
+class ImageSensor(_Base):
+    """Physical and noise properties of the bare image sensor (the detector).
+
+    Named *image sensor*, not *camera*, on purpose: a camera bundles optics on
+    top of a sensor, whereas this is only the photosensitive array and its
+    readout chain. The optics live separately on ``Optics``. Together with the
+    exposure scale on the ``sensor`` step, the fields here fully specify the
+    photons→counts conversion.
+
+    Typical CMOS miniscope sensors: ~2–6 µm pixel pitch, QE 0.6–0.9, read noise
+    1–5 e⁻ RMS, 8–12-bit ADC.
+    """
+
+    n_px_height: int = Field(gt=0, default=256, description="Sensor height, pixels.")
+    n_px_width: int = Field(gt=0, default=256, description="Sensor width, pixels.")
+    pixel_pitch_um: float = Field(gt=0, default=3.0, description="Physical sensor pixel pitch, µm.")
+    quantum_efficiency: float = Field(gt=0, le=1, default=0.7, description="Photon → electron conversion efficiency.")
+    read_noise_e: float = Field(ge=0, default=2.0, description="Read noise, electrons RMS.")
+    gain_adu_per_e: float = Field(gt=0, default=1.0, description="Camera gain, ADU per electron.")
+    bit_depth: int = Field(gt=0, default=8, description="ADC bit depth; counts clipped to [0, 2^bit_depth − 1].")
+
+
+class Tissue(_Base):
+    """Light-scattering properties of the imaged tissue, as a function of depth.
+
+    Both fields parametrize Layer-2 helpers (``attenuation``, ``scatter_sigma``)
+    whose closed forms arrive in migration Step 3. Typical mouse cortex emission
+    mean-free-path is ~50–200 µm.
+    """
+
+    scatter_mfp_um: float = Field(
+        gt=0,
+        default=100.0,
+        description="Mean free path for emission photons (Beer–Lambert length scale), µm.",
+    )
+    scatter_blur_per_um: float = Field(
+        ge=0,
+        default=0.02,
+        description="Linear broadening of the footprint per µm of depth (µm sigma per µm depth).",
+    )
+
+
+class Acquisition(_Base):
+    """The physical acquisition: optics, image sensor, tissue, and sampling.
+
+    Owns *all* unit conversions between the physical world (µm, seconds) and the
+    sampled world (pixels, frames). Pixel size is the joint optics×sensor
+    quantity ``image_sensor.pixel_pitch_um / optics.magnification``; FOV is then
+    derived from the sensor's pixel count — any two of {FOV, pixel size, pixel
+    count} fix the third.
+    """
+
+    optics: Optics = Field(default_factory=Optics)
+    image_sensor: ImageSensor = Field(default_factory=ImageSensor)
+    tissue: Tissue = Field(default_factory=Tissue)
+    fps: float = Field(gt=0, default=20.0, description="Frame rate, frames per second.")
+    duration_s: float = Field(gt=0, default=150.0, description="Recording duration, seconds.")
+
+    @property
+    def pixel_size_um(self) -> float:
+        """Object-space size of one pixel, µm (sensor pitch / magnification)."""
+        return self.image_sensor.pixel_pitch_um / self.optics.magnification
+
+    @property
+    def n_frames(self) -> int:
+        """Number of frames in the recording (duration × fps, rounded)."""
+        return round(self.duration_s * self.fps)
+
+    @property
+    def fov_um(self) -> tuple[float, float]:
+        """Field of view (height, width) in µm — derived from pixels × pixel size."""
+        return (
+            self.image_sensor.n_px_height * self.pixel_size_um,
+            self.image_sensor.n_px_width * self.pixel_size_um,
+        )
+
+    def um_to_px(self, um: float) -> float:
+        """Convert a physical distance (µm) to pixels."""
+        return um / self.pixel_size_um
+
+    def s_to_frame(self, s: float) -> float:
+        """Convert a duration (seconds) to a (fractional) frame count."""
+        return s * self.fps
+
+
+# ---------------------------------------------------------------------------
+# Output formatting
+# ---------------------------------------------------------------------------
+
+
+class Output(_Base):
+    """Final-array formatting — formatting only, never rescaling (honest radiometry)."""
+
+    save_intermediates: bool = Field(
+        default=False,
+        description="Retain a snapshot after every step (test oracle + teaching visuals). "
+        "Default False to keep memory flat for the programmatic and sweep paths; the "
+        "two notebook presets opt in explicitly. When False, only `observed` + "
+        "`ground_truth` are kept and stage() raises.",
+    )
+    store_dtype: Literal["float32", "float64"] = Field(
+        default="float32",
+        description="Float container for the integer-valued sensor counts.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Step framework — StepSpec base + registry + the static AnyStep union
+# ---------------------------------------------------------------------------
+
+
+# Natural physical order of the pipeline. A step's domain is a class-level
+# attribute (not a serialized field); the Spec validator warns if the list
+# departs from this order.
+_DOMAIN_RANK: dict[str, int] = {"cell": 0, "tissue": 1, "motion": 2, "sensor": 3}
+
+
+class StepSpec(_Base):
+    """Base class for a single pipeline step's configuration.
+
+    A concrete step spec carries its physical parameters and a literal ``kind``
+    discriminator, and declares its ``domain`` (a class attribute used for
+    ordering checks). ``build()`` turns the spec into the executable step that
+    mutates a ``Scene``; those bodies arrive in migration Step 5.
+    """
+
+    domain: ClassVar[Literal["cell", "tissue", "motion", "sensor"]]
+    kind: str
+
+    def build(self, acq: Acquisition, rng) -> object:
+        """Return the executable step (a callable that mutates a Scene).
+
+        Unimplemented until migration Step 5 — at this stage these classes are
+        the typed schema/contract, not the execution engine.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__}.build() is implemented in migration Step 5; "
+            "Step 2 defines the spec surface only."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Step catalog (cell → tissue → motion → sensor). Fields define the v1 surface;
+# `build()` bodies and the no-op placeholder steps (vasculature, fancier motion)
+# arrive in Step 5.
+# ---------------------------------------------------------------------------
+
+
+class SNRDistribution(_Base):
+    """Per-cell signal-to-noise sampling distribution."""
+
+    distribution: Literal["uniform", "lognormal"] = "lognormal"
+    low: float = Field(gt=0, default=1.5, description="Lower SNR bound / lognormal low anchor.")
+    high: float = Field(gt=0, default=8.0, description="Upper SNR bound / lognormal high anchor.")
+
+    @model_validator(mode="after")
+    def _check_order(self) -> SNRDistribution:
+        if self.high <= self.low:
+            raise ValueError(f"SNR high ({self.high}) must exceed low ({self.low}).")
+        return self
+
+
+class PlaceSomata(StepSpec):
+    """Place generic neuron somata (+ optional neurite stubs) in a 3-D µm volume.
+
+    'Place' is the verb — this *positions cell bodies in space*; it is unrelated
+    to hippocampal *place cells*. v1 models one generic excitable soma type (an
+    irregular blob + optional proximal stubs): there is no cell-type distinction
+    and no spatial/behavioral tuning. Footprints are 2-D masks carrying a scalar
+    depth ``z``; out-of-focus somata that become background emerge for free
+    downstream from ``z`` + ``optics``.
+    """
+
+    domain: ClassVar[str] = "cell"
+    kind: Literal["place_somata"] = "place_somata"
+    density_per_mm2: float = Field(gt=0, default=150.0, description="Cell areal density; count derived from FOV.")
+    soma_radius_um: float = Field(gt=0, default=7.0, description="Soma radius, µm (typical cortical neuron ≈ 5–10).")
+    irregularity: float = Field(
+        ge=0,
+        le=1,
+        default=0.3,
+        description="0 = smooth disk; higher = lumpier soma (low-pass-noise threshold).",
+    )
+    n_neurite_stubs: int = Field(
+        ge=0,
+        default=0,
+        description="Short proximal dendrite lobes (offset, dimmer). 0 for v1 tests.",
+    )
+    depth_range_um: tuple[float, float] = Field(
+        default=(0.0, 200.0), description="(min, max) depth into tissue, µm."
+    )
+    min_distance_um: float = Field(
+        ge=0, default=0.0, description="3-D center-to-center minimum (Poisson-disk if > 0)."
+    )
+    snr: SNRDistribution = Field(default_factory=SNRDistribution)
+
+    @field_validator("depth_range_um")
+    @classmethod
+    def _check_depth_range(cls, v: tuple[float, float]) -> tuple[float, float]:
+        lo, hi = v
+        if lo < 0:
+            raise ValueError(f"depth_range_um min ({lo}) must be ≥ 0.")
+        if hi < lo:
+            raise ValueError(f"depth_range_um max ({hi}) must be ≥ min ({lo}).")
+        return v
+
+
+class CellActivity(StepSpec):
+    """Calcium activity: 2-state Markov gate → Poisson spikes → double-exp kernel.
+
+    Modeled on CaLab so synthetic traces are deconvolvable by it; we reimplement
+    only the forward kernel ``k(t) = exp(-t/τ_d) − exp(-t/τ_r)``. Indicator
+    saturation and per-cell τ jitter are deferred to v1.1.
+    """
+
+    domain: ClassVar[str] = "cell"
+    kind: Literal["cell_activity"] = "cell_activity"
+    p_quiescent_to_active: float = Field(gt=0, default=0.1, description="Per-frame quiescent→active transition prob.")
+    p_active_to_quiescent: float = Field(gt=0, default=0.5, description="Per-frame active→quiescent transition prob.")
+    active_rate_hz: float = Field(gt=0, default=3.0, description="Poisson firing rate while active, Hz.")
+    quiescent_rate_hz: float = Field(ge=0, default=0.05, description="Poisson firing rate while quiescent, Hz.")
+    tau_rise_s: float = Field(gt=0, default=0.05, description="Calcium rise time constant, s.")
+    tau_decay_s: float = Field(gt=0, default=0.5, description="Calcium decay time constant, s.")
+    spike_amp_cv: float = Field(ge=0, default=0.3, description="Lognormal per-spike amplitude variability.")
+    f0: float = Field(ge=0, default=1.0, description="Baseline fluorescence.")
+    trace_noise: float = Field(
+        ge=0,
+        default=0.0,
+        description="Optional additive per-cell trace noise (independent of sensor noise).",
+    )
+
+
+class CellOptics(StepSpec):
+    """Per-cell diffraction + defocus(|z − z_f|) + scatter(z) blur & attenuation.
+
+    No tunable fields: blur and attenuation are fully determined by each cell's
+    ``z`` plus the physical ``Optics``/``Tissue`` constants on ``Acquisition``.
+    Writes the observed (degraded) footprint to ground truth alongside the
+    planted (sharp) one, and sets per-cell ``in_focus`` / ``detectable`` flags.
+    """
+
+    domain: ClassVar[str] = "cell"
+    kind: Literal["optics"] = "optics"
+
+
+class Render(StepSpec):
+    """Composite ``Σ_i degraded_footprint_i × trace_i`` into the movie.
+
+    The built step's snapshot name is ``"cells_only"``. The planted (sharp)
+    ``A``/``C`` remain the ideal CNMF target in ground truth.
+    """
+
+    domain: ClassVar[str] = "tissue"
+    kind: Literal["render"] = "render"
+
+
+class Neuropil(StepSpec):
+    """Additive diffuse background: smooth spatial field × slow OU temporal."""
+
+    domain: ClassVar[str] = "tissue"
+    kind: Literal["neuropil"] = "neuropil"
+    spatial_sigma_um: float = Field(gt=0, default=40.0, description="Spatial smoothness of the mesh, µm.")
+    temporal_tau_s: float = Field(gt=0, default=10.0, description="OU temporal correlation time, s (slow).")
+    amplitude: float = Field(gt=0, default=0.3, description="Background amplitude relative to cell signal.")
+    n_components: int = Field(ge=1, default=3, description="Number of independent diffuse components.")
+
+
+class Vasculature(StepSpec):
+    """Dark absorbing mask × (slow dilation + cardiac). Placeholder no-op for v1."""
+
+    domain: ClassVar[str] = "tissue"
+    kind: Literal["vasculature"] = "vasculature"
+    enabled: bool = Field(default=False, description="Placeholder; multiplicative absorption lands in v1.1.")
+
+
+class Bleaching(StepSpec):
+    """Global temporal decay of fluorophores (not the additive sensor leakage)."""
+
+    domain: ClassVar[str] = "tissue"
+    kind: Literal["bleaching"] = "bleaching"
+    model: Literal["mono_exp", "bi_exp"] = Field(default="mono_exp", description="Decay curve family.")
+    final_fraction: float = Field(
+        gt=0, le=1, default=0.65, description="Brightness at the last frame relative to the first."
+    )
+
+
+class BrainMotion(StepSpec):
+    """Rigid x,y translation of the whole tissue frame — the tissue→sensor boundary.
+
+    OU/jump and axial focus-drift motion are deferred placeholders.
+    """
+
+    domain: ClassVar[str] = "motion"
+    kind: Literal["brain_motion"] = "brain_motion"
+    trajectory_um: list[tuple[float, float]] | None = Field(
+        default=None, description="Explicit per-frame (dy, dx) in µm; else a bounded random walk."
+    )
+    walk_step_um: float = Field(ge=0, default=0.3, description="Random-walk step size, µm/frame.")
+    max_shift_um: float = Field(gt=0, default=5.0, description="Bound on cumulative shift magnitude, µm.")
+
+
+class Vignette(StepSpec):
+    """Static radial illumination falloff (lumped excitation × collection)."""
+
+    domain: ClassVar[str] = "sensor"
+    kind: Literal["vignette"] = "vignette"
+    falloff: float = Field(
+        ge=0, le=1, default=0.6, description="Corner brightness relative to center (1 = none)."
+    )
+    exponent: float = Field(gt=0, default=2.0, description="Radial falloff exponent.")
+    center_offset_um: tuple[float, float] = Field(
+        default=(0.0, 0.0), description="(dy, dx) offset of the bright center from FOV center, µm."
+    )
+
+
+class Leakage(StepSpec):
+    """Static additive baseline — what minian's 'glow removal' subtracts."""
+
+    domain: ClassVar[str] = "sensor"
+    kind: Literal["leakage"] = "leakage"
+    profile: Literal["uniform", "gaussian"] = Field(default="gaussian", description="Spatial baseline shape.")
+    level: float = Field(ge=0, default=0.1, description="Additive baseline level.")
+    sigma_um: float | None = Field(default=None, description="Spatial sigma for the gaussian profile, µm.")
+
+
+class Sensor(StepSpec):
+    """Photons → e⁻ → Poisson shot + read noise → ×gain → quantize → clip.
+
+    The only step that produces integer-valued counts. The sensor *hardware*
+    (QE, read noise, gain, bit depth, pixel pitch) lives on
+    ``Acquisition.image_sensor`` and is read from there. The single field below
+    is the exposure/flux scale — a scene property, not sensor hardware — which is
+    why it stays on the step rather than the image-sensor spec.
+    """
+
+    domain: ClassVar[str] = "sensor"
+    kind: Literal["sensor"] = "sensor"
+    photons_per_unit: float = Field(
+        gt=0,
+        default=100.0,
+        description="Photons per fluorescence intensity unit (exposure/flux scale); sets the "
+        "shot-noise regime. A scene/illumination property, not sensor hardware.",
+    )
+
+
+# The v1 catalog is closed and known, so AnyStep is a hand-written static union:
+# native pydantic, trivially debuggable, no import-order hazards. It is the
+# single source of truth for the step catalog — adding a component means
+# defining its StepSpec subclass and adding it here. Pydantic's Discriminator
+# handles kind→class dispatch for deserialization, so no separate registry is
+# needed; if later tooling wants an explicit map, derive it from this union.
+AnyStep = Annotated[
+    PlaceSomata
+    | CellActivity
+    | CellOptics
+    | Render
+    | Neuropil
+    | Vasculature
+    | Bleaching
+    | BrainMotion
+    | Vignette
+    | Leakage
+    | Sensor,
+    Discriminator("kind"),
+]
+
+
+# ---------------------------------------------------------------------------
+# Top-level Spec + cross-field validation (spec §11)
+# ---------------------------------------------------------------------------
+
+
+class Spec(_Base):
+    """A complete, reproducible recording specification.
+
+    ``acquisition`` + ``steps`` (the ordered pipe) + ``seed`` + ``output`` fully
+    determine a recording. The cross-field validators below catch genuinely
+    invalid configs (raise) and flag unusual-but-legal ones (``SpecWarning``).
+    """
+
+    acquisition: Acquisition = Field(default_factory=Acquisition)
+    seed: int = Field(default=42, description="RNG seed for full reproducibility.")
+    steps: list[AnyStep]
+    output: Output = Field(default_factory=Output)
+
+    def cache_key(self) -> str:
+        """SHA256 (first 16 hex chars) of the canonical JSON form. Stable across runs."""
+        return hashlib.sha256(self.model_dump_json().encode()).hexdigest()[:16]
+
+    @model_validator(mode="after")
+    def _validate(self) -> Spec:
+        self._check_unique_kinds()  # hard fail; everything below assumes unique kinds
+        by_kind = {s.kind: s for s in self.steps}
+        self._warn_domain_order()
+        self._check_footprint_vs_fov(by_kind)
+        self._check_sampling_vs_kinetics(by_kind)
+        self._warn_focal_plane(by_kind)
+        self._warn_motion_magnitude(by_kind)
+        return self
+
+    # -- hard fails ---------------------------------------------------------
+
+    def _check_unique_kinds(self) -> None:
+        """Rule 4: each ``kind`` appears at most once — lets sweeps address a step
+        by kind and keeps the snapshot dict (keyed by step name) collision-free."""
+        dupes = sorted(k for k, n in Counter(s.kind for s in self.steps).items() if n > 1)
+        if dupes:
+            raise ValueError(f"Duplicate step kind(s) in spec: {dupes}. Each kind must be unique.")
+
+    def _check_footprint_vs_fov(self, by_kind: dict[str, StepSpec]) -> None:
+        """Rule 2: a soma larger than the entire FOV is a misconfiguration."""
+        pc = by_kind.get("place_somata")
+        if pc is None:
+            return
+        min_fov = min(self.acquisition.fov_um)
+        if 2 * pc.soma_radius_um > min_fov:
+            raise ValueError(
+                f"soma_radius_um={pc.soma_radius_um} µm gives a soma diameter larger than "
+                f"the FOV ({min_fov:.3g} µm). Reduce the soma or enlarge the FOV."
+            )
+
+    def _check_sampling_vs_kinetics(self, by_kind: dict[str, StepSpec]) -> None:
+        """Rule 3: ``tau_decay_s · fps`` must be ≳ 1, else the decay is unresolvable."""
+        act = by_kind.get("cell_activity")
+        if act is None:
+            return
+        samples_per_decay = act.tau_decay_s * self.acquisition.fps
+        if samples_per_decay < 1.0:
+            raise ValueError(
+                f"tau_decay_s={act.tau_decay_s} s at fps={self.acquisition.fps} gives "
+                f"{samples_per_decay:.3g} samples per decay (< 1); the calcium decay is "
+                "unresolvable. Raise fps or tau_decay_s."
+            )
+
+    # -- advisory warnings --------------------------------------------------
+
+    def _warn_domain_order(self) -> None:
+        """Rule 5: steps out of cell→tissue→motion→sensor order are legal but unusual."""
+        ranks = [_DOMAIN_RANK[type(s).domain] for s in self.steps]
+        if any(b < a for a, b in zip(ranks, ranks[1:])):
+            order = " → ".join(f"{s.kind}({type(s).domain})" for s in self.steps)
+            warnings.warn(
+                f"Steps depart from the natural cell→tissue→motion→sensor order: {order}.",
+                SpecWarning,
+                stacklevel=2,
+            )
+
+    def _warn_focal_plane(self, by_kind: dict[str, StepSpec]) -> None:
+        """Rule 6: a numeric focal plane outside the cell depth range is unusual."""
+        focal = self.acquisition.optics.focal_plane_um
+        pc = by_kind.get("place_somata")
+        if focal == "auto" or pc is None:
+            return
+        lo, hi = pc.depth_range_um
+        if not (lo <= focal <= hi):
+            warnings.warn(
+                f"focal_plane_um={focal} µm is outside the cell depth range ({lo}, {hi}) µm.",
+                SpecWarning,
+                stacklevel=2,
+            )
+
+    def _warn_motion_magnitude(self, by_kind: dict[str, StepSpec]) -> None:
+        """Rule 7: shifts beyond ~5% of the FOV likely indicate a misconfig."""
+        mot = by_kind.get("brain_motion")
+        if mot is None:
+            return
+        min_fov = min(self.acquisition.fov_um)
+        if mot.trajectory_um is not None:
+            extent = max((max(abs(dy), abs(dx)) for dy, dx in mot.trajectory_um), default=0.0)
+        else:
+            extent = mot.max_shift_um
+        if extent > 0.05 * min_fov:
+            warnings.warn(
+                f"Motion extent {extent:.3g} µm exceeds 5% of the FOV ({min_fov:.3g} µm); "
+                "likely a misconfiguration.",
+                SpecWarning,
+                stacklevel=2,
+            )
