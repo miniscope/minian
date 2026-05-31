@@ -1,0 +1,276 @@
+"""Cell-domain steps: place somata, then give them calcium activity.
+
+These are the first two steps of the forward pipeline — pure biology, before any
+optics or sensor effect:
+
+* :class:`PlaceSomataStep` positions neuron somata in a 3-D µm volume and stamps
+  a sharp, pre-optics footprint for each.
+* :class:`CellActivityStep` gives every soma a calcium trace built from a
+  2-state Markov spike model convolved with a double-exponential indicator
+  kernel.
+
+Both only fill per-cell records on the scene (``scene.cells``); nothing is drawn
+into the movie until ``render`` (:mod:`minian.simulation.steps.tissue`). The
+optical degradation that turns the *planted* (sharp) footprint into the
+*observed* (blurred, attenuated) one is the next step, ``optics`` (migration
+Step 5b); until it lands, ``render`` composites the planted footprint directly.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+from scipy.ndimage import gaussian_filter
+
+from minian.simulation.scene import Cell, Scene
+from minian.simulation.steps.base import Step
+
+# Guards a division when a footprint or kernel is degenerate (sub-pixel soma,
+# etc.); far below any physically meaningful intensity.
+_EPS = 1e-12
+
+
+# ---------------------------------------------------------------------------
+# place_somata
+# ---------------------------------------------------------------------------
+
+
+def soma_footprint(
+    shape: tuple[int, int],
+    center_px: tuple[float, float],
+    radius_px: float,
+    irregularity: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """A sharp, peak-normalized soma mask — a (possibly lumpy) filled disk.
+
+    Models the soma as a filled disk of radius ``radius_px`` centered at
+    ``center_px`` (both in pixels). This is the *planted* footprint: the true
+    spatial extent of the fluorophore-filled cytoplasm, with **no optical blur**
+    — diffraction/defocus/scatter are applied later by the ``optics`` step. It
+    is peak-normalized (``max == 1``) so a cell's brightness is carried entirely
+    by its calcium trace, not baked into the footprint.
+
+    ``irregularity`` ∈ [0, 1] warps the boundary: at ``0`` it is a clean disk;
+    above ``0`` the per-pixel radius is modulated by a low-pass-filtered noise
+    field (smoothed on the soma's own length scale), giving a lumpy outline that
+    is more soma-like than a perfect circle while staying coarser than the
+    optics will later blur away. Typical cortical somata are ~5–10 µm radius.
+    """
+    h, w = shape
+    cy, cx = center_px
+    yy, xx = np.ogrid[:h, :w]
+    dist = np.hypot(yy - cy, xx - cx)
+    if irregularity > 0:
+        # Low-pass noise on the soma's own scale → a smoothly lumpy boundary,
+        # normalized to ~[-1, 1] so `irregularity` is the fractional radius wobble.
+        noise = gaussian_filter(
+            rng.standard_normal((h, w)), sigma=max(radius_px / 2.0, 1.0)
+        )
+        noise /= np.abs(noise).max() + _EPS
+        r_eff = radius_px * (1.0 + irregularity * noise)
+    else:
+        r_eff = radius_px
+    footprint = (dist <= r_eff).astype(float)
+    if footprint.max() <= 0:
+        # Sub-pixel soma: keep at least the nearest pixel lit so the cell is
+        # never silently empty.
+        iy = int(np.clip(round(cy), 0, h - 1))
+        ix = int(np.clip(round(cx), 0, w - 1))
+        footprint[iy, ix] = 1.0
+    return footprint / footprint.max()
+
+
+class PlaceSomataStep(Step):
+    """Position somata in a 3-D µm volume and stamp a planted footprint each.
+
+    The cell count is derived from the areal density and the field of view
+    (``round(density_per_mm2 · fov_area_mm2)``). Centers are drawn uniformly in
+    ``(y, x)`` across the FOV and in ``z`` across ``depth_range_um``; if
+    ``min_distance_um > 0`` they are rejection-sampled (Poisson-disk style) to a
+    3-D center-to-center minimum. Each cell gets a peak-normalized planted
+    footprint (:func:`soma_footprint`) and an SNR drawn from the configured
+    distribution. The SNR and depth are stored now and consumed later by the
+    ``optics`` step (5b) for the ``in_focus`` / ``detectable`` flags.
+    """
+
+    name = "place_somata"
+    domain = "cell"
+
+    def __call__(self, scene: Scene) -> None:
+        spec = self.spec
+        if spec.n_neurite_stubs > 0:
+            raise NotImplementedError(
+                "PlaceSomataStep models the soma body only in migration Step 5a; "
+                "n_neurite_stubs > 0 (proximal dendrite lobes) arrives in a later step."
+            )
+        acq, rng = self.acq, self.rng
+        shape = (acq.image_sensor.n_px_height, acq.image_sensor.n_px_width)
+        fov_h_um, fov_w_um = acq.fov_um
+        area_mm2 = (fov_h_um / 1000.0) * (fov_w_um / 1000.0)
+        count = round(spec.density_per_mm2 * area_mm2)
+        radius_px = acq.um_to_px(spec.soma_radius_um)
+
+        centers = self._sample_centers(
+            count, fov_h_um, fov_w_um, spec.depth_range_um, spec.min_distance_um, rng
+        )
+        snrs = self._sample_snr(spec.snr, len(centers), rng)
+        for (z, y, x), snr in zip(centers, snrs):
+            footprint = soma_footprint(
+                shape,
+                (acq.um_to_px(y), acq.um_to_px(x)),
+                radius_px,
+                spec.irregularity,
+                rng,
+            )
+            scene.cells.append(
+                Cell(center_um=(z, y, x), snr=float(snr), footprint_planted=footprint)
+            )
+
+    @staticmethod
+    def _sample_centers(
+        count: int,
+        fov_h_um: float,
+        fov_w_um: float,
+        depth_range_um: tuple[float, float],
+        min_distance_um: float,
+        rng: np.random.Generator,
+    ) -> list[tuple[float, float, float]]:
+        z_lo, z_hi = depth_range_um
+
+        def draw() -> tuple[float, float, float]:
+            return (
+                rng.uniform(z_lo, z_hi),
+                rng.uniform(0.0, fov_h_um),
+                rng.uniform(0.0, fov_w_um),
+            )
+
+        if min_distance_um <= 0:
+            return [draw() for _ in range(count)]
+
+        # Poisson-disk-style rejection sampling. Capped so an over-dense request
+        # ends with fewer cells rather than looping forever (an honest outcome:
+        # you cannot pack more than the minimum spacing allows).
+        centers: list[tuple[float, float, float]] = []
+        attempts, max_attempts = 0, max(1000, 100 * count)
+        while len(centers) < count and attempts < max_attempts:
+            attempts += 1
+            cand = draw()
+            if all(_dist3(cand, c) >= min_distance_um for c in centers):
+                centers.append(cand)
+        return centers
+
+    @staticmethod
+    def _sample_snr(snr_spec, n: int, rng: np.random.Generator) -> np.ndarray:
+        if n == 0:
+            return np.empty(0)
+        if snr_spec.distribution == "uniform":
+            return rng.uniform(snr_spec.low, snr_spec.high, size=n)
+        # Lognormal: treat (low, high) as ~±2σ anchors in log space, so the bulk
+        # of the distribution falls within the configured range.
+        mu = (np.log(snr_spec.low) + np.log(snr_spec.high)) / 2.0
+        sigma = (np.log(snr_spec.high) - np.log(snr_spec.low)) / 4.0
+        return np.exp(rng.normal(mu, sigma, size=n))
+
+
+def _dist3(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    """Euclidean distance between two ``(z, y, x)`` points, µm."""
+    return float(np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2))
+
+
+# ---------------------------------------------------------------------------
+# cell_activity
+# ---------------------------------------------------------------------------
+
+
+def calcium_kernel(tau_rise_s: float, tau_decay_s: float, fps: float) -> np.ndarray:
+    """Double-exponential calcium-indicator kernel, sampled at the frame rate.
+
+    ``k(t) = exp(-t/τ_decay) − exp(-t/τ_rise)`` — the canonical CaLab-style
+    impulse response of a fluorescent calcium indicator: a fast rise (``τ_rise``)
+    onto a slow decay (``τ_decay``). Sampled at ``1/fps`` intervals out to
+    ``5·τ_decay`` (where the response has decayed to <1%) and peak-normalized, so
+    convolving it with an amplitude-weighted spike train yields a ΔF trace whose
+    per-spike height is the spike amplitude. Requires ``τ_rise < τ_decay`` (a
+    rise slower than the decay is not a physical indicator response). Typical
+    GCaMP: ``τ_rise`` ~0.05 s, ``τ_decay`` ~0.3–0.7 s.
+    """
+    if tau_rise_s >= tau_decay_s:
+        raise ValueError(
+            f"tau_rise_s ({tau_rise_s}) must be < tau_decay_s ({tau_decay_s}) "
+            "for a double-exponential indicator kernel."
+        )
+    length = max(int(np.ceil(tau_decay_s * 5.0 * fps)), 2)
+    t = np.arange(length) / fps
+    k = np.exp(-t / tau_decay_s) - np.exp(-t / tau_rise_s)
+    return k / k.max()
+
+
+class CellActivityStep(Step):
+    """Give each soma a calcium trace: Markov gate → Poisson spikes → kernel.
+
+    Per cell, a 2-state Markov chain (quiescent ↔ active, per-frame transition
+    probabilities) gates a Poisson spike count whose rate switches between
+    ``quiescent_rate_hz`` and ``active_rate_hz``. Spikes get lognormal amplitudes
+    (coefficient of variation ``spike_amp_cv``, mean 1) and convolve with the
+    double-exponential :func:`calcium_kernel` to form the noise-free trace,
+    offset by the baseline ``f0``. Writes ``cell.trace`` (the calcium trace
+    ``C``) and ``cell.spikes`` (the spike-count train ``S``); these are the ideal
+    deconvolution targets in ground truth.
+    """
+
+    name = "cell_activity"
+    domain = "cell"
+
+    def __call__(self, scene: Scene) -> None:
+        spec = self.spec
+        n_frames, fps = self.acq.n_frames, self.acq.fps
+        kernel = calcium_kernel(spec.tau_rise_s, spec.tau_decay_s, fps)
+        for cell in scene.cells:
+            spikes = self._spike_train(spec, n_frames, fps, self.rng)
+            weighted = self._apply_amplitudes(spikes, spec.spike_amp_cv, self.rng)
+            trace = spec.f0 + np.convolve(weighted, kernel)[:n_frames]
+            if spec.trace_noise > 0:
+                trace = trace + self.rng.normal(0.0, spec.trace_noise, size=n_frames)
+            cell.trace = trace
+            cell.spikes = spikes
+
+    @staticmethod
+    def _spike_train(
+        spec, n_frames: int, fps: float, rng: np.random.Generator
+    ) -> np.ndarray:
+        """Per-frame spike counts from the 2-state Markov rate model.
+
+        Sequential by construction (the state at frame ``f`` depends on ``f-1``),
+        so this is an explicit O(n_frames) loop — clear over clever, and cheap at
+        the recording sizes the simulator targets.
+        """
+        spikes = np.zeros(n_frames)
+        rates = (spec.quiescent_rate_hz, spec.active_rate_hz)
+        state = 0  # 0 = quiescent, 1 = active
+        for f in range(n_frames):
+            spikes[f] = rng.poisson(rates[state] / fps)
+            if state == 0 and rng.random() < spec.p_quiescent_to_active:
+                state = 1
+            elif state == 1 and rng.random() < spec.p_active_to_quiescent:
+                state = 0
+        return spikes
+
+    @staticmethod
+    def _apply_amplitudes(
+        spikes: np.ndarray, cv: float, rng: np.random.Generator
+    ) -> np.ndarray:
+        """Weight each spike by a lognormal amplitude (mean 1, given CV).
+
+        Returns a per-frame summed amplitude. ``cv == 0`` is the noise-free case
+        (every spike has unit amplitude), so the result is just the spike counts.
+        """
+        if cv <= 0:
+            return spikes.astype(float)
+        sigma = np.sqrt(np.log(1.0 + cv * cv))
+        mu = -0.5 * sigma * sigma  # makes E[amplitude] == 1
+        weighted = np.zeros_like(spikes, dtype=float)
+        for f, c in enumerate(spikes):
+            n = int(c)
+            if n > 0:
+                weighted[f] = np.exp(rng.normal(mu, sigma, size=n)).sum()
+        return weighted

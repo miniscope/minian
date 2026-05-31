@@ -34,10 +34,9 @@ import hashlib
 import math
 import warnings
 from collections import Counter
-from typing import Annotated, ClassVar, Literal
+from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
 
 import numpy as np
-
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -46,6 +45,9 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+if TYPE_CHECKING:
+    from minian.simulation.steps.base import Step
 
 
 class SpecWarning(UserWarning):
@@ -412,6 +414,11 @@ class PlaceSomata(StepSpec):
             raise ValueError(f"depth_range_um max ({hi}) must be ≥ min ({lo}).")
         return v
 
+    def build(self, acq: Acquisition, rng) -> Step:
+        from minian.simulation.steps.cell import PlaceSomataStep
+
+        return PlaceSomataStep(self, acq, rng)
+
 
 class CellActivity(StepSpec):
     """Calcium activity: 2-state Markov gate → Poisson spikes → double-exp kernel.
@@ -437,6 +444,11 @@ class CellActivity(StepSpec):
         description="Optional additive per-cell trace noise (independent of sensor noise).",
     )
 
+    def build(self, acq: Acquisition, rng) -> Step:
+        from minian.simulation.steps.cell import CellActivityStep
+
+        return CellActivityStep(self, acq, rng)
+
 
 class CellOptics(StepSpec):
     """Per-cell diffraction + defocus(|z − z_f|) + scatter(z) blur & attenuation.
@@ -460,6 +472,11 @@ class Render(StepSpec):
 
     domain: ClassVar[str] = "tissue"
     kind: Literal["render"] = "render"
+
+    def build(self, acq: Acquisition, rng) -> Step:
+        from minian.simulation.steps.tissue import RenderStep
+
+        return RenderStep(self, acq, rng)
 
 
 class Neuropil(StepSpec):
@@ -549,6 +566,11 @@ class Sensor(StepSpec):
         description="Photons per fluorescence intensity unit (exposure/flux scale); sets the "
         "shot-noise regime. A scene/illumination property, not sensor hardware.",
     )
+
+    def build(self, acq: Acquisition, rng) -> Step:
+        from minian.simulation.steps.sensor import SensorStep
+
+        return SensorStep(self, acq, rng)
 
 
 # The v1 catalog is closed and known, so AnyStep is a hand-written static union:

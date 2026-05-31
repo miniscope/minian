@@ -208,12 +208,15 @@ def test_large_motion_warns():
         _valid_spec(steps=steps)
 
 
-# --- build() is not yet implemented (Step 5) -------------------------------
+# --- build() on a not-yet-implemented step still raises --------------------
+# The minimal chain (place_somata/cell_activity/render/sensor) builds as of
+# Step 5a; steps from later milestones (here CellOptics, 5b) keep the base
+# NotImplementedError until their bodies land.
 
 
-def test_build_not_implemented():
+def test_build_not_implemented_for_later_steps():
     with pytest.raises(NotImplementedError, match="Step 5"):
-        Render().build(_tiny_acquisition(), None)
+        CellOptics().build(_tiny_acquisition(), None)
 
 
 # --- Layer-2 physics helpers (Step 3) --------------------------------------
