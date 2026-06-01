@@ -8,6 +8,7 @@ the executable engine, metrics, and presets arrive in later migration steps.
 See ``proposals/simulation-plan.md`` and ``proposals/simulation-spec.md``.
 """
 
+from minian.simulation.cache import cache_dir, cache_path, simulate_cached
 from minian.simulation.recording import GroundTruth, Recording, finalize
 from minian.simulation.scene import Cell, GroundTruthBuilder, Scene
 from minian.simulation.simulate import simulate
@@ -62,6 +63,9 @@ __all__ = [
     "Tissue",
     "Vasculature",
     "Vignette",
+    "cache_dir",
+    "cache_path",
     "finalize",
     "simulate",
+    "simulate_cached",
 ]

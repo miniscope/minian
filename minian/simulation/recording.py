@@ -25,14 +25,17 @@ Two things that were deliberately deferred from earlier steps land here:
 from __future__ import annotations
 
 import math
+import os
+import shutil
 from pathlib import Path
 
 import numpy as np
 import xarray as xr
+import zarr
 from numpydantic import NDArray, Shape
 from pydantic import BaseModel, ConfigDict, Field
 
-from minian.simulation.scene import Cell, Scene
+from minian.simulation.scene import MOVIE_DIMS, Cell, Scene
 from minian.simulation.spec import Acquisition, Spec
 
 # Minimum realized peak SNR (signal electrons over the sensor noise floor) for a
@@ -40,6 +43,21 @@ from minian.simulation.spec import Acquisition, Spec
 # calibration revisits it against observed metric distributions. Kept here, named,
 # rather than buried as a literal so that calibration is a one-line change.
 DETECT_SNR_THRESHOLD = 3.0
+
+# On-disk layout for save()/load() (zarr group + sibling spec.json). The format
+# version is stamped in the group attrs so a future layout change can be detected
+# rather than silently misread.
+_FORMAT_VERSION = 1
+# GroundTruth array fields, split by whether they are always present or optional
+# (None when their producing step is absent). Order is the construction order.
+_GT_REQUIRED = (
+    "A_planted", "A_observed", "C", "S",
+    "centers_um", "snr_per_cell", "in_focus", "detectable",
+)
+_GT_OPTIONAL = (
+    "shifts", "vignette", "leakage", "bleaching",
+    "neuropil_temporal", "neuropil_spatial",
+)
 
 
 class GroundTruth(BaseModel):
@@ -140,14 +158,97 @@ class Recording(BaseModel):
             )
         return self.snapshots[name]
 
-    def save(self, path: Path) -> None:
-        """Persist to zarr + a sibling spec.json. Implemented with caching (Step 7)."""
-        raise NotImplementedError("Recording.save lands with local caching (Step 7).")
+    def save(self, path: str | Path) -> None:
+        """Persist this recording to a self-contained zarr directory at ``path``.
+
+        Layout (one portable directory; ``path`` is conventionally
+        ``{spec.cache_key()}.zarr`` but any path works)::
+
+            {path}/
+                spec.json            human-readable, diffable spec (see §13)
+                (group attrs)        format_version, spec_cache_key, gt_present,
+                                     snapshot_names
+                observed             (frame, height, width) in store_dtype
+                ground_truth/        the GroundTruth arrays (optional ones only
+                                     when not None; listed in the gt_present attr)
+                snapshots/           per-stage movie values, only when non-empty
+
+        Snapshot coordinates are not stored — they are the trivial ``arange`` grid
+        over ``MOVIE_DIMS`` and are rebuilt on :meth:`load`. The write is atomic: it
+        builds a sibling ``{path}.tmp`` and renames it into place, so a crash never
+        leaves a half-written directory that :meth:`load` would trust.
+        """
+        path = Path(path)
+        tmp = path.with_name(path.name + ".tmp")
+        if tmp.exists():
+            shutil.rmtree(tmp)
+
+        root = zarr.open_group(str(tmp), mode="w")
+        root.create_dataset("observed", data=np.asarray(self.observed))
+
+        gt_group = root.create_group("ground_truth")
+        for name in _GT_REQUIRED:
+            gt_group.create_dataset(name, data=np.asarray(getattr(self.ground_truth, name)))
+        present = []
+        for name in _GT_OPTIONAL:
+            value = getattr(self.ground_truth, name)
+            if value is not None:
+                gt_group.create_dataset(name, data=np.asarray(value))
+                present.append(name)
+
+        snapshot_names = sorted(self.snapshots)
+        if snapshot_names:
+            snap_group = root.create_group("snapshots")
+            for name in snapshot_names:
+                snap_group.create_dataset(name, data=np.asarray(self.snapshots[name].values))
+
+        root.attrs["format_version"] = _FORMAT_VERSION
+        root.attrs["spec_cache_key"] = self.spec.cache_key()
+        root.attrs["gt_present"] = present
+        root.attrs["snapshot_names"] = snapshot_names
+        (tmp / "spec.json").write_text(self.spec.model_dump_json(indent=2))
+
+        if path.exists():
+            shutil.rmtree(path)
+        os.replace(tmp, path)
 
     @classmethod
-    def load(cls, path: Path) -> Recording:
-        """Load a saved recording, verifying its spec hash. Lands with caching (Step 7)."""
-        raise NotImplementedError("Recording.load lands with local caching (Step 7).")
+    def load(cls, path: str | Path) -> Recording:
+        """Load a recording written by :meth:`save`, verifying its spec hash.
+
+        Reads back ``spec.json``, re-validates it, and checks that its
+        :attr:`Spec.cache_key` matches the one stamped at save time — guarding
+        against a stale cache or a hand-edited ``spec.json``. Snapshots are
+        rebuilt as ``DataArray``s over ``MOVIE_DIMS`` with ``arange`` coordinates.
+        """
+        path = Path(path)
+        root = zarr.open_group(str(path), mode="r")
+
+        spec = Spec.model_validate_json((path / "spec.json").read_text())
+        stored_key = root.attrs.get("spec_cache_key")
+        if stored_key != spec.cache_key():
+            raise ValueError(
+                f"Spec hash mismatch loading {path}: stored {stored_key!r} != "
+                f"recomputed {spec.cache_key()!r}. The cache is stale or spec.json "
+                f"was edited; delete it and re-simulate."
+            )
+
+        gt_group = root["ground_truth"]
+        fields = {name: np.asarray(gt_group[name]) for name in _GT_REQUIRED}
+        for name in root.attrs.get("gt_present", []):
+            fields[name] = np.asarray(gt_group[name])
+        ground_truth = GroundTruth(**fields)
+
+        snapshots = {
+            name: _movie_dataarray(np.asarray(root["snapshots"][name]))
+            for name in root.attrs.get("snapshot_names", [])
+        }
+        return cls(
+            spec=spec,
+            observed=np.asarray(root["observed"]),
+            ground_truth=ground_truth,
+            snapshots=snapshots,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +335,21 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
     observed_movie = movie.astype(spec.output.store_dtype)
     return Recording(
         spec=spec, observed=observed_movie, ground_truth=gt, snapshots=scene.snapshots
+    )
+
+
+def _movie_dataarray(values: np.ndarray) -> xr.DataArray:
+    """Rebuild a movie ``DataArray`` from stored values (the saved snapshot form).
+
+    Snapshots are persisted as bare arrays; their coordinates are the trivial
+    ``arange`` grid over ``MOVIE_DIMS``, reconstructed here so :meth:`Recording.load`
+    returns the same ``(frame, height, width)`` labelling the pipeline produced.
+    """
+    return xr.DataArray(
+        values,
+        dims=list(MOVIE_DIMS),
+        coords={dim: np.arange(size) for dim, size in zip(MOVIE_DIMS, values.shape)},
+        name="movie",
     )
 
 
