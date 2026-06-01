@@ -1,7 +1,8 @@
 import argparse
 import os
-import requests
 from importlib.metadata import version
+
+import requests
 
 NOTEBOOK_FILES = [
     "pipeline.ipynb",

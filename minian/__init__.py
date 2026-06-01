@@ -1,6 +1,8 @@
-import dask as da
 import os
 from importlib.metadata import version
+
+import dask as da
+
 from .utilities import custom_arr_optimize, custom_delay_optimize
 
 try:

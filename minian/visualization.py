@@ -2,7 +2,6 @@ import functools as fct
 import itertools as itt
 import os
 from collections import OrderedDict
-from typing import Optional, Union
 from collections.abc import Callable
 from uuid import uuid4
 
@@ -31,7 +30,6 @@ from holoviews.streams import (
     RangeXY,
     Selection1D,
     Stream,
-    Tap,
 )
 from holoviews.util import Dynamic
 from matplotlib import cm

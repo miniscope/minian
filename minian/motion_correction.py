@@ -1,7 +1,6 @@
 import functools as fct
 import itertools as itt
 import warnings
-from typing import Optional
 
 import cv2
 import dask as da
@@ -134,7 +133,7 @@ def estimate_motion(
         for lab in itt.product(*loop_labs):
             va = varr.sel({loop_dims[i]: lab[i] for i in range(len(loop_dims))})
             vmax, sh = est_motion_part(va.data, npart, chunk_nfm, **kwargs)
-            if kwargs.get("mesh_size", None):
+            if kwargs.get("mesh_size"):
                 sh = xr.DataArray(
                     sh,
                     dims=[dim, "shift_dim", "grid0", "grid1"],
@@ -156,7 +155,7 @@ def estimate_motion(
         sh = xrconcat_recursive(res_dict, loop_dims)
     else:
         vmax, sh = est_motion_part(varr.data, npart, chunk_nfm, **kwargs)
-        if kwargs.get("mesh_size", None):
+        if kwargs.get("mesh_size"):
             sh = xr.DataArray(
                 sh,
                 dims=[dim, "shift_dim", "grid0", "grid1"],
@@ -209,7 +208,7 @@ def est_motion_part(
         chunk_nfm = varr.chunksize[0]
     varr = varr.rechunk((chunk_nfm, None, None))
     arr_opt = fct.partial(custom_arr_optimize, keep_patterns=["^est_motion_chunk"])
-    if kwargs.get("mesh_size", None):
+    if kwargs.get("mesh_size"):
         param = get_bspline_param(varr[0].compute(), kwargs["mesh_size"])
     tmp_ls = []
     sh_ls = []
@@ -219,7 +218,7 @@ def est_motion_part(
             tmp = darr.from_delayed(res[0], shape=(3, blk.shape[1], blk.shape[2]), dtype=blk.dtype)
         else:
             tmp = darr.from_delayed(res[0], shape=(blk.shape[1], blk.shape[2]), dtype=blk.dtype)
-        if kwargs.get("mesh_size", None):
+        if kwargs.get("mesh_size"):
             sh = darr.from_delayed(
                 res[1],
                 shape=(blk.shape[0], 2, int(param[1]), int(param[0])),
@@ -606,7 +605,7 @@ def apply_shifts(varr, shifts, fill=np.nan):
     sh_dim = shifts.coords["shift_dim"].values.tolist()
     varr_sh = xr.apply_ufunc(
         shift_perframe,
-        varr.chunk({d: -1 for d in sh_dim}),
+        varr.chunk(dict.fromkeys(sh_dim, -1)),
         shifts,
         input_core_dims=[sh_dim, ["shift_dim"]],
         output_core_dims=[sh_dim],
@@ -691,7 +690,7 @@ def apply_transform(
         mdim = ["shift_dim"]
     varr_sh = xr.apply_ufunc(
         transform_perframe,
-        varr.chunk({d: -1 for d in sh_dim}),
+        varr.chunk(dict.fromkeys(sh_dim, -1)),
         trans,
         input_core_dims=[sh_dim, mdim],
         output_core_dims=[sh_dim],

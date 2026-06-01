@@ -1,7 +1,6 @@
 import functools as fct
 import os
 import warnings
-from typing import Optional, Union
 
 import cv2
 import cvxpy as cvx
@@ -28,10 +27,10 @@ from statsmodels.tsa.stattools import acovf
 from .utilities import (
     custom_arr_optimize,
     custom_delay_optimize,
+    med_baseline,
     open_minian,
     rechunk_like,
     save_minian,
-    med_baseline,
 )
 
 try:

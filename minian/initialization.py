@@ -1,10 +1,7 @@
-import functools as fct
 import itertools as itt
 import os
-from typing import Optional, Union
 
 import cv2
-import dask as da
 import dask.array as darr
 import networkx as nx
 import numpy as np
@@ -12,7 +9,6 @@ import pandas as pd
 import sparse
 import xarray as xr
 from scipy.ndimage.measurements import label
-from scipy.signal import butter, lfilter
 from scipy.sparse import csc_matrix
 from scipy.stats import kstest, zscore
 from skimage.morphology import disk

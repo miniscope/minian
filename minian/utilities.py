@@ -1,18 +1,17 @@
+import _operator
 import functools as fct
 import os
 import re
 import shutil
 import warnings
+from collections.abc import Callable
 from copy import deepcopy
 from os import listdir
 from os.path import isdir, isfile
 from os.path import join as pjoin
 from pathlib import Path
-from typing import Optional, Union
-from collections.abc import Callable
 from uuid import uuid4
 
-import _operator
 import cv2
 import dask as da
 import dask.array as darr
@@ -726,15 +725,15 @@ def get_optimal_chk(
     chk_compute = dict()
     for dg in dim_grp:
         d_rest = set(dims) - set(dg)
-        dg_dict = {d: "auto" for d in dg}
-        dr_dict = {d: -1 for d in d_rest}
+        dg_dict = dict.fromkeys(dg, "auto")
+        dr_dict = dict.fromkeys(d_rest, -1)
         dg_dict.update(dr_dict)
         with da.config.set({"array.chunk-size": f"{csize}MiB"}):
             arr_chk = arr.chunk(dg_dict)
         chk = get_chunksize(arr_chk)
         chk_compute.update({d: chk[d] for d in dg})
     with da.config.set({"array.chunk-size": f"{csize}MiB"}):
-        arr_chk = arr.chunk({d: "auto" for d in dims})
+        arr_chk = arr.chunk(dict.fromkeys(dims, "auto"))
     chk_store_da = get_chunksize(arr_chk)
     chk_store = dict()
     for d in dims:
@@ -1055,7 +1054,7 @@ def split_key(key: tuple | str, rename_dict: dict | None = None) -> str:
     kls = key.split("-")
     if rename_dict:
         kls = list(map(lambda k: rename_dict.get(k, k), kls))
-    kls_ft = list(filter(lambda k: k in ANNOTATIONS.keys(), kls))
+    kls_ft = list(filter(lambda k: k in ANNOTATIONS, kls))
     if kls_ft:
         return "-".join(kls_ft)
     else:
@@ -1128,7 +1127,7 @@ def inline_pattern(dsk: dict, pat_ls: list[str], inline_constants: bool) -> dict
     -------
     dask.optimization.inline
     """
-    keys = [k for k in dsk.keys() if check_pat(k, pat_ls)]
+    keys = [k for k in dsk if check_pat(k, pat_ls)]
     if keys:
         dsk = inline(dsk, keys, inline_constants=inline_constants)
         for k in keys:
