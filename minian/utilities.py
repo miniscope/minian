@@ -34,8 +34,6 @@ from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import lsqr
 from tifffile import TiffFile, imread
 
-from .ffmpeg_utils import RawGray, ensure_ffmpeg
-
 # dask >=2025 ships a new TaskSpec optimizer. The legacy `fuse` /
 # `inline_pattern` paths produce graphs the new scheduler can't track,
 # so `custom_arr_optimize` / `custom_delay_optimize` branch on this flag.
@@ -46,6 +44,17 @@ try:
 except ImportError:
     fuse_linear_task_spec = None
     _DASK_HAS_TASK_SPEC = False
+
+
+def ensure_ffmpeg() -> None:
+    """Require ``ffmpeg`` and ``ffprobe`` on ``PATH`` before video I/O."""
+    for name in ("ffmpeg", "ffprobe"):
+        if shutil.which(name) is None:
+            raise RuntimeError(
+                f"{name!r} not found on PATH. MiniAn needs FFmpeg for "
+                "AVI/MKV ingest and MP4 export. Install FFmpeg and ensure it "
+                "is on PATH (https://ffmpeg.org/download.html)."
+            )
 
 
 def load_videos(
@@ -123,7 +132,6 @@ def load_videos(
 
     file_extension = os.path.splitext(vlist[0])[1]
     if file_extension in (".avi", ".mkv"):
-        ensure_ffmpeg()
         movie_load_func = load_avi_lazy
     elif file_extension == ".tif":
         movie_load_func = load_tif_lazy
@@ -270,10 +278,9 @@ def load_avi_ffmpeg(fname: str, h: int, w: int, f: int) -> np.ndarray:
     arr : np.ndarray
         The resulting array. Has shape (`f`, `h`, `w`).
     """
-    ensure_ffmpeg()
     out_bytes, err = (
         ffmpeg.input(fname)
-        .video.output(RawGray.PIPE, format=RawGray.FORMAT, pix_fmt=RawGray.PIX_FMT)
+        .video.output("pipe:", format="rawvideo", pix_fmt="gray")
         .run(capture_stdout=True)
     )
     return np.frombuffer(out_bytes, np.uint8).reshape(f, h, w)
