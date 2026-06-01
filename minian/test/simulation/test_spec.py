@@ -14,10 +14,13 @@ from pydantic import ValidationError
 
 from minian.simulation import (
     Acquisition,
+    Bleaching,
     BrainMotion,
     CellActivity,
     CellOptics,
     ImageSensor,
+    Leakage,
+    Neuropil,
     Optics,
     Output,
     PlaceSomata,
@@ -27,7 +30,10 @@ from minian.simulation import (
     Spec,
     SpecWarning,
     Tissue,
+    Vasculature,
+    Vignette,
 )
+from minian.simulation.steps import Step
 
 
 def _minimal_steps():
@@ -208,15 +214,32 @@ def test_large_motion_warns():
         _valid_spec(steps=steps)
 
 
-# --- build() on a not-yet-implemented step still raises --------------------
-# The minimal chain (5a), optics (5b), and the field effects (5c) all build;
-# brain_motion (5d) is the last step whose body has not landed, so it keeps the
-# base NotImplementedError.
+# --- the whole step catalog builds (Steps 5a–5d complete) ------------------
 
 
-def test_build_not_implemented_for_later_steps():
-    with pytest.raises(NotImplementedError, match="Step 5"):
-        BrainMotion().build(_tiny_acquisition(), None)
+def test_every_step_kind_builds():
+    # Every spec in the v1 catalog now returns an executable Step — the full
+    # forward pipeline is wired (5a–5d). None falls back to the base
+    # NotImplementedError, and each step self-describes its name and domain.
+    acq = _tiny_acquisition()
+    rng = np.random.default_rng(0)
+    specs = [
+        PlaceSomata(),
+        CellActivity(),
+        CellOptics(),
+        Render(),
+        Neuropil(),
+        Vasculature(),
+        Bleaching(),
+        BrainMotion(),
+        Vignette(),
+        Leakage(),
+        Sensor(),
+    ]
+    for spec in specs:
+        step = spec.build(acq, rng)
+        assert isinstance(step, Step)
+        assert step.name and step.domain
 
 
 # --- Layer-2 physics helpers (Step 3) --------------------------------------

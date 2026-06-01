@@ -123,26 +123,49 @@ class Scene:
     snapshots: dict[str, xr.DataArray] = field(default_factory=dict)
 
     @classmethod
-    def zeros(cls, acq: Acquisition, rng: np.random.Generator | None = None) -> Scene:
+    def zeros(
+        cls,
+        acq: Acquisition,
+        rng: np.random.Generator | None = None,
+        margin_px: int = 0,
+    ) -> Scene:
         """A blank scene whose movie is all zeros — the base for additive builds."""
-        return cls._blank(acq, 0.0, rng)
+        return cls._blank(acq, 0.0, rng, margin_px)
 
     @classmethod
-    def ones(cls, acq: Acquisition, rng: np.random.Generator | None = None) -> Scene:
+    def ones(
+        cls,
+        acq: Acquisition,
+        rng: np.random.Generator | None = None,
+        margin_px: int = 0,
+    ) -> Scene:
         """A scene whose movie is all ones — the substrate for multiplicative-field tests.
 
         A ``vignette`` or ``leakage`` step applied to an all-ones movie yields the
         bare field, which is exactly what a single-step test inspects.
         """
-        return cls._blank(acq, 1.0, rng)
+        return cls._blank(acq, 1.0, rng, margin_px)
 
     @classmethod
-    def _blank(cls, acq: Acquisition, fill: float, rng: np.random.Generator | None) -> Scene:
+    def _blank(
+        cls,
+        acq: Acquisition,
+        fill: float,
+        rng: np.random.Generator | None,
+        margin_px: int = 0,
+    ) -> Scene:
+        # ``margin_px`` pads the tissue canvas by that many pixels on every side
+        # beyond the sensor FOV, so that under motion real, simulated tissue moves
+        # into view at the edges (rather than a fabricated fill). The ``brain_motion``
+        # step shifts this canvas and crops the centered sensor FOV back out; the
+        # margin must be ≥ the maximum shift. ``simulate()`` (Step 6) sizes it from
+        # the motion spec; tests pass it explicitly. ``margin_px=0`` is the plain
+        # sensor-sized scene the non-motion steps use.
         if rng is None:
             rng = np.random.default_rng()
         n_frames = acq.n_frames
-        height = acq.image_sensor.n_px_height
-        width = acq.image_sensor.n_px_width
+        height = acq.image_sensor.n_px_height + 2 * margin_px
+        width = acq.image_sensor.n_px_width + 2 * margin_px
         movie = xr.DataArray(
             np.full((n_frames, height, width), fill, dtype=np.float64),
             dims=list(MOVIE_DIMS),

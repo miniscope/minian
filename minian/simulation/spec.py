@@ -573,7 +573,13 @@ class Bleaching(StepSpec):
 class BrainMotion(StepSpec):
     """Rigid x,y translation of the whole tissue frame — the tissue→sensor boundary.
 
-    OU/jump and axial focus-drift motion are deferred placeholders.
+    The built step shifts the brain-frame canvas per frame and crops the sensor
+    FOV from its center; it therefore requires a scene whose tissue canvas carries
+    a margin ≥ the maximum shift (``Scene.zeros(acq, margin_px=…)``, sized
+    automatically by ``simulate()``), so real off-FOV tissue moves into view
+    instead of a fabricated fill. Ground truth records the per-frame ``(dy, dx)``
+    displacement in **pixels**. OU/jump and axial focus-drift motion are deferred
+    placeholders.
     """
 
     domain: ClassVar[str] = "motion"
@@ -583,6 +589,11 @@ class BrainMotion(StepSpec):
     )
     walk_step_um: float = Field(ge=0, default=0.3, description="Random-walk step size, µm/frame.")
     max_shift_um: float = Field(gt=0, default=5.0, description="Bound on cumulative shift magnitude, µm.")
+
+    def build(self, acq: Acquisition, rng) -> Step:
+        from minian.simulation.steps.motion import BrainMotionStep
+
+        return BrainMotionStep(self, acq, rng)
 
 
 class Vignette(StepSpec):

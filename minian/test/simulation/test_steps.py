@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from minian.simulation import (
     Acquisition,
     Bleaching,
+    BrainMotion,
     CellActivity,
     CellOptics,
     ImageSensor,
@@ -33,6 +34,7 @@ from minian.simulation import (
 )
 from minian.simulation.steps import (
     BleachingStep,
+    BrainMotionStep,
     CellActivityStep,
     CellOpticsStep,
     LeakageStep,
@@ -43,10 +45,12 @@ from minian.simulation.steps import (
     VasculatureStep,
     VignetteStep,
     bleaching_curve,
+    bounded_random_walk,
     calcium_kernel,
     degrade_footprint,
     ou_process,
     resolve_focal_plane,
+    shift_and_crop,
     soma_footprint,
 )
 from minian.simulation.scene import Cell
@@ -708,3 +712,132 @@ def test_field_chain_runs_end_to_end_and_records_ground_truth():
     assert scene.truth.bleaching is not None
     assert scene.truth.vignette is not None
     assert scene.truth.leakage is not None
+
+
+# --- brain_motion (5d) -----------------------------------------------------
+
+
+def test_bounded_random_walk_starts_at_zero_and_stays_bounded():
+    walk = bounded_random_walk(500, step_px=1.0, max_px=4.0, rng=np.random.default_rng(0))
+    assert walk.shape == (500, 2)
+    np.testing.assert_array_equal(walk[0], [0.0, 0.0])  # frame 0 is the reference
+    mags = np.hypot(walk[:, 0], walk[:, 1])
+    assert mags.max() <= 4.0 + 1e-9  # never leaves the radius-max_px disk
+
+
+def test_shift_and_crop_recenters_a_padded_frame():
+    # A 4 px frame padded to 8 px, shifted back by the margin, crops to the FOV.
+    canvas = np.zeros((1, 8, 8))
+    canvas[0, 5, 5] = 1.0
+    out = shift_and_crop(canvas, np.array([[-2.0, -2.0]]), fov_shape=(4, 4))
+    assert out.shape == (1, 4, 4)
+    assert out[0, 1, 1] == pytest.approx(1.0)  # (5,5) - margin(2) - shift(2) -> (1,1)
+
+
+def test_explicit_trajectory_moves_content_by_the_given_shift():
+    acq = _acq(n_px=20, duration_s=0.1)  # 2 frames, 1 µm/px
+    margin = 6
+    scene = Scene.zeros(acq, margin_px=margin)
+    c = (20 + 2 * margin) // 2  # canvas center == FOV center
+    scene.movie.values[:, c, c] = 9.0
+    BrainMotion(trajectory_um=[(0.0, 0.0), (3.0, 2.0)]).build(
+        acq, np.random.default_rng(0)
+    )(scene)
+    fov0, fov1 = scene.movie.values[0], scene.movie.values[1]
+    fc = 10  # FOV center (20×20)
+    assert fov0[fc, fc] == pytest.approx(9.0)  # frame 0 unshifted
+    assert fov1[fc + 3, fc + 2] == pytest.approx(9.0)  # frame 1 moved down 3, right 2
+    assert fov1[fc, fc] < 1e-6
+
+
+def test_motion_brings_offscreen_tissue_into_view():
+    # A bright spot in the top margin (outside the FOV) is cropped away at rest
+    # and brought into view by a downward shift — real tissue, not a fill.
+    acq = _acq(n_px=20, duration_s=0.1)  # 2 frames
+    margin = 6
+    scene = Scene.zeros(acq, margin_px=margin)
+    scene.movie.values[:, margin - 3, margin + 10] = 5.0  # 3 px above the FOV top
+    BrainMotion(trajectory_um=[(0.0, 0.0), (4.0, 0.0)]).build(
+        acq, np.random.default_rng(0)
+    )(scene)
+    assert scene.movie.values[0].max() < 1e-6  # off-FOV at rest
+    assert scene.movie.values[1].max() == pytest.approx(5.0)  # shifted into view
+
+
+def test_brain_motion_records_shifts_in_pixels():
+    acq = _acq(n_px=16, duration_s=0.5)  # 10 frames
+    scene = Scene.zeros(acq, margin_px=6)
+    BrainMotion(walk_step_um=0.5, max_shift_um=4.0).build(
+        acq, np.random.default_rng(2)
+    )(scene)
+    shifts = scene.truth.shifts
+    assert shifts.shape == (acq.n_frames, 2)
+    np.testing.assert_array_equal(shifts[0], [0.0, 0.0])
+    assert np.hypot(shifts[:, 0], shifts[:, 1]).max() <= 4.0 + 1e-9  # px, bounded
+
+
+def test_static_field_is_invariant_under_motion():
+    # vignette is fixed to the sensor: the field it writes is byte-identical
+    # whether or not the brain moved first (the reference-frame invariant).
+    acq = _acq(n_px=24, duration_s=0.5)
+    s0 = Scene.ones(acq)
+    VignetteStep(Vignette(falloff=0.5), acq, np.random.default_rng(0))(s0)
+
+    s1 = Scene.ones(acq, margin_px=4)
+    BrainMotion(walk_step_um=0.5, max_shift_um=3.0).build(
+        acq, np.random.default_rng(1)
+    )(s1)
+    VignetteStep(Vignette(falloff=0.5), acq, np.random.default_rng(2))(s1)
+
+    assert s1.truth.vignette.shape == (24, 24)  # cropped to the sensor FOV
+    np.testing.assert_array_equal(s0.truth.vignette, s1.truth.vignette)
+
+
+def test_brain_motion_rejects_wrong_length_trajectory():
+    acq = _acq(n_px=16, duration_s=0.5)  # 10 frames
+    scene = Scene.zeros(acq, margin_px=4)
+    with pytest.raises(ValueError, match="trajectory_um"):
+        BrainMotion(trajectory_um=[(0.0, 0.0), (1.0, 1.0)]).build(
+            acq, np.random.default_rng(0)
+        )(scene)
+
+
+def test_brain_motion_rejects_insufficient_margin():
+    acq = _acq(n_px=16, duration_s=0.1)  # 2 frames
+    scene = Scene.zeros(acq, margin_px=1)  # only 1 px of tissue margin
+    with pytest.raises(ValueError, match="margin"):
+        BrainMotion(trajectory_um=[(0.0, 0.0), (5.0, 0.0)]).build(
+            acq, np.random.default_rng(0)
+        )(scene)  # 5 px shift overruns the 1 px margin
+
+
+def test_full_pipeline_with_motion_runs_end_to_end():
+    acq = _acq(n_px=40, duration_s=1.5, bit_depth=8)  # 1 µm/px
+    rng = np.random.default_rng(11)
+    max_shift_um = 4.0
+    margin = int(np.ceil(acq.um_to_px(max_shift_um))) + 1
+    scene = Scene.zeros(acq, margin_px=margin)
+    steps = [
+        PlaceSomata(
+            density_per_mm2=3000.0, soma_radius_um=4.0, depth_range_um=(0.0, 120.0)
+        ),
+        CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
+        CellOptics(),
+        Render(),
+        Neuropil(amplitude=0.3),
+        Bleaching(final_fraction=0.7),
+        BrainMotion(walk_step_um=0.4, max_shift_um=max_shift_um),
+        Vignette(falloff=0.6),
+        Leakage(profile="gaussian", level=0.1),
+        Sensor(photons_per_unit=120.0),
+    ]
+    for sspec in steps:
+        sspec.build(acq, rng)(scene)
+
+    movie = scene.movie.values
+    assert movie.shape == (acq.n_frames, 40, 40)  # cropped back to the sensor FOV
+    np.testing.assert_array_equal(movie, np.round(movie))  # digitized counts
+    assert movie.min() >= 0.0 and movie.max() <= 255.0
+    assert movie.var() > 0.0
+    assert scene.truth.shifts.shape == (acq.n_frames, 2)
+    np.testing.assert_array_equal(scene.truth.shifts[0], [0.0, 0.0])
