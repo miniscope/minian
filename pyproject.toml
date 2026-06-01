@@ -85,6 +85,14 @@ lock.composite = [
     'pdm lock --with :all --python=">=3.14" --append'
 ]
 test = "pytest"
+lint.composite = [
+    "ruff check",
+    "ruff format --check"
+]
+format.composite = [
+    "ruff check --fix",
+    "ruff format",
+]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
@@ -98,10 +106,82 @@ version_files = [
 
 [tool.ruff]
 target-version = "py310"
+include = ["minian/**/*.py", "**/pyproject.toml"]
+exclude = ["docs"]
+line-length = 100
 
 [tool.ruff.lint]
-select = ["UP"]
 fixable = ["ALL"]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # isort
+    "I",
+    # numpy-specific rules
+    "NPY",
+    # bandit - security
+    "S",
+    ## ----------
+    # flake8
+    # annotations
+    "ANN",
+    # unused arguments
+    "ARG",
+    # bugbear
+    "B",
+    # comprehensions
+    "C4",
+    # pathlib
+    "PTH",
+    # simplify
+    "SIM",
+    # no debugger
+    "T10",
+    ## ----------
+    # pydocstyle
+    # indentation
+    "D207", "D208",
+    # whitespace
+    "D210", "D211",
+    # emptiness
+    "D419",
+    ## ----------
+    # one-offs
+    # snake case function name
+    "N802",
+]
+
+ignore = [
+    #"special" methods like `__init__` don't need to be annotated
+    "ANN204",
+    # any types are semantically valid actually sometimes
+    "ANN401",
+    # explicit strict arg for zip
+    "B905",
+    # docstrings for __init__
+    "D107",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/test/conftest.py" = [
+    # allow unused imports - fixtures
+    "F401",
+    # allow star import of fixtures
+    "F403",
+]
+"**/test/**/test_*" = [
+    # don't require annotating fixture types in test functions
+    "ANN001", "ANN201",
+    # allow unused variables, also normal in tests
+    "F841",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["minian"]
 
 [tool.pytest.ini_options]
 addopts = [
