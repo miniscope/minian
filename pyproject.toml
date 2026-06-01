@@ -89,10 +89,8 @@ lint.composite = [
     "ruff check",
     "ruff format --check"
 ]
-format.composite = [
-    "ruff check --fix",
-    "ruff format",
-]
+lint-fix = "ruff check --fix"
+format = "ruff format"
 
 [tool.commitizen]
 name = "cz_conventional_commits"
@@ -135,8 +133,6 @@ select = [
     "B",
     # comprehensions
     "C4",
-    # pathlib
-    "PTH",
     # simplify
     "SIM",
     # no debugger
@@ -150,9 +146,9 @@ select = [
     # emptiness
     "D419",
     ## ----------
-    # one-offs
-    # snake case function name
-    "N802",
+    # TODO - fix gradually
+    # pathlib
+    # "PTH",
 ]
 
 ignore = [
@@ -164,15 +160,23 @@ ignore = [
     "B905",
     # docstrings for __init__
     "D107",
+    # unsafe pickles - no network data used here
+    "S301",
+    # subprocess calls - no untrusted user data
+    "S603",
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/test/conftest.py" = [
+# all modules related to testing
+"**/test/**.py" = [
     # allow unused imports - fixtures
     "F401",
     # allow star import of fixtures
     "F403",
+    # assert is the name of the game in pytest
+    "S101",
 ]
+# specifically the test-containing modules
 "**/test/**/test_*" = [
     # don't require annotating fixture types in test functions
     "ANN001", "ANN201",

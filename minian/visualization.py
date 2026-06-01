@@ -4,6 +4,7 @@ import itertools as itt
 import os
 from collections import OrderedDict
 from collections.abc import Callable
+from typing import Any
 from uuid import uuid4
 
 import colorcet as cc
@@ -92,11 +93,11 @@ class VArrayViewer:
     def __init__(
         self,
         varr: xr.DataArray | list[xr.DataArray] | xr.Dataset,
-        framerate=30,
-        summary=None,
+        framerate: int = 30,
+        summary: list[str] | None = None,
         meta_dims: list[str] = None,
-        datashading=True,
-        layout=False,
+        datashading: bool = True,
+        layout: bool = False,
     ):
         """
         Parameters
@@ -192,9 +193,9 @@ class VArrayViewer:
                 self.sum_sub = self.summary
         self.pnplot = pn.panel(self.get_hvobj())
 
-    def get_hvobj(self):
-        def get_im_ovly(meta):
-            def img(f, ds):
+    def get_hvobj(self) -> hv.Layout:
+        def get_im_ovly(meta: dict) -> hv.DynamicMap:
+            def img(f: np.ndarray, ds: xr.DataArray) -> hv.Image:
                 return hv.Image(ds.sel(frame=f).compute(), kdims=["width", "height"])
 
             try:
@@ -213,7 +214,7 @@ class VArrayViewer:
             else:
                 im_ovly = im
 
-            def hist(f, w, h, ds):
+            def hist(f: np.ndarray, w: int, h: int, ds: xr.DataArray) -> hv.operation.histogram:
                 if w and h:
                     cur_im = hv.Image(ds.sel(frame=f).compute(), kdims=["width", "height"]).select(
                         height=h, width=w
@@ -263,10 +264,10 @@ class VArrayViewer:
         """
         return pn.layout.Column(self.widgets, self.pnplot)
 
-    def _widgets(self):
+    def _widgets(self) -> pn.WidgetBox:
         w_play = pnwgt.Player(length=len(self._f), interval=10, value=0, width=650, height=90)
 
-        def play(f) -> None:
+        def play(f: hv.Event) -> None:
             if f.old != f.new:
                 self.strm_f.event(f=int(self._f[f.new]))
 
@@ -279,8 +280,8 @@ class VArrayViewer:
                 for d, v in self.meta_dicts.items()
             }
 
-            def make_update_func(meta_name):
-                def _update(x) -> None:
+            def make_update_func(meta_name: str) -> Callable[[hv.Event], None]:
+                def _update(x: hv.Event) -> None:
                     self.cur_metas[meta_name] = x.new
                     self._update_subs()
 
@@ -300,7 +301,7 @@ class VArrayViewer:
             self.sum_sub = self.summary.sel(**self.cur_metas)
         self.pnplot.objects[0].object = self.get_hvobj()
 
-    def _update_box(self, click) -> None:
+    def _update_box(self, _click: hv.Event) -> None:
         box = self.str_box.data
         self.mask.update(
             {
@@ -395,7 +396,7 @@ class CNMFViewer:
         C: xr.DataArray | None = None,
         S: xr.DataArray | None = None,
         org: xr.DataArray | None = None,
-        sortNN=True,
+        sortNN: bool = True,
     ):
         """
         Parameters
@@ -522,7 +523,7 @@ class CNMFViewer:
         else:
             self.cents_sub = self.cents
 
-    def compute_subs(self, clicks=None) -> None:
+    def compute_subs(self, _clicks: hv.Event | None = None) -> None:
         self.A_sub = self.A_sub.compute()
         self.C_sub = self.C_sub.compute()
         self.S_sub = self.S_sub.compute()
@@ -530,18 +531,18 @@ class CNMFViewer:
         self.C_norm_sub = self.C_norm_sub.compute()
         self.S_norm_sub = self.S_norm_sub.compute()
 
-    def update_all(self, clicks=None) -> None:
+    def update_all(self, _clicks: hv.Event | None = None) -> None:
         self.update_subs()
         self.strm_uid.event(index=[])
         self.strm_f.event(x=0)
         self.update_spatial_all()
 
-    def callback_uid(self, index=None) -> None:
+    def callback_uid(self, _index: hv.Event | None = None) -> None:
         self.update_temp()
         self.update_AC()
         self.update_usub_lab()
 
-    def callback_f(self, f, y) -> None:
+    def callback_f(self, f: np.ndarray, _y: Any) -> None:
         if len(self._AC) > 0 and len(self._mov) > 0:
             fidx = np.abs(self._f - f).argmin()
             f = self._f[fidx]
@@ -555,19 +556,19 @@ class CNMFViewer:
             self.pipAC.send([])
             self.pipmov.send([])
 
-    def callback_usub(self, usub=None) -> None:
+    def callback_usub(self, usub: hv.Event | None = None) -> None:
         self.update_temp_comp_sub(usub)
         self.update_AC(usub)
         self.update_usub_lab(usub)
 
-    def _meta_wgt(self):
+    def _meta_wgt(self) -> pn.WidgetBox:
         wgt_meta = {
             d: pnwgt.Select(name=d, options=v, height=45, width=120)
             for d, v in self.meta_dicts.items()
         }
 
-        def make_update_func(meta_name):
-            def _update(x) -> None:
+        def make_update_func(meta_name: str) -> Callable[[str], None]:
+            def _update(x: str) -> None:
                 self.metas[meta_name] = x.new
                 self.update_subs()
 
@@ -603,7 +604,7 @@ class CNMFViewer:
             ),
         )
 
-    def _temp_comp_sub(self, usub=None):
+    def _temp_comp_sub(self, usub: np.ndarray | None = None) -> pn.viewable.Viewable:
         if usub is None:
             usub = self.strm_usub.usub
         if self._normalize:
@@ -620,7 +621,7 @@ class CNMFViewer:
                 S.sel(unit_id=usub).compute().rename("Intensity (A. U.)").dropna("frame", how="all")
             ).to(hv.Curve, "frame")
         cur_vl = hv.DynamicMap(
-            lambda f, y: hv.VLine(f) if f else hv.VLine(0), streams=[self.strm_f]
+            lambda f, _y: hv.VLine(f) if f else hv.VLine(0), streams=[self.strm_f]
         ).options(color="red")
         cur_cv = hv.Curve([], kdims=["frame"], vdims=["Internsity (A.U.)"])
         self.strm_f.source = cur_cv
@@ -643,15 +644,15 @@ class CNMFViewer:
         temp_comp[temp_comp.keys()[0]] = temp_comp[temp_comp.keys()[0]].options(height=h_cv + 75)
         return pn.panel(temp_comp)
 
-    def update_temp_comp_sub(self, usub=None) -> None:
+    def update_temp_comp_sub(self, usub: np.ndarray | None = None) -> None:
         self.temp_comp_sub.object = self._temp_comp_sub(usub).object
         self.wgt_man.objects = self._man_wgt().objects
 
-    def update_norm(self, norm) -> None:
+    def update_norm(self, norm: hv.Event) -> None:
         self._normalize = norm.new
         self.update_temp_comp_sub()
 
-    def _temp_comp_wgt(self):
+    def _temp_comp_wgt(self) -> pn.Column:
         cur_idxs = self.strm_uid.index or self._u
         ntabs = np.ceil(len(cur_idxs) / 5)
         sub_idxs = np.array_split(cur_idxs, ntabs)
@@ -659,7 +660,7 @@ class CNMFViewer:
         def_idxs = list(idxs_dict.values())[0]
         wgt_grp = pnwgt.Select(name="", options=idxs_dict, width=120, height=30, value=def_idxs)
 
-        def update_usub(usub) -> None:
+        def update_usub(usub: hv.Event) -> None:
             self.usub_sel = []
             self.strm_usub.event(usub=usub.new)
 
@@ -670,7 +671,7 @@ class CNMFViewer:
             name="Previous Group", width=120, height=30, button_type="primary"
         )
 
-        def prv(clicks) -> None:
+        def prv(_clicks: hv.Event) -> None:
             cur_val = wgt_grp.value
             ig = list(idxs_dict.values()).index(cur_val)
             try:
@@ -682,7 +683,7 @@ class CNMFViewer:
         wgt_grp_prv.param.watch(prv, "clicks")
         wgt_grp_nxt = pnwgt.Button(name="Next Group", width=120, height=30, button_type="primary")
 
-        def nxt(clicks) -> None:
+        def nxt(_clicks: hv.Event) -> None:
             cur_val = wgt_grp.value
             ig = list(idxs_dict.values()).index(cur_val)
             try:
@@ -696,7 +697,7 @@ class CNMFViewer:
         wgt_norm.param.watch(self.update_norm, "value")
         wgt_showC = pnwgt.Checkbox(name="ShowC", value=self._showC, width=120, height=10)
 
-        def callback_showC(val) -> None:
+        def callback_showC(val: hv.Event) -> None:
             self._showC = val.new
             self.update_temp_comp_sub()
 
@@ -710,7 +711,7 @@ class CNMFViewer:
         wgt_showS.param.watch(callback_showS, "value")
         wgt_play = pnwgt.Player(length=len(self._f), interval=10, value=0, width=280)
 
-        def play(f) -> None:
+        def play(f: hv.Event) -> None:
             if f.old != f.new:
                 self.strm_f.event(x=self._f[f.new])
 
@@ -721,7 +722,7 @@ class CNMFViewer:
         )
         return pn.layout.Column(wgt_groups, wgt_play)
 
-    def _man_wgt(self):
+    def _man_wgt(self) -> pn.Column:
         usub = self.strm_usub.usub
         usub.sort()
         usub.reverse()
@@ -737,7 +738,7 @@ class CNMFViewer:
             for uid, ulb in zip(usub, ulabs)
         }
 
-        def callback_ulab(value, uid) -> None:
+        def callback_ulab(value: hv.Event, uid: str) -> None:
             self.unit_labels.loc[uid] = value.new
 
         for uid, sel in wgt_sel.items():
@@ -748,7 +749,7 @@ class CNMFViewer:
             for uid in usub
         }
 
-        def callback_chk(val, uid) -> None:
+        def callback_chk(val: hv.Event, uid: str) -> None:
             if val.old != val.new:
                 if val.new:
                     self.usub_sel.append(uid)
@@ -760,14 +761,14 @@ class CNMFViewer:
             chk.param.watch(cb, "value")
         wgt_discard = pnwgt.Button(name="Discard Selected", button_type="primary", width=180)
 
-        def callback_discard(clicks) -> None:
+        def callback_discard(_clicks: hv.Event | None) -> None:
             for uid in self.usub_sel:
                 wgt_sel[uid].value = -1
 
         wgt_discard.param.watch(callback_discard, "clicks")
         wgt_merge = pnwgt.Button(name="Merge Selected", button_type="primary", width=180)
 
-        def callback_merge(clicks) -> None:
+        def callback_merge(_clicks: hv.Event | None) -> None:
             for uid in self.usub_sel:
                 wgt_sel[uid].value = self.usub_sel[0]
 
@@ -786,7 +787,7 @@ class CNMFViewer:
     def update_temp(self) -> None:
         self.update_temp_comp_wgt()
 
-    def update_AC(self, usub=None) -> None:
+    def update_AC(self, usub: np.ndarray | None = None) -> None:
         if usub is None:
             usub = self.strm_usub.usub
         if usub:
@@ -825,7 +826,7 @@ class CNMFViewer:
             self._mov = xr.DataArray([])
             self.strm_f.event(x=0)
 
-    def update_usub_lab(self, usub=None) -> None:
+    def update_usub_lab(self, usub: np.ndarray | None = None) -> None:
         if usub is None:
             usub = self.strm_usub.usub
         if usub:
@@ -833,17 +834,17 @@ class CNMFViewer:
         else:
             self.pipusub.send([])
 
-    def _spatial_all_wgt(self):
+    def _spatial_all_wgt(self) -> pn.WidgetBox:
         wgt_useAC = pnwgt.Checkbox(name="UseAC", value=self._useAC, width=120, height=15)
 
-        def callback_useAC(val) -> None:
+        def callback_useAC(val: hv.Event) -> None:
             self._useAC = val.new
             self.update_AC()
 
         wgt_useAC.param.watch(callback_useAC, "value")
         return pn.layout.WidgetBox(wgt_useAC, width=150)
 
-    def _spatial_all(self):
+    def _spatial_all(self) -> pn.panel:
         metas = self.metas
         Asum = hv.Image(self.Asum.sel(**metas), ["width", "height"]).options(
             frame_height=len(self._h),
@@ -923,7 +924,7 @@ class AlignViewer:
         cents: pd.DataFrame,
         mappings: pd.DataFrame,
         shiftds: xr.Dataset,
-        brt_offset=0,
+        brt_offset: int = 0,
     ) -> None:
         """
         Parameters
@@ -1011,7 +1012,7 @@ class AlignViewer:
             output_dtypes=[float],
         )
 
-    def update_plot(self):
+    def update_plot(self) -> pn.panel:
         Adict = {
             c: self.curA.sel(session=self.sess_rgb[c]).dropna("unit_id", how="all").compute()
             for c in self.sess_rgb
@@ -1075,26 +1076,26 @@ class AlignViewer:
             self.curA = self.dataA.persist()
             self.curmap = self.mappings
 
-    def cb_update_erd(self, val) -> None:
+    def cb_update_erd(self, val: hv.Event) -> None:
         self.erode = val.new
         self.processA()
         self.update_meta()
         self.plot.object = self.update_plot().object
 
-    def cb_update_meta(self, dim, val) -> None:
+    def cb_update_meta(self, dim: str, val: hv.Event) -> None:
         self.meta[dim] = val.new
         self.update_meta()
         self.plot.object = self.update_plot().object
 
-    def cb_update_rgb(self, ch, ss) -> None:
+    def cb_update_rgb(self, ch: str, ss: hv.Event) -> None:
         self.sess_rgb[ch] = ss.new
         self.plot.object = self.update_plot().object
 
-    def cb_showma(self, val) -> None:
+    def cb_showma(self, val: hv.Event) -> None:
         self.show_ma = val.new
         self.plot.object = self.update_plot().object
 
-    def cb_showuma(self, val) -> None:
+    def cb_showuma(self, val: hv.Event) -> None:
         self.show_uma = val.new
         self.plot.object = self.update_plot().object
 
@@ -1110,7 +1111,7 @@ class AlignViewer:
         return pn.layout.Row(self.plot, pn.layout.Column(self.wgt_meta, self.wgt_rgb, self.wgt_opt))
 
 
-def write_vid_blk(arr, vpath, options):
+def write_vid_blk(arr: np.ndarray, vpath: str, options: dict) -> str:
     ensure_ffmpeg()
     uid = uuid4()
     vname = f"{uid}.mp4"
@@ -1125,11 +1126,11 @@ def write_vid_blk(arr, vpath, options):
 
 
 def write_video(
-    arr: xr.DataArray,
+    arr: xr.DataArray | xr.DataTree,
     vname: str | None = None,
     vpath: str | None = ".",
-    norm=True,
-    options=None,
+    norm: bool = True,
+    options: bool = None,
 ) -> str:
     """
     Write a video from a movie array using `python-ffmpeg`.
@@ -1192,7 +1193,7 @@ def write_video(
     return fname
 
 
-def concat_video_recursive(vlist, vname=None):
+def concat_video_recursive(vlist: list[str], vname: str | None = None) -> str:
     ensure_ffmpeg()
     if not len(vlist) > 1:
         return vlist[0]
@@ -1217,10 +1218,10 @@ def generate_videos(
     C: xr.DataArray | None = None,
     AC: xr.DataArray | None = None,
     nfm_norm: int = None,
-    gain=1.5,
-    vpath=".",
-    vname="minian.mp4",
-    options=None,
+    gain: float = 1.5,
+    vpath: str = ".",
+    vname: str = "minian.mp4",
+    options: dict | None = None,
 ) -> str:
     """
     Generate a video visualizaing the result of minian pipeline.
@@ -1308,7 +1309,7 @@ def generate_videos(
 
 
 def datashade_ndcurve(
-    ovly: hv.NdOverlay, kdim: str | list[str] | None = None, spread=False
+    ovly: hv.NdOverlay, kdim: str | list[str] | None = None, spread: bool = False
 ) -> hv.Overlay:
     """
     Apply datashading to an overlay of curves with legends.
@@ -1449,7 +1450,7 @@ def convolve_G(s: np.ndarray, g: np.ndarray) -> np.ndarray:
     return c
 
 
-def construct_pulse_response(g: np.ndarray, length=500) -> tuple[np.ndarray, np.ndarray]:
+def construct_pulse_response(g: np.ndarray, length: int = 500) -> tuple[np.ndarray, np.ndarray]:
     """
     Construct a model pulse response corresponding to certain AR coefficients.
 
@@ -1479,7 +1480,7 @@ def construct_pulse_response(g: np.ndarray, length=500) -> tuple[np.ndarray, np.
     return s, c
 
 
-def centroid(A: xr.DataArray, verbose=False) -> pd.DataFrame:
+def centroid(A: xr.DataArray, verbose: bool = False) -> pd.DataFrame:
     """
     Compute centroids of spatial footprint of each cell.
 
@@ -1497,7 +1498,7 @@ def centroid(A: xr.DataArray, verbose=False) -> pd.DataFrame:
         "height", "width" and any other additional metadata dimension.
     """
 
-    def rel_cent(im):
+    def rel_cent(im: xr.DataArray) -> np.ndarray:
         im_nan = np.isnan(im)
         if im_nan.all():
             return np.array([np.nan, np.nan])
@@ -1540,7 +1541,7 @@ def centroid(A: xr.DataArray, verbose=False) -> pd.DataFrame:
 
 
 def visualize_preprocess(
-    fm: xr.DataArray, fn: Callable | None = None, include_org=True, **kwargs
+    fm: xr.DataArray, fn: Callable | None = None, include_org: bool = True, **kwargs: Any
 ) -> hv.HoloMap:
     """
     Generalized visualization of preprocessing functions.
@@ -1583,7 +1584,7 @@ def visualize_preprocess(
         "title": "Contours {label} {group} {dimensions}",
     }
 
-    def _vis(f):
+    def _vis(f: xr.DataArray) -> tuple[hv.Image, hv.operation.contours]:
         im = hv.Image(f, kdims=["width", "height"]).options(**opts_im)
         cnt = hv.operation.contours(im).options(**opts_cnt)
         return im, cnt
@@ -1701,7 +1702,7 @@ def visualize_gmm_fit(
     minian.initialization.gmm_refine
     """
 
-    def gaussian(x, mu, sig):
+    def gaussian(x: np.ndarray, mu: float, sig: float) -> np.ndarray:
         return np.exp(-np.power(x - mu, 2.0) / (2 * np.power(sig, 2.0)))
 
     hist = np.histogram(values, bins=bins, density=True)
@@ -1721,8 +1722,8 @@ def visualize_spatial_update(
     A_dict: dict,
     C_dict: dict,
     kdims: str | list[str] | None = None,
-    norm=True,
-    datashading=True,
+    norm: bool = True,
+    datashading: bool = True,
 ) -> hv.HoloMap:
     """
     Visualization of spatial update.
@@ -1818,8 +1819,8 @@ def visualize_temporal_update(
     sig_dict: dict,
     A_dict: dict,
     kdims: str | list[str] | None = None,
-    norm=True,
-    datashading=True,
+    norm: bool = True,
+    datashading: bool = True,
 ) -> hv.HoloMap:
     """
     Visualization of temporal update.

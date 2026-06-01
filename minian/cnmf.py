@@ -884,7 +884,8 @@ def update_temporal(
                 f"{cur_YrA.shape[0]} cells will be updated togeter, "
                 f"which takes roughly {mem_demand} MB of memory. "
                 "Consider merging the units "
-                "or changing jac_thres", stacklevel=2
+                "or changing jac_thres",
+                stacklevel=2,
             )
         if not warm_start:
             cur_C = None
@@ -1358,7 +1359,8 @@ def update_temporal_cvxpy(
             except (cvx.SolverError, ValueError):
                 warnings.warn(
                     f"problem status is {prob.status}, returning zero",
-                    RuntimeWarning, stacklevel=2,
+                    RuntimeWarning,
+                    stacklevel=2,
                 )
                 return [np.zeros(c.shape, dtype=float)] * 4
     if prob.status != "optimal":
