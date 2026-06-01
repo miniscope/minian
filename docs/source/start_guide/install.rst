@@ -1,6 +1,10 @@
 Installation
 ============
 
+You need **FFmpeg** on ``PATH`` for video I/O (``ffmpeg`` and ``ffprobe``). Install
+it with your OS package manager or follow the `FFmpeg download page
+<https://ffmpeg.org/download.html>`_.
+
 Install using conda
 -------------------
 
