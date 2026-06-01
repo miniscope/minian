@@ -1,7 +1,3 @@
-"""Execute cross-registration.ipynb and assert golden outputs (slow; not default pytest)."""
-
-from __future__ import annotations
-
 import os
 import subprocess
 import sys
@@ -9,10 +5,9 @@ import sys
 import pandas as pd
 import pytest
 
-DEMO_DATA_PATH = "demo_data"
 
-
-def main() -> None:
+@pytest.mark.notebook
+def test_cross_reg_notebook():
     os.makedirs("artifact", exist_ok=True)
     subprocess.run(
         [
@@ -29,11 +24,11 @@ def main() -> None:
         ],
         check=True,
     )
-    assert os.path.exists(f"{DEMO_DATA_PATH}/shiftds.nc")
-    assert os.path.exists(f"{DEMO_DATA_PATH}/cents.pkl")
-    assert os.path.exists(f"{DEMO_DATA_PATH}/mappings.pkl")
-    cents = pd.read_pickle(f"{DEMO_DATA_PATH}/cents.pkl")
-    mappings = pd.read_pickle(f"{DEMO_DATA_PATH}/mappings.pkl")
+    assert os.path.exists("./demo_data/shiftds.nc")
+    assert os.path.exists("./demo_data/cents.pkl")
+    assert os.path.exists("./demo_data/mappings.pkl")
+    cents = pd.read_pickle("./demo_data/cents.pkl")
+    mappings = pd.read_pickle("./demo_data/mappings.pkl")
     assert len(cents) == 508
     assert cents["height"].sum() == pytest.approx(99091, rel=1e-3)
     assert cents["width"].sum() == pytest.approx(213627, rel=1e-3)
@@ -47,7 +42,3 @@ def main() -> None:
     assert group_counts[("session2",)] == pytest.approx(182, abs=5)
     assert group_counts[("session1",)] == pytest.approx(172, abs=5)
     assert group_counts[("session1", "session2")] == pytest.approx(77, abs=5)
-
-
-if __name__ == "__main__":
-    main()

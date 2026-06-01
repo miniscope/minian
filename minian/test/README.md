@@ -9,19 +9,17 @@ pdm run test
 # or: pytest
 ```
 
-That runs only the fast tests under `minian/test/` (preprocessing utilities, etc.).
+That runs targeted tests under `minian/test/` and skips slow notebook tests by default.
 
-Slow end-to-end notebook checks live in `scripts/` and are **not** collected by pytest:
+To include notebook execution tests:
 
 ```bash
 pdm run test-notebooks
-# or individually:
-python scripts/run_pipeline_notebook_check.py
-python scripts/run_cross_reg_notebook_check.py
+# or: pytest --with-notebooks
 ```
 
-CI runs notebooks in the separate **notebook tests** workflow.
+CI runs notebooks in a separate job via `pytest --with-notebooks`.
 
 # Update fixtures
 
-Run the pipeline notebook on the demo data, then update assertions in `scripts/run_pipeline_notebook_check.py` (and cross-reg script) as needed.
+Run the pipeline notebook on the demo data, then update assertions in `minian/test/test_pipeline.py` (and cross-reg test) as needed.

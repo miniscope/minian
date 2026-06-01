@@ -85,10 +85,7 @@ lock.composite = [
     'pdm lock --with :all --python=">=3.14" --append'
 ]
 test = "pytest"
-test-notebooks = { composite = [
-    "python scripts/run_pipeline_notebook_check.py",
-    "python scripts/run_cross_reg_notebook_check.py",
-] }
+test-notebooks = "pytest --with-notebooks"
 
 [tool.commitizen]
 name = "cz_conventional_commits"
@@ -115,6 +112,9 @@ addopts = [
 ]
 testpaths = [
   "minian/test"
+]
+markers = [
+    "notebook: slow notebook execution tests (run with --with-notebooks)",
 ]
 
 

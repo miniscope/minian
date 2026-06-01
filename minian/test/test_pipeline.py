@@ -1,17 +1,14 @@
-"""Execute pipeline.ipynb and assert golden outputs (slow; not part of default pytest)."""
-
-from __future__ import annotations
-
 import os
 import subprocess
 import sys
 
 import pytest
 
-from minian.utilities import open_minian
+from ..utilities import open_minian
 
 
-def main() -> None:
+@pytest.mark.notebook
+def test_pipeline_notebook():
     os.makedirs("artifact", exist_ok=True)
     subprocess.run(
         [
@@ -41,7 +38,3 @@ def main() -> None:
     assert int(minian_ds["A"].sum().compute()) == pytest.approx(71468, rel=5e-2)
     assert os.path.exists("./demo_movies/minian_mc.mp4")
     assert os.path.exists("./demo_movies/minian.mp4")
-
-
-if __name__ == "__main__":
-    main()
