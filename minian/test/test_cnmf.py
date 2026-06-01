@@ -127,17 +127,17 @@ class TestSpatialPartitionTargetChunkSweep:
         assert len(counts) == expected_n_parts
         assert (counts == expected_part_size).all()
 
-    def test_max_part_size_never_exceeds_target_chunk(self):
+    @pytest.mark.parametrize("n", (1, 2, 3, 7, 49, 199, 200, 201))
+    @pytest.mark.parametrize("chunk", (1, 5, 17, 50, 200, 500))
+    def test_max_part_size_never_exceeds_target_chunk(self, n: int, chunk: int):
         # Uniform-grid points, sweeping both the point count -- including odd
         # and prime counts not divisible by 2, where the median split can't
         # halve evenly -- and target_chunk. No partition may exceed the
         # requested size, for any combination.
         rng = np.random.RandomState(0)
-        for n in (1, 2, 3, 7, 49, 199, 200, 201):
-            positions = rng.uniform(0, 100, size=(n, 2))
-            for tc in (1, 5, 17, 50, 200, 500):
-                membership = spatial_partition(positions, target_chunk=tc)
-                assert np.bincount(membership).max() <= tc, f"n={n} target_chunk={tc}"
+        positions = rng.uniform(0, 100, size=(n, 2))
+        membership = spatial_partition(positions, target_chunk=chunk)
+        assert np.bincount(membership).max() <= tc
 
     def test_partition_count_is_monotone_in_target_chunk(self):
         # Smaller target_chunk -> at least as many partitions. Holds
