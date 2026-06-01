@@ -9,6 +9,15 @@ See ``proposals/simulation-plan.md`` and ``proposals/simulation-spec.md``.
 """
 
 from minian.simulation.cache import cache_dir, cache_path, simulate_cached
+from minian.simulation.metrics import (
+    Match,
+    SpikeScore,
+    field_pearson,
+    hungarian_match,
+    shift_rmse,
+    spike_precision_recall,
+    trace_pearson,
+)
 from minian.simulation.recording import GroundTruth, Recording, finalize
 from minian.simulation.scene import Cell, GroundTruthBuilder, Scene
 from minian.simulation.simulate import simulate
@@ -48,6 +57,7 @@ __all__ = [
     "GroundTruthBuilder",
     "ImageSensor",
     "Leakage",
+    "Match",
     "Neuropil",
     "Optics",
     "Output",
@@ -59,13 +69,19 @@ __all__ = [
     "Sensor",
     "Spec",
     "SpecWarning",
+    "SpikeScore",
     "StepSpec",
     "Tissue",
     "Vasculature",
     "Vignette",
     "cache_dir",
     "cache_path",
+    "field_pearson",
     "finalize",
+    "hungarian_match",
+    "shift_rmse",
     "simulate",
     "simulate_cached",
+    "spike_precision_recall",
+    "trace_pearson",
 ]
