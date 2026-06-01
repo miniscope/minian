@@ -44,6 +44,7 @@ from minian.simulation.spec import (
     Vasculature,
     Vignette,
 )
+from minian.simulation.sweep import SweptSpec, sweep
 
 __all__ = [
     "Acquisition",
@@ -71,6 +72,7 @@ __all__ = [
     "SpecWarning",
     "SpikeScore",
     "StepSpec",
+    "SweptSpec",
     "Tissue",
     "Vasculature",
     "Vignette",
@@ -83,5 +85,6 @@ __all__ = [
     "simulate",
     "simulate_cached",
     "spike_precision_recall",
+    "sweep",
     "trace_pearson",
 ]
