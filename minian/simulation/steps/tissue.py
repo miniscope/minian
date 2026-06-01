@@ -163,8 +163,10 @@ class NeuropilStep(Step):
 
     def __call__(self, scene: Scene) -> None:
         spec, acq, rng = self.spec, self.acq, self.rng
-        h, w = acq.image_sensor.n_px_height, acq.image_sensor.n_px_width
-        n_frames = acq.n_frames
+        # Grid from the scene canvas (which a motion margin may enlarge beyond
+        # the sensor) so the diffuse background covers the same tissue the cells
+        # do and moves with it under motion.
+        n_frames, h, w = scene.movie.values.shape
         sigma_px = acq.um_to_px(spec.spatial_sigma_um)
         tau_frames = acq.s_to_frame(spec.temporal_tau_s)
 

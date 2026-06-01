@@ -55,7 +55,10 @@ class VignetteStep(Step):
 
     def __call__(self, scene: Scene) -> None:
         spec, acq = self.spec, self.acq
-        h, w = acq.image_sensor.n_px_height, acq.image_sensor.n_px_width
+        # Grid from the scene movie. As a sensor-frame step this runs after the
+        # motion crop, so the movie is already the sensor FOV — the static field
+        # is fixed to the detector and must not extend into the motion margin.
+        h, w = scene.movie.values.shape[1:]
         cy = (h - 1) / 2.0 + acq.um_to_px(spec.center_offset_um[0])
         cx = (w - 1) / 2.0 + acq.um_to_px(spec.center_offset_um[1])
         r = radius_grid((h, w), (cy, cx))
@@ -88,7 +91,8 @@ class LeakageStep(Step):
 
     def __call__(self, scene: Scene) -> None:
         spec, acq = self.spec, self.acq
-        h, w = acq.image_sensor.n_px_height, acq.image_sensor.n_px_width
+        # Grid from the scene movie (the sensor FOV post-crop); see VignetteStep.
+        h, w = scene.movie.values.shape[1:]
         if spec.profile == "uniform":
             field = np.full((h, w), spec.level)
         else:  # gaussian central glow

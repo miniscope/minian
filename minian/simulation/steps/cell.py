@@ -90,9 +90,11 @@ def soma_footprint(
 class PlaceSomataStep(Step):
     """Position somata in a 3-D µm volume and stamp a planted footprint each.
 
-    The cell count is derived from the areal density and the field of view
-    (``round(density_per_mm2 · fov_area_mm2)``). Centers are drawn uniformly in
-    ``(y, x)`` across the FOV and in ``z`` across ``depth_range_um``; if
+    The cell count is derived from the areal density and the **canvas** area
+    (``round(density_per_mm2 · canvas_area_mm2)``) — the scene movie's grid,
+    which a motion margin may enlarge beyond the sensor FOV. Centers are drawn
+    uniformly in ``(y, x)`` across the canvas and in ``z`` across
+    ``depth_range_um``; if
     ``min_distance_um > 0`` they are rejection-sampled (Poisson-disk style) to a
     3-D center-to-center minimum. Each cell gets a peak-normalized planted
     footprint (:func:`soma_footprint`) and an SNR drawn from the configured
@@ -106,8 +108,15 @@ class PlaceSomataStep(Step):
     def __call__(self, scene: Scene) -> None:
         spec = self.spec  # n_neurite_stubs > 0 is rejected at spec construction (v1)
         acq, rng = self.acq, self.rng
-        shape = (acq.image_sensor.n_px_height, acq.image_sensor.n_px_width)
-        fov_h_um, fov_w_um = acq.fov_um
+        # Fill whatever canvas the scene movie defines, not the bare sensor: a
+        # motion margin (Step 5d) enlarges the canvas beyond the sensor FOV so
+        # that real, simulated tissue moves into view at the edges. At margin 0
+        # the canvas equals the sensor FOV. Cell positions are in canvas/tissue
+        # coordinates (origin = canvas top-left); the FOV crop offset is applied
+        # at finalize (Step 6).
+        shape = scene.movie.values.shape[1:]  # (height, width) of the canvas
+        fov_h_um = shape[0] * acq.pixel_size_um
+        fov_w_um = shape[1] * acq.pixel_size_um
         area_mm2 = (fov_h_um / 1000.0) * (fov_w_um / 1000.0)
         count = round(spec.density_per_mm2 * area_mm2)
         radius_px = acq.um_to_px(spec.soma_radius_um)

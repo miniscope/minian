@@ -11,6 +11,7 @@ end-to-end chain. ``brain_motion`` (5d) is out of scope here.
 
 import numpy as np
 import pytest
+import xarray as xr
 from pydantic import ValidationError
 
 from minian.simulation import (
@@ -643,6 +644,36 @@ def test_vasculature_is_an_honest_noop():
     Vasculature().build(acq, np.random.default_rng(0))(scene)
     assert (scene.movie.values == 1.0).all()  # scene untouched
     assert scene.truth.neuropil_spatial is None  # no ground-truth contribution
+
+
+# --- scene-grid plumbing (5d-1 refactor) -----------------------------------
+
+
+def _oversized_scene(acq, canvas):
+    """A scene whose movie canvas is larger than the sensor — the shape a motion
+    margin (5d-2) will produce. Built by hand here, before Scene grows margin
+    support, to prove the steps read their grid from the scene, not the sensor."""
+    movie = xr.DataArray(
+        np.zeros((acq.n_frames, canvas, canvas)),
+        dims=("frame", "height", "width"),
+    )
+    return Scene(acq=acq, rng=np.random.default_rng(0), movie=movie)
+
+
+def test_steps_fill_the_scene_canvas_not_the_sensor_dims():
+    # Sensor is 20×20 but the canvas is 30×30; place_somata and neuropil must
+    # honor the canvas (so off-FOV tissue exists to move in under motion).
+    acq = _acq(n_px=20, duration_s=1.0)
+    scene = _oversized_scene(acq, canvas=30)
+
+    PlaceSomata(
+        density_per_mm2=2000.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)
+    ).build(acq, np.random.default_rng(0))(scene)
+    assert scene.cells, "expected cells placed across the larger canvas"
+    assert all(c.footprint_planted.shape == (30, 30) for c in scene.cells)
+
+    NeuropilStep(Neuropil(), acq, np.random.default_rng(0))(scene)
+    assert scene.truth.neuropil_spatial.shape[1:] == (30, 30)
 
 
 # --- the field chain -------------------------------------------------------
