@@ -305,21 +305,22 @@ def resolve_focal_plane(cells: list[Cell], optics: Optics) -> float:
 
 
 def degrade_footprint(
-    planted: np.ndarray, sigma_px: float, attenuation: float
+    planted: np.ndarray, sigma_px: float, gain: float
 ) -> np.ndarray:
-    """Apply the optical PSF blur and scatter attenuation to a planted footprint.
+    """Apply the optical PSF blur and the multiplicative light-loss to a footprint.
 
-    ``observed = attenuation · (planted ⊛ Gaussian(sigma_px))``. The Gaussian
+    ``observed = gain · (planted ⊛ Gaussian(sigma_px))``. The Gaussian
     convolution is the combined diffraction + defocus + scatter point-spread; it
     is sum-normalized, so it **conserves integrated intensity** — that is what
     makes *defocus* intensity-conserving (it spreads light: the peak drops but
-    the integral is unchanged). Only ``attenuation`` (Beer–Lambert scatter loss)
-    actually removes light, so the observed footprint's integral scales with
-    attenuation alone and is independent of the focal plane. ``mode="constant"``
+    the integral is unchanged). ``gain`` is the flat light-loss that actually
+    removes signal: scatter ``attenuation(z)`` (depth) × ``collection_efficiency``
+    (``∝ NA²``, the objective's light-gathering power). Both are focal-plane
+    independent, so the observed footprint's integral is too. ``mode="constant"``
     means light blurred past the FOV edge is lost — physically honest for a cell
     near the boundary.
     """
-    return attenuation * gaussian_filter(planted, sigma=sigma_px, mode="constant")
+    return gain * gaussian_filter(planted, sigma=sigma_px, mode="constant")
 
 
 class CellOpticsStep(Step):
@@ -329,14 +330,16 @@ class CellOpticsStep(Step):
     constants (via :meth:`Acquisition.cell_optics`) — there are no tunable
     fields. For every cell it:
 
-    * writes ``footprint_observed = attenuation(z) · (planted ⊛ Gaussian(σ_total))``
-      — the blurred, attenuated footprint CNMF could actually recover;
+    * writes ``footprint_observed = gain · (planted ⊛ Gaussian(σ_total))`` where
+      ``gain = attenuation(z) · collection_efficiency`` — the blurred, dimmed
+      footprint CNMF could actually recover;
     * sets ``in_focus`` geometrically (``|z − focal| ≤ depth_of_field_um``);
     * stores ``optical_brightness`` — the per-cell *peak* scalar from
-      ``cell_optics`` (defocus drops the peak as ``σ₀²/σ_total²``, scatter
-      attenuates). Footprint *integral* scales with ``attenuation`` only, but a
-      cell's *detectability* turns on its peak, which defocus also lowers — hence
-      two distinct quantities. ``detectable`` itself is left for ``finalize()``
+      ``cell_optics`` (defocus drops the peak as ``σ₀²/σ_total²``; scatter
+      ``attenuation(z)`` and ``collection_efficiency ∝ NA²`` dim it). Footprint
+      *integral* scales with that same ``gain``, but a cell's *detectability*
+      turns on its peak, which defocus also lowers — hence two distinct
+      quantities. ``detectable`` itself is left for ``finalize()``
       (Step 6), where this peak combines with the illumination field and the
       sensor noise floor.
 
@@ -357,7 +360,9 @@ class CellOpticsStep(Step):
             z = cell.center_um[0]
             sigma_px, brightness = acq.cell_optics(z, focal)
             cell.footprint_observed = degrade_footprint(
-                cell.footprint_planted, sigma_px, acq.tissue.attenuation(z)
+                cell.footprint_planted,
+                sigma_px,
+                acq.tissue.attenuation(z) * acq.optics.collection_efficiency,
             )
             cell.in_focus = abs(z - focal) <= dof
             cell.optical_brightness = brightness

@@ -95,7 +95,9 @@ def _recording():
             CellActivity(active_rate_hz=4.0, tau_decay_s=0.5),
             CellOptics(),
             Render(),
-            Sensor(photons_per_unit=300.0),
+            # ~300 / NA² (NA 0.45): compensates the NA²-collection dimming so the
+            # recorded movie (and thus CNMF recovery) is unchanged. See cell.py.
+            Sensor(photons_per_unit=1500.0),
         ],
     )
     return simulate(spec)

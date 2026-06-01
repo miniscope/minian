@@ -66,7 +66,11 @@ def test_detectability_falls_with_depth():
             CellActivity(active_rate_hz=8.0, tau_decay_s=0.4),  # ~all cells fire
             CellOptics(),
             Render(),
-            Sensor(photons_per_unit=200.0),
+            # photons ~ 200 / NA² (NA 0.45): the NA²-collection factor moved into
+            # cell_optics dims the signal, and photons_per_unit (the exposure scale
+            # that absorbs collection's absolute constant) compensates so the
+            # detectability regime is unchanged.
+            Sensor(photons_per_unit=1000.0),
         ],
     )
     bands = [(0.0, 10.0), (40.0, 50.0), (80.0, 90.0), (120.0, 130.0)]

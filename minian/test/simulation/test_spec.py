@@ -293,11 +293,24 @@ def test_scatter_sigma_monotonic_and_zero_at_surface():
 
 
 def test_cell_optics_in_focus_surface_cell_is_undegraded():
-    # z=0, focal=0: no scatter, no defocus → brightness 1, σ = diffraction only.
+    # z=0, focal=0: no scatter, no defocus → the only light-loss is the NA²
+    # collection efficiency; σ = diffraction only.
     acq = _tiny_acquisition()
     sigma_px, brightness = acq.cell_optics(0.0, 0.0)
-    assert brightness == pytest.approx(1.0)
+    assert brightness == pytest.approx(acq.optics.collection_efficiency)
     assert sigma_px == pytest.approx(acq.optics.diffraction_sigma_um / acq.pixel_size_um)
+
+
+def test_cell_optics_brightness_scales_with_na_squared():
+    # Light collection ∝ NA²: at the surface (no scatter/defocus) the per-cell
+    # brightness is exactly the collection efficiency, so doubling NA quadruples it.
+    lo = _tiny_acquisition(optics=Optics(magnification=8.0, na=0.2))
+    hi = _tiny_acquisition(optics=Optics(magnification=8.0, na=0.4))
+    _, b_lo = lo.cell_optics(0.0, 0.0)
+    _, b_hi = hi.cell_optics(0.0, 0.0)
+    assert b_lo == pytest.approx(0.2**2)
+    assert b_hi == pytest.approx(0.4**2)
+    assert b_hi / b_lo == pytest.approx(4.0)
 
 
 def test_cell_optics_defocus_conserves_integrated_intensity():
@@ -312,9 +325,13 @@ def test_cell_optics_defocus_conserves_integrated_intensity():
         sigma_px, brightness = acq.cell_optics(z, focal)
         integrals.append(sigma_px**2 * brightness)
     assert integrals == pytest.approx([integrals[0]] * len(integrals))
-    # ...and that conserved integral equals the pure (defocus-free) value.
+    # ...and that conserved integral equals the pure (defocus-free) value: the
+    # defocus-free peak (σ_0) times the two flat light-losses, scatter attenuation
+    # and the NA² collection efficiency.
     sigma_0_px = math.hypot(acq.optics.diffraction_sigma_um, acq.tissue.scatter_sigma_um(z)) / acq.pixel_size_um
-    assert integrals[0] == pytest.approx(sigma_0_px**2 * acq.tissue.attenuation(z))
+    assert integrals[0] == pytest.approx(
+        sigma_0_px**2 * acq.tissue.attenuation(z) * acq.optics.collection_efficiency
+    )
 
 
 def test_cell_optics_depth_blurs_and_dims():

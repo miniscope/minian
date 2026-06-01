@@ -337,14 +337,14 @@ def test_degrade_footprint_blur_conserves_sum_and_drops_peak():
         irregularity=0.0,
         rng=np.random.default_rng(0),
     )
-    out = degrade_footprint(fp, sigma_px=2.0, attenuation=1.0)
+    out = degrade_footprint(fp, sigma_px=2.0, gain=1.0)
     assert out.sum() == pytest.approx(
         fp.sum(), rel=1e-3
     )  # convolution conserves integral
     assert out.max() < fp.max()  # ...but spreads light, so the peak drops
 
 
-def test_degrade_footprint_attenuation_scales_integral():
+def test_degrade_footprint_gain_scales_integral():
     fp = soma_footprint(
         (64, 64),
         (32.0, 32.0),
@@ -352,8 +352,8 @@ def test_degrade_footprint_attenuation_scales_integral():
         irregularity=0.0,
         rng=np.random.default_rng(0),
     )
-    full = degrade_footprint(fp, sigma_px=2.0, attenuation=1.0)
-    half = degrade_footprint(fp, sigma_px=2.0, attenuation=0.5)
+    full = degrade_footprint(fp, sigma_px=2.0, gain=1.0)
+    half = degrade_footprint(fp, sigma_px=2.0, gain=0.5)
     assert half.sum() == pytest.approx(0.5 * full.sum())
 
 
@@ -367,16 +367,20 @@ def test_resolve_focal_plane_auto_is_median_and_numeric_passes_through():
 
 
 def test_optics_in_focus_surface_cell_is_barely_degraded():
-    # z=0, focal auto -> 0: no scatter, no defocus, atten=1 -> only diffraction.
+    # z=0, focal auto -> 0: no scatter, no defocus, atten=1 -> only diffraction
+    # blur and the flat NA² collection efficiency dim the footprint.
     acq = _acq(n_px=64)
+    collection = acq.optics.collection_efficiency
     scene = Scene.zeros(acq)
     scene.cells.append(_cell_with_footprint(acq, z=0.0))
     CellOpticsStep(CellOptics(), acq, np.random.default_rng(0))(scene)
     cell = scene.cells[0]
     assert cell.in_focus is True
-    assert cell.optical_brightness == pytest.approx(1.0)
+    assert cell.optical_brightness == pytest.approx(collection)
+    # the sum-normalized PSF conserves the integral, so the only change is the
+    # NA² collection loss: observed integral == planted integral × collection.
     assert cell.footprint_observed.sum() == pytest.approx(
-        cell.footprint_planted.sum(), rel=1e-2
+        cell.footprint_planted.sum() * collection, rel=1e-2
     )
     assert cell.detectable is None  # deferred to finalize (Step 6)
 

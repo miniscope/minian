@@ -56,7 +56,9 @@ def _moving_recording():
             CellOptics(),
             Render(),
             BrainMotion(walk_step_um=0.3, max_shift_um=4.0),
-            Sensor(photons_per_unit=200.0),
+            # ~200 / NA² (NA 0.45): compensates the NA²-collection dimming so the
+            # recorded movie (and thus motion recovery) is unchanged. See cell.py.
+            Sensor(photons_per_unit=1000.0),
         ],
     )
     return simulate(spec)

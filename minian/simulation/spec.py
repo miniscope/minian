@@ -131,6 +131,20 @@ class Optics(_Base):
         """
         return self.na * abs(z_um - focal_um)
 
+    @property
+    def collection_efficiency(self) -> float:
+        """Fraction of a cell's emitted light the objective collects — ``∝ NA²``.
+
+        A lens gathers light over a collection cone whose solid angle grows with
+        ``NA²`` (small-angle ``Ω ∝ sin²θ = NA²``), so a low-NA miniscope objective
+        is *fundamentally* dimmer than a high-NA one — independently of focus or
+        depth. This is a flat multiplicative light-loss applied alongside scatter
+        :meth:`Tissue.attenuation`; the absolute proportionality constant
+        (``1/4n²`` etc.) is absorbed into the ``sensor`` step's
+        ``photons_per_unit`` exposure scale, so what matters here is the ``NA²``
+        scaling. At NA 0.18 vs 0.45 this is a ~6× brightness difference."""
+        return self.na**2
+
 
 class ImageSensor(_Base):
     """Physical and noise properties of the bare image sensor (the detector).
@@ -275,16 +289,18 @@ class Acquisition(_Base):
 
             σ_0   = hypot(diffraction_sigma_um, scatter_sigma_um(z))   # all but defocus
             σ_tot = hypot(σ_0, defocus_sigma_um(z, focal))
-            brightness = (σ_0² / σ_tot²) · attenuation(z)
+            brightness = (σ_0² / σ_tot²) · attenuation(z) · collection_efficiency
             sigma_px   = σ_tot / pixel_size_um
 
         The ``σ_0²/σ_tot²`` factor is the peak drop that makes defocus
-        intensity-conserving (a 2-D Gaussian's peak × area is constant), so only
-        ``attenuation(z)`` actually removes light. Consequently
-        ``sigma_px² · brightness`` is independent of the focal plane — the
-        invariant the conservation test asserts. ``focal_um`` is the resolved
-        (numeric) focal depth; ``diffraction_sigma_um > 0`` always, so ``σ_tot``
-        is never zero.
+        intensity-conserving (a 2-D Gaussian's peak × area is constant); the two
+        light-loss factors that actually remove signal are scatter
+        ``attenuation(z)`` (depth) and ``collection_efficiency`` (``∝ NA²``, the
+        objective's light-gathering power). Both are independent of the focal
+        plane, so ``sigma_px² · brightness`` remains independent of the focal
+        plane — the invariant the conservation test asserts. ``focal_um`` is the
+        resolved (numeric) focal depth; ``diffraction_sigma_um > 0`` always, so
+        ``σ_tot`` is never zero.
 
         Two distinct quantities come out, consumed separately by the optics step
         (5b): ``sigma_px`` is the PSF width the footprint is *convolved* with,
@@ -298,7 +314,11 @@ class Acquisition(_Base):
         """
         sigma_0 = math.hypot(self.optics.diffraction_sigma_um, self.tissue.scatter_sigma_um(z_um))
         sigma_total = math.hypot(sigma_0, self.optics.defocus_sigma_um(z_um, focal_um))
-        brightness = (sigma_0**2 / sigma_total**2) * self.tissue.attenuation(z_um)
+        brightness = (
+            (sigma_0**2 / sigma_total**2)
+            * self.tissue.attenuation(z_um)
+            * self.optics.collection_efficiency
+        )
         sigma_px = sigma_total / self.pixel_size_um
         return sigma_px, brightness
 
