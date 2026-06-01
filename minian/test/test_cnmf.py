@@ -137,7 +137,7 @@ class TestSpatialPartitionTargetChunkSweep:
         rng = np.random.RandomState(0)
         positions = rng.uniform(0, 100, size=(n, 2))
         membership = spatial_partition(positions, target_chunk=chunk)
-        assert np.bincount(membership).max() <= tc
+        assert np.bincount(membership).max() <= chunk, f"n={n} chunk={chunk}"
 
     def test_partition_count_is_monotone_in_target_chunk(self):
         # Smaller target_chunk -> at least as many partitions. Holds
