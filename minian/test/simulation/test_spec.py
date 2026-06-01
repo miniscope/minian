@@ -18,7 +18,6 @@ from minian.simulation import (
     CellActivity,
     CellOptics,
     ImageSensor,
-    Neuropil,
     Optics,
     Output,
     PlaceSomata,
@@ -210,14 +209,14 @@ def test_large_motion_warns():
 
 
 # --- build() on a not-yet-implemented step still raises --------------------
-# The minimal chain (place_somata/cell_activity/render/sensor, 5a) and optics
-# (5b) build; steps from later milestones (here Neuropil, 5c) keep the base
-# NotImplementedError until their bodies land.
+# The minimal chain (5a), optics (5b), and the field effects (5c) all build;
+# brain_motion (5d) is the last step whose body has not landed, so it keeps the
+# base NotImplementedError.
 
 
 def test_build_not_implemented_for_later_steps():
     with pytest.raises(NotImplementedError, match="Step 5"):
-        Neuropil().build(_tiny_acquisition(), None)
+        BrainMotion().build(_tiny_acquisition(), None)
 
 
 # --- Layer-2 physics helpers (Step 3) --------------------------------------

@@ -1,11 +1,12 @@
-"""Unit tests for the minimal runnable step chain (migration Step 5a).
+"""Unit tests for the executable step chain (migration Steps 5a–5c).
 
-Covers the four executable steps that turn a blank ``Scene`` into a digitized
-recording — ``place_somata`` → ``cell_activity`` → ``render`` → ``sensor`` — both
-in isolation (each step run against a hand-built scene, the primary test
-substrate) and as the end-to-end chain. The ``optics`` step and the
-planted/observed footprint split are migration Step 5b and are out of scope
-here; ``render`` therefore composites the planted footprint.
+Covers the steps that turn a blank ``Scene`` into a digitized recording — the
+minimal chain ``place_somata`` → ``cell_activity`` → ``render`` → ``sensor``
+(5a), the ``optics`` degradation and planted/observed split (5b), and the field
+effects ``neuropil`` / ``bleaching`` / ``vignette`` / ``leakage`` plus the
+``vasculature`` no-op placeholder (5c). Each step is exercised in isolation
+against a hand-built scene (the primary test substrate) as well as in the
+end-to-end chain. ``brain_motion`` (5d) is out of scope here.
 """
 
 import numpy as np
@@ -14,24 +15,36 @@ from pydantic import ValidationError
 
 from minian.simulation import (
     Acquisition,
+    Bleaching,
     CellActivity,
     CellOptics,
     ImageSensor,
+    Leakage,
+    Neuropil,
     Optics,
     PlaceSomata,
     Render,
     Scene,
     Sensor,
     SNRDistribution,
+    Vasculature,
+    Vignette,
 )
 from minian.simulation.steps import (
+    BleachingStep,
     CellActivityStep,
     CellOpticsStep,
+    LeakageStep,
+    NeuropilStep,
     PlaceSomataStep,
     RenderStep,
     SensorStep,
+    VasculatureStep,
+    VignetteStep,
+    bleaching_curve,
     calcium_kernel,
     degrade_footprint,
+    ou_process,
     resolve_focal_plane,
     soma_footprint,
 )
@@ -476,3 +489,191 @@ def test_minimal_chain_place_activity_render_sensor():
     assert movie.min() >= 0.0 and movie.max() <= 255.0
     assert movie.max() > 0.0  # cells produced signal
     assert movie.var() > 0.0  # spatial/temporal structure, not a flat field
+
+
+# --- neuropil (5c) ---------------------------------------------------------
+
+
+def test_ou_process_is_stationary_and_correlated():
+    # Mean ~0, unit variance, and a high lag-1 correlation for a slow tau.
+    slow = ou_process(20000, tau_frames=50.0, rng=np.random.default_rng(0))
+    assert abs(slow.mean()) < 0.1
+    assert slow.std() == pytest.approx(1.0, rel=0.1)
+    slow_ac = np.corrcoef(slow[1:], slow[:-1])[0, 1]
+    assert slow_ac > 0.9  # a ≈ exp(-1/50) ≈ 0.98
+    # A fast tau decorrelates frame-to-frame.
+    fast = ou_process(20000, tau_frames=0.2, rng=np.random.default_rng(1))
+    assert np.corrcoef(fast[1:], fast[:-1])[0, 1] < slow_ac
+
+
+def test_neuropil_adds_nonnegative_background():
+    acq = _acq(n_px=40, duration_s=1.0)
+    scene = Scene.zeros(acq)
+    NeuropilStep(Neuropil(amplitude=0.5), acq, np.random.default_rng(0))(scene)
+    movie = scene.movie.values
+    assert movie.min() >= 0.0  # additive light, never negative
+    assert movie.mean() > 0.0  # background was actually added
+
+
+def test_neuropil_records_smooth_spatial_and_temporal_ground_truth():
+    acq = _acq(n_px=40, duration_s=2.0)
+    scene = Scene.zeros(acq)
+    NeuropilStep(
+        Neuropil(n_components=4, spatial_sigma_um=10.0, temporal_tau_s=10.0),
+        acq,
+        np.random.default_rng(1),
+    )(scene)
+    spatial = scene.truth.neuropil_spatial
+    temporal = scene.truth.neuropil_temporal
+    assert spatial.shape == (4, 40, 40)
+    assert temporal.shape == (4, acq.n_frames)
+    # Spatial fields are non-negative, peak-normalized, and smooth (adjacent-pixel
+    # variation well below the field's overall spread — unlike white noise).
+    field = spatial[0]
+    assert field.min() >= 0.0 and field.max() == pytest.approx(1.0)
+    assert np.abs(np.diff(field, axis=0)).mean() < field.std()
+    # Temporal envelopes are strictly positive (the lognormal guarantee).
+    assert (temporal > 0).all()
+
+
+def test_neuropil_is_reproducible():
+    acq = _acq(n_px=32, duration_s=1.0)
+    outs = []
+    for _ in range(2):
+        scene = Scene.zeros(acq)
+        Neuropil().build(acq, np.random.default_rng(3))(scene)
+        outs.append(scene.movie.values.copy())
+    np.testing.assert_array_equal(outs[0], outs[1])
+
+
+# --- bleaching (5c) --------------------------------------------------------
+
+
+def test_bleaching_curve_endpoints_and_monotonic():
+    curve = bleaching_curve("mono_exp", final_fraction=0.5, n_frames=100)
+    assert curve.shape == (100,)
+    assert curve[0] == pytest.approx(1.0)
+    assert curve[-1] == pytest.approx(0.5)
+    assert (np.diff(curve) <= 0).all()  # monotonically decaying
+
+
+def test_bleaching_scales_every_pixel_by_the_curve():
+    acq = _acq(n_px=8, duration_s=2.0)
+    scene = Scene.ones(acq)
+    BleachingStep(Bleaching(final_fraction=0.6), acq, np.random.default_rng(0))(scene)
+    curve = bleaching_curve("mono_exp", 0.6, acq.n_frames)
+    # On an all-ones movie the result is exactly the curve, broadcast over pixels.
+    np.testing.assert_allclose(scene.movie.values[:, 3, 5], curve)
+    np.testing.assert_allclose(scene.truth.bleaching, curve)
+
+
+def test_bleaching_bi_exp_rejected_at_construction():
+    with pytest.raises(ValidationError, match="bi_exp"):
+        Bleaching(model="bi_exp")
+
+
+# --- vignette (5c) ---------------------------------------------------------
+
+
+def test_vignette_is_radial_and_time_invariant():
+    acq = _acq(n_px=51, duration_s=1.0)  # odd -> a clean center pixel at (25, 25)
+    scene = Scene.ones(acq)
+    VignetteStep(
+        Vignette(falloff=0.5, exponent=2.0), acq, np.random.default_rng(0)
+    )(scene)
+    field = scene.truth.vignette
+    assert field.shape == (51, 51)
+    assert field[25, 25] == pytest.approx(1.0)  # bright center
+    assert field[0, 0] == pytest.approx(0.5)  # farthest corner == falloff
+    # On an all-ones movie the movie equals the field, and is identical per frame.
+    np.testing.assert_allclose(scene.movie.values[0], field)
+    movie = scene.movie.values
+    assert (movie == movie[0]).all()  # static in time: every frame identical
+
+
+def test_vignette_center_offset_moves_the_bright_spot():
+    acq = _acq(n_px=51, duration_s=0.1)  # 1 µm/px, so +12 µm == +12 px in y
+    scene = Scene.ones(acq)
+    VignetteStep(
+        Vignette(falloff=0.4, center_offset_um=(12.0, 0.0)),
+        acq,
+        np.random.default_rng(0),
+    )(scene)
+    peak_row, peak_col = np.unravel_index(scene.truth.vignette.argmax(), (51, 51))
+    assert peak_row > 25  # shifted down from the FOV center row
+    assert peak_col == pytest.approx(25, abs=1)  # unshifted in x
+
+
+# --- leakage (5c) ----------------------------------------------------------
+
+
+def test_leakage_uniform_adds_level_everywhere():
+    acq = _acq(n_px=16, duration_s=1.0)
+    scene = Scene.zeros(acq)
+    LeakageStep(
+        Leakage(profile="uniform", level=0.2), acq, np.random.default_rng(0)
+    )(scene)
+    np.testing.assert_allclose(scene.movie.values, 0.2)
+    np.testing.assert_allclose(scene.truth.leakage, 0.2)
+    movie = scene.movie.values
+    assert (movie == movie[0]).all()  # static in time: every frame identical
+
+
+def test_leakage_gaussian_peaks_at_center():
+    acq = _acq(n_px=51, duration_s=0.1)
+    scene = Scene.zeros(acq)
+    LeakageStep(
+        Leakage(profile="gaussian", level=0.3, sigma_um=10.0),
+        acq,
+        np.random.default_rng(0),
+    )(scene)
+    field = scene.truth.leakage
+    assert field[25, 25] == pytest.approx(0.3)  # central glow == level
+    assert field[0, 0] < field[25, 25]  # dimmer at the corner
+    movie = scene.movie.values
+    assert (movie == movie[0]).all()  # static in time: every frame identical
+
+
+# --- vasculature placeholder (5c) ------------------------------------------
+
+
+def test_vasculature_is_an_honest_noop():
+    acq = _acq(n_px=16, duration_s=0.5)
+    scene = Scene.ones(acq)
+    Vasculature().build(acq, np.random.default_rng(0))(scene)
+    assert (scene.movie.values == 1.0).all()  # scene untouched
+    assert scene.truth.neuropil_spatial is None  # no ground-truth contribution
+
+
+# --- the field chain -------------------------------------------------------
+
+
+def test_field_chain_runs_end_to_end_and_records_ground_truth():
+    acq = _acq(n_px=40, duration_s=1.5, bit_depth=8)
+    rng = np.random.default_rng(7)
+    scene = Scene.zeros(acq)
+    steps = [
+        PlaceSomata(
+            density_per_mm2=3000.0, soma_radius_um=4.0, depth_range_um=(0.0, 120.0)
+        ),
+        CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
+        CellOptics(),
+        Render(),
+        Neuropil(amplitude=0.3),
+        Bleaching(final_fraction=0.7),
+        Vignette(falloff=0.6),
+        Leakage(profile="gaussian", level=0.1),
+        Sensor(photons_per_unit=120.0),
+    ]
+    for sspec in steps:
+        sspec.build(acq, rng)(scene)
+
+    movie = scene.movie.values
+    np.testing.assert_array_equal(movie, np.round(movie))  # digitized counts
+    assert movie.min() >= 0.0 and movie.max() <= 255.0
+    assert movie.var() > 0.0
+    # Every field step left its ground-truth contribution.
+    assert scene.truth.neuropil_spatial is not None
+    assert scene.truth.bleaching is not None
+    assert scene.truth.vignette is not None
+    assert scene.truth.leakage is not None

@@ -519,6 +519,11 @@ class Neuropil(StepSpec):
     amplitude: float = Field(gt=0, default=0.3, description="Background amplitude relative to cell signal.")
     n_components: int = Field(ge=1, default=3, description="Number of independent diffuse components.")
 
+    def build(self, acq: Acquisition, rng) -> Step:
+        from minian.simulation.steps.tissue import NeuropilStep
+
+        return NeuropilStep(self, acq, rng)
+
 
 class Vasculature(StepSpec):
     """Dark absorbing mask × (slow dilation + cardiac). Placeholder no-op for v1."""
@@ -527,16 +532,42 @@ class Vasculature(StepSpec):
     kind: Literal["vasculature"] = "vasculature"
     enabled: bool = Field(default=False, description="Placeholder; multiplicative absorption lands in v1.1.")
 
+    def build(self, acq: Acquisition, rng) -> Step:
+        from minian.simulation.steps.tissue import VasculatureStep
+
+        return VasculatureStep(self, acq, rng)
+
 
 class Bleaching(StepSpec):
     """Global temporal decay of fluorophores (not the additive sensor leakage)."""
 
     domain: ClassVar[str] = "tissue"
     kind: Literal["bleaching"] = "bleaching"
-    model: Literal["mono_exp", "bi_exp"] = Field(default="mono_exp", description="Decay curve family.")
+    model: Literal["mono_exp", "bi_exp"] = Field(
+        default="mono_exp",
+        description="Decay curve family. Only 'mono_exp' is implemented in v1; 'bi_exp' "
+        "is rejected at construction (final_fraction alone underdetermines it).",
+    )
     final_fraction: float = Field(
         gt=0, le=1, default=0.65, description="Brightness at the last frame relative to the first."
     )
+
+    @field_validator("model")
+    @classmethod
+    def _model_implemented(cls, v: str) -> str:
+        # Fail fast at construction rather than mid-run: a single final_fraction
+        # does not pin a two-component curve, so faking one would be dishonest.
+        if v == "bi_exp":
+            raise ValueError(
+                "model='bi_exp' is not implemented in v1 (mono_exp only); "
+                "a single final_fraction does not determine a bi-exponential curve."
+            )
+        return v
+
+    def build(self, acq: Acquisition, rng) -> Step:
+        from minian.simulation.steps.tissue import BleachingStep
+
+        return BleachingStep(self, acq, rng)
 
 
 class BrainMotion(StepSpec):
@@ -567,6 +598,11 @@ class Vignette(StepSpec):
         default=(0.0, 0.0), description="(dy, dx) offset of the bright center from FOV center, µm."
     )
 
+    def build(self, acq: Acquisition, rng) -> Step:
+        from minian.simulation.steps.sensor import VignetteStep
+
+        return VignetteStep(self, acq, rng)
+
 
 class Leakage(StepSpec):
     """Static additive baseline — what minian's 'glow removal' subtracts."""
@@ -575,7 +611,16 @@ class Leakage(StepSpec):
     kind: Literal["leakage"] = "leakage"
     profile: Literal["uniform", "gaussian"] = Field(default="gaussian", description="Spatial baseline shape.")
     level: float = Field(ge=0, default=0.1, description="Additive baseline level.")
-    sigma_um: float | None = Field(default=None, description="Spatial sigma for the gaussian profile, µm.")
+    sigma_um: float | None = Field(
+        default=None,
+        description="Spatial sigma for the gaussian profile, µm; None defaults to a "
+        "quarter of the smaller FOV dimension. Ignored by the uniform profile.",
+    )
+
+    def build(self, acq: Acquisition, rng) -> Step:
+        from minian.simulation.steps.sensor import LeakageStep
+
+        return LeakageStep(self, acq, rng)
 
 
 class Sensor(StepSpec):

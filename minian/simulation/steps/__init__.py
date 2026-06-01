@@ -7,9 +7,11 @@ domain — ``cell`` → ``tissue`` → ``motion`` → ``sensor`` — mirroring t
 order biology → optics → motion → sensor.
 
 Migration Step 5a lands the minimal runnable chain (``place_somata`` →
-``cell_activity`` → ``render`` → ``sensor``); the remaining steps arrive in
-5b–5d. The :class:`Step` base and the physics helpers (:func:`calcium_kernel`,
-:func:`soma_footprint`) are exposed here for direct unit testing and teaching.
+``cell_activity`` → ``render`` → ``sensor``); optics is 5b and the field effects
+(``neuropil``/``bleaching``/``vignette``/``leakage``, plus the ``vasculature``
+no-op placeholder) are 5c. The :class:`Step` base and the physics helpers
+(:func:`calcium_kernel`, :func:`soma_footprint`, :func:`bleaching_curve`,
+:func:`ou_process`, …) are exposed here for direct unit testing and teaching.
 """
 
 from minian.simulation.steps.base import Step
@@ -22,18 +24,41 @@ from minian.simulation.steps.cell import (
     resolve_focal_plane,
     soma_footprint,
 )
-from minian.simulation.steps.sensor import SensorStep
-from minian.simulation.steps.tissue import RenderStep
+from minian.simulation.steps.sensor import (
+    LeakageStep,
+    SensorStep,
+    VignetteStep,
+    radius_grid,
+)
+from minian.simulation.steps.tissue import (
+    BleachingStep,
+    NeuropilStep,
+    RenderStep,
+    VasculatureStep,
+    bleaching_curve,
+    neuropil_envelope,
+    ou_process,
+    smooth_spatial_field,
+)
 
 __all__ = [
+    "BleachingStep",
     "CellActivityStep",
     "CellOpticsStep",
+    "LeakageStep",
+    "NeuropilStep",
     "PlaceSomataStep",
     "RenderStep",
     "SensorStep",
     "Step",
+    "VasculatureStep",
+    "VignetteStep",
+    "bleaching_curve",
     "calcium_kernel",
     "degrade_footprint",
+    "neuropil_envelope",
+    "ou_process",
+    "radius_grid",
     "resolve_focal_plane",
-    "soma_footprint",
+    "smooth_spatial_field",
 ]
