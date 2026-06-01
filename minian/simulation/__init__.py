@@ -8,6 +8,7 @@ the executable engine, metrics, and presets arrive in later migration steps.
 See ``proposals/simulation-plan.md`` and ``proposals/simulation-spec.md``.
 """
 
+from minian.simulation.recording import GroundTruth, Recording, finalize
 from minian.simulation.scene import Cell, GroundTruthBuilder, Scene
 from minian.simulation.spec import (
     Acquisition,
@@ -41,6 +42,7 @@ __all__ = [
     "Cell",
     "CellActivity",
     "CellOptics",
+    "GroundTruth",
     "GroundTruthBuilder",
     "ImageSensor",
     "Leakage",
@@ -48,6 +50,7 @@ __all__ = [
     "Optics",
     "Output",
     "PlaceSomata",
+    "Recording",
     "Render",
     "SNRDistribution",
     "Scene",
@@ -58,4 +61,5 @@ __all__ = [
     "Tissue",
     "Vasculature",
     "Vignette",
+    "finalize",
 ]
