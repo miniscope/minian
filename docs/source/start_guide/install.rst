@@ -58,45 +58,41 @@ Note that if you install in this way you will have a local copy of MiniAn script
 Getting notebooks and demos
 ---------------------------
 
-The main features of Minian are exposed through `pipeline.ipynb` and `cross-registration.ipynb` `notebooks <https://jupyter.org/>`_.
-You can use the following links to get the latest version of the two notebooks:
+The main features of MiniAn are exposed through the `pipeline.ipynb` and `cross-registration.ipynb` `notebooks <https://jupyter.org/>`_.
+These notebooks ship **inside** the installed package, so once MiniAn is installed you already have them; no separate download is needed.
 
-* Download `pipeline.ipynb <https://github.com/DeniseCaiLab/minian/raw/master/pipeline.ipynb>`_
-* Download `cross-registration.ipynb <https://github.com/DeniseCaiLab/minian/raw/master/cross-registration.ipynb>`_
-
-If you'd prefer specific version of them, head to `github release page <https://github.com/denisecailab/minian/releases>`_ to see all the released versions.
-
-Alternatively, MiniAn also come with convenient scripts to help you download notebooks and demos into your current folder.
-Run the following (in your activated environment if any) to get the notebooks:
-
-.. code-block:: console
-    
-    minian-install --notebooks
-
-Additionally, we also hosted some small demo data that works with the notebooks.
-Once you obtained these data, you should be able to run the two notebooks locally without modifying anything.
-Run the following script to get demo data:
+Copy a notebook bundle (notebook plus its figures and README) into your current folder with the ``minian-notebooks`` command:
 
 .. code-block:: console
 
-    minian-install --demo
+    minian-notebooks list              # show the available bundles
+    minian-notebooks copy pipeline     # -> ./minian-notebooks/pipeline/
 
-The script can also help you get files from different branchs.
-See ``minian-install --help`` for more detail.
+Each notebook fetches its demo recording automatically on first run (downloaded once, then cached and verified against a checksum), so there is no separate demo-install step.
+You can also fetch demo datasets yourself with the ``minian-data`` command:
 
-Note that if you choose to `Install from source`_ you would already have a local copy of everything and you can also checkou different version of them using `git`.
-You can skip this step altogether.
+.. code-block:: console
+
+    minian-data list                          # show datasets + sizes
+    minian-data download pipeline-demo --to .  # download into the current folder
+
+The demo datasets are hosted on Zenodo (each with its own citable DOI); see :mod:`minian.data` for details.
+
+.. note::
+    The older ``minian-install --notebooks`` / ``minian-install --demo`` commands still work as thin aliases for ``minian-notebooks`` and ``minian-data``.
+
+Note that if you choose to `Install from source`_ you already have a local copy of everything and can check out different versions using `git`.
 
 Start the pipeline
 ------------------
 
 And that's it!
-Once you have installed MiniAn and obtained a copy of notebooks through any methods above, you can then start the jupyter notebook interface with:
+Once you have installed MiniAn and copied out a notebook (see above), start the jupyter interface on it with:
 
 .. code-block:: console
 
-    jupyter notebook
+    jupyter notebook minian-notebooks/pipeline/pipeline.ipynb
 
-(Remeber to activate the environment if your computer complain about command not found)
+(Remember to activate the environment if your computer complains about command not found.)
 
 You can then either run the notebook, or refer to :doc:`../pipeline/index` and :doc:`../cross_reg/index` for some ideas about expected outcomes when running with demo data.

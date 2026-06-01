@@ -25,6 +25,7 @@ dependencies = [
     "opencv-python>=4.2.0.34",
     "pandas>=1.2.3",
     "panel>=0.8.0",
+    "pooch>=1.6.0",
     "pyfftw>=0.12.0",
     "rechunker>=0.3.3",
     "scikit-image>=0.18.1",
@@ -54,6 +55,8 @@ Documentation = "https://minian.readthedocs.io/"
 
 [project.scripts]
 minian-install = "minian.install:main"
+minian-notebooks = "minian.notebooks.cli:main"
+minian-data = "minian.data.cli:main"
 
 [project.optional-dependencies]
 numba = [
@@ -73,13 +76,32 @@ build-backend = "pdm.backend"
 [tool.pdm]
 distribution = true
 
+[tool.pdm.build]
+# pdm-backend auto-detects the `minian` package and ships every file under it,
+# which now includes the bundled notebooks and their assets. Keep build junk
+# and notebook execution caches out of the wheel.
+excludes = [
+    "**/__pycache__",
+    "**/*.pyc",
+    "**/.ipynb_checkpoints",
+    "**/*.nbi",
+    "**/*.nbc",
+]
+# Ship the maintainer Zenodo helper in the sdist (not the wheel).
+source-includes = ["scripts/", "minian/test/"]
+
 [tool.pdm.scripts]
 lock.composite = [
     'pdm lock --with :all --python=">=3.10,<3.12"',
     'pdm lock --with :all --python=">=3.12,<3.14" --append',
     'pdm lock --with :all --python=">=3.14" --append'
 ]
-test = "pytest"
+# Local default stays fast: the heavy end-to-end notebook runs are marked
+# `slow` and deselected here. `test-all` runs the full suite (unit + notebook)
+# in a single pass; CI uses it across the whole matrix because the pipeline
+# notebook is currently our main cross-version/cross-OS integration coverage.
+test = "pytest -m 'not slow'"
+test-all = "pytest"
 
 # Dependency cooldown: exclude packages published in the last 7 days when
 # resolving the lockfile, dodging most supply-chain attacks (usually caught
@@ -114,6 +136,9 @@ addopts = [
 ]
 testpaths = [
   "minian/test"
+]
+markers = [
+  "slow: heavy end-to-end notebook runs (deselect with '-m \"not slow\"')",
 ]
 
 

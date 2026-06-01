@@ -9,8 +9,37 @@ on:
   pull_request:
 
 jobs:
+  prefetch-data:
+    # Download the demo datasets once per OS and cache them so the test matrix
+    # below restores from cache instead of re-downloading per job.
+    name: Prefetch demo data (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["ubuntu-latest", "macos-latest"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cache demo datasets
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/minian
+            ~/Library/Caches/minian
+          key: minian-demo-data-${{ runner.os }}-${{ hashFiles('minian/data/_registry.py') }}
+      - name: Download demo datasets (once per OS)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          python -m pip install pooch
+          python scripts/prefetch_data.py
+
   test-and-coverage:
     name: Test and Cov py ${{ matrix.python-version }}, ${{ matrix.os }}
+    needs: prefetch-data
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -62,11 +91,22 @@ jobs:
         run: |
           python -m pip install "pdm>=2.26.9"
           pdm install --with test
+      - name: Restore demo datasets
+        # Same key as the prefetch-data job; every matrix entry restores instead
+        # of re-downloading. On a cache miss the tests fetch on demand.
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/minian
+            ~/Library/Caches/minian
+          key: minian-demo-data-${{ runner.os }}-${{ hashFiles('minian/data/_registry.py') }}
       - name: Run tests and collect coverage
+        # Run the full suite (unit + slow notebook runs) on every matrix cell.
+        # `pdm run test` deselects `slow` for fast local runs.
         run: |
-          pdm run test
+          pdm run test-all
           mkdir -p artifact
-          cp -r img artifact/img
+          cp -r minian/notebooks/pipeline/assets artifact/assets
       - name: Generate xml coverage report
         if: ${{ runner.os == 'Linux' }}
         run: |

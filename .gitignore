@@ -148,3 +148,12 @@ demo_data/shiftds.nc
 
 # MacOS
 .DS_Store
+
+# Zenodo upload staging (scripts/zenodo_manifest.py)
+zenodo_upload/
+
+# Local demo-data copy for offline MINIAN_DATA_DIR runs
+.minian_data/
+
+# Zenodo personal access token (scripts/zenodo_upload.py) - never commit
+.zenodo_token
