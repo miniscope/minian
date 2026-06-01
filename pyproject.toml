@@ -155,6 +155,10 @@ addopts = [
     '-v',
     '--color=yes',
     '--cov=minian',
+    '-m', 'not slow',
+]
+markers = [
+    "slow: heavy tests run off the per-PR path (e.g. real-pipeline recovery demos on minutes-long recordings). Run with `pytest -m slow`.",
 ]
 testpaths = [
   "minian/test"
