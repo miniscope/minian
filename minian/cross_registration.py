@@ -36,7 +36,7 @@ def calculate_centroids(A: xr.DataArray, window: xr.DataArray) -> pd.DataFrame:
 
 
 def calculate_centroid_distance(
-    cents: pd.DataFrame, by="session", index_dim=["animal"], tile=(50, 50)
+    cents: pd.DataFrame, by="session", index_dim=None, tile=(50, 50)
 ) -> pd.DataFrame:
     """
     Calculate pairwise distance between centroids across all pairs of sessions.
@@ -76,6 +76,8 @@ def calculate_centroid_distance(
         all additional metadata dimensions specified in `index_dim` as columns
         so that cell pairs can be uniquely identified.
     """
+    if index_dim is None:
+        index_dim = ["animal"]
     res_list = []
 
     def cent_pair(grp):
@@ -301,7 +303,7 @@ def cal_mapping(dist: pd.DataFrame) -> pd.DataFrame:
         minidx_list = []
         for ss in sess:
             minidx = set()
-            for uid, uid_grp in grp.groupby(grp["session", ss]):
+            for _uid, uid_grp in grp.groupby(grp["session", ss]):
                 minidx.add(uid_grp["variable", "distance"].idxmin())
             minidx_list.append(minidx)
         minidxs = set.intersection(*minidx_list)
@@ -500,7 +502,7 @@ def resolve(mapping: pd.DataFrame, mode: str) -> pd.DataFrame:
         node_df["dup"] = node_df["session"].duplicated(keep=False)
         if mode == "majority":
             node_df = node_df.set_index("node")
-            node_df["deg"] = pd.Series({k: v for k, v in subg.degree})
+            node_df["deg"] = pd.Series(dict(subg.degree))
             node_df = node_df.reset_index()
             node_df = node_df.groupby("session").apply(maj_deg)
         rm_dict = node_df.set_index("node")["dup"].to_dict()
@@ -573,7 +575,7 @@ def fill_mapping(mappings: pd.DataFrame, cents: pd.DataFrame) -> pd.DataFrame:
         for cur_id, cur_grp in mappings.groupby(meta_cols):
             cur_cent = cents.set_index(meta_cols_smp).loc[cur_id].reset_index()
             cur_grp_fill = fill(cur_grp, cur_cent)
-            cur_id = cur_id if type(cur_id) is tuple else tuple([cur_id])
+            cur_id = cur_id if type(cur_id) is tuple else (cur_id,)
             for icol, col in enumerate(meta_cols):
                 cur_grp_fill[col] = cur_id[icol]
             mappings = pd.concat([mappings, cur_grp_fill], ignore_index=True)

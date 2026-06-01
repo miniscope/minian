@@ -83,12 +83,7 @@ def seeds_init(
         nstp = np.ceil(nfm / stp_size) + 1
         centers = np.linspace(0, nfm - 1, int(nstp))
         hwnd = np.ceil(wnd_size / 2)
-        max_idx = list(
-            map(
-                lambda c: slice(int(np.floor(c - hwnd).clip(0)), int(np.ceil(c + hwnd))),
-                centers,
-            )
-        )
+        max_idx = [slice(int(np.floor(c - hwnd).clip(0)), int(np.ceil(c + hwnd))) for c in centers]
     elif method == "random":
         max_idx = [np.random.randint(0, nfm - 1, wnd_size) for _ in range(nchunk)]
     print("computing max projections")
@@ -104,7 +99,7 @@ def seeds_init(
         vectorize=True,
         dask="parallelized",
         output_dtypes=[np.uint8],
-        kwargs=dict(k0=2, k1=max_wnd, diff=diff_thres),
+        kwargs={"k0": 2, "k1": max_wnd, "diff": diff_thres},
     ).sum("sample")
     seeds = loc_max.where(loc_max > 0).rename("seeds").to_dataframe().dropna().reset_index()
     return seeds[["height", "width", "seeds"]]
@@ -236,17 +231,17 @@ def gmm_refine(
     print("computing peak-valley values")
     varr_valley = xr.apply_ufunc(
         np.percentile,
-        varr_sub.chunk(dict(frame=-1)),
+        varr_sub.chunk({"frame": -1}),
         input_core_dims=[["frame"]],
-        kwargs=dict(q=q[0], axis=-1),
+        kwargs={"q": q[0], "axis": -1},
         dask="parallelized",
         output_dtypes=[varr_sub.dtype],
     )
     varr_peak = xr.apply_ufunc(
         np.percentile,
-        varr_sub.chunk(dict(frame=-1)),
+        varr_sub.chunk({"frame": -1}),
         input_core_dims=[["frame"]],
-        kwargs=dict(q=q[1], axis=-1),
+        kwargs={"q": q[1], "axis": -1},
         dask="parallelized",
         output_dtypes=[varr_sub.dtype],
     )

@@ -9,7 +9,7 @@ dpath = "./demo_movies"
 param_load_videos = {
     "pattern": "msCam[0-9].avi",
     "dtype": np.uint8,
-    "downsample": dict(frame=2, height=1, width=1),
+    "downsample": {"frame": 2, "height": 1, "width": 1},
     "downsample_strategy": "subset",
 }
 

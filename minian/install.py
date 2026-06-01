@@ -21,7 +21,7 @@ except:
     VERSION = "0.0.0"
 
 
-def _get_file(filename: str, version: str):
+def _get_file(filename: str, version: str) -> None:
     if os.path.isfile(f"{filename}"):
         print(f"File {filename} already exists, skipping install of this file.")
         return
@@ -40,19 +40,19 @@ def _get_file(filename: str, version: str):
         print(f"File {filename} not found with version {version}, skipping.")
 
 
-def demo(version: str):
+def demo(version: str) -> None:
     print("Installing demo data")
     for file in DEMO_FILES:
         _get_file(file, version)
 
 
-def notebook(version: str):
+def notebook(version: str) -> None:
     print("Installing notebooks")
     for file in NOTEBOOK_FILES:
         _get_file(file, version)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--notebooks", action="store_true", help="Installs the notebooks")
     parser.add_argument("--demo", action="store_true", help="Installs the demo data")

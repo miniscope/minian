@@ -3,7 +3,7 @@ import os
 import psutil
 
 
-def pytest_sessionstart(session):
+def pytest_sessionstart(session) -> None:
     """Set env vars for dask resource limits"""
     memory = psutil.virtual_memory()
     total_gb = memory.total / (2**30)

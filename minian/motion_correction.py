@@ -123,13 +123,13 @@ def estimate_motion(
         for overview of the non-rigid estimation method
     """
     varr = varr.transpose(..., dim, "height", "width")
-    loop_dims = list(set(varr.dims) - set(["height", "width", dim]))
+    loop_dims = list(set(varr.dims) - {"height", "width", dim})
     if npart is None:
         # by default use a npart that result in two layers of recursion
         npart = max(3, int(np.ceil((varr.sizes[dim] / chunk_nfm) ** (1 / 2))))
     if loop_dims:
         loop_labs = [varr.coords[d].values for d in loop_dims]
-        res_dict = dict()
+        res_dict = {}
         for lab in itt.product(*loop_labs):
             va = varr.sel({loop_dims[i]: lab[i] for i in range(len(loop_dims))})
             vmax, sh = est_motion_part(va.data, npart, chunk_nfm, **kwargs)
@@ -151,7 +151,7 @@ def estimate_motion(
                         "shift_dim": ["height", "width"],
                     },
                 )
-            res_dict[lab] = sh.assign_coords(**{k: v for k, v in zip(loop_dims, lab)})
+            res_dict[lab] = sh.assign_coords(**dict(zip(loop_dims, lab)))
         sh = xrconcat_recursive(res_dict, loop_dims)
     else:
         vmax, sh = est_motion_part(varr.data, npart, chunk_nfm, **kwargs)
@@ -328,10 +328,7 @@ def est_motion_chunk(
                 pass
             else:
                 motions = np.array([0, 0])[np.newaxis, :]
-        if alt_error:
-            tmp = np.stack([varr[0]] * 3)
-        else:
-            tmp = varr[0]
+        tmp = np.stack([varr[0]] * 3) if alt_error else varr[0]
         return tmp, motions
     while varr.shape[0] > npart:
         part_idx = np.array_split(np.arange(varr.shape[0]), np.ceil(varr.shape[0] / npart))
@@ -369,7 +366,7 @@ def est_motion_chunk(
     prop_good = len(good_idxs) / len(good_fm)
     if prop_good < 0.9:
         warnings.warn(
-            f"only {prop_good} of the frames are good.Consider lowering your circularity threshold"
+            f"only {prop_good} of the frames are good.Consider lowering your circularity threshold", stacklevel=2
         )
     # use good frame closest to center as template
     mid = good_idxs[np.abs(good_idxs - varr.shape[0] / 2).argmin()]
@@ -437,15 +434,9 @@ def est_motion_chunk(
             varr[i] = transform_perframe(v, motions[i], fill=0)
     varr = varr[good_idxs]
     if aggregation == "max":
-        if varr.ndim > 3:
-            tmp = varr.max(axis=(0, 1))
-        else:
-            tmp = varr.max(axis=0)
+        tmp = varr.max(axis=(0, 1)) if varr.ndim > 3 else varr.max(axis=0)
     elif aggregation == "mean":
-        if varr.ndim > 3:
-            tmp = varr.mean(axis=(0, 1))
-        else:
-            tmp = varr.mean(axis=0)
+        tmp = varr.mean(axis=(0, 1)) if varr.ndim > 3 else varr.mean(axis=0)
     else:
         raise ValueError(f"does not understand aggregation: {aggregation}")
     if alt_error:

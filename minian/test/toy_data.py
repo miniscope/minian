@@ -1,3 +1,4 @@
+import contextlib
 import os
 
 import numba as nb
@@ -34,10 +35,8 @@ def gauss_cell(height: int, width: int, sigma: float, cov_coef: float, cent=None
     # generate spatial footprint
     A = np.zeros((height, width))
     for crd in np.unique(crds, axis=0):
-        try:
+        with contextlib.suppress(IndexError):
             A[tuple(crd)] = np.sum(np.all(crds == crd, axis=1))
-        except IndexError:
-            pass
     return A / A.max()
 
 

@@ -1,4 +1,5 @@
 import _operator
+import contextlib
 import functools as fct
 import os
 import re
@@ -139,11 +140,11 @@ def load_videos(
     varr = xr.DataArray(
         varr,
         dims=["frame", "height", "width"],
-        coords=dict(
-            frame=np.arange(varr.shape[0]),
-            height=np.arange(varr.shape[1]),
-            width=np.arange(varr.shape[2]),
-        ),
+        coords={
+            "frame": np.arange(varr.shape[0]),
+            "height": np.arange(varr.shape[1]),
+            "width": np.arange(varr.shape[2]),
+        },
     )
     if dtype:
         varr = varr.astype(dtype)
@@ -347,10 +348,7 @@ def open_minian(
                 arr = list(xr.open_zarr(arr_path).values())[0]
                 arr.data = darr.from_zarr(os.path.join(arr_path, arr.name), inline_array=True)
                 dslist.append(arr)
-        if return_dict:
-            ds = {d.name: d for d in dslist}
-        else:
-            ds = xr.merge(dslist, compat="no_conflicts")
+        ds = {d.name: d for d in dslist} if return_dict else xr.merge(dslist, compat="no_conflicts")
     if (not return_dict) and post_process:
         ds = post_process(ds, dpath)
     return ds
@@ -361,7 +359,7 @@ def open_minian_mf(
     index_dims: list[str],
     result_format="xarray",
     pattern=r"minian$",
-    sub_dirs: list[str] = [],
+    sub_dirs: list[str] = None,
     exclude=True,
     **kwargs,
 ) -> xr.Dataset | pd.DataFrame:
@@ -415,12 +413,14 @@ def open_minian_mf(
     NotImplementedError
         if `result_format` is not "xarray" or "pandas"
     """
-    minian_dict = dict()
+    if sub_dirs is None:
+        sub_dirs = []
+    minian_dict = {}
     for nextdir, dirlist, filelist in os.walk(dpath, topdown=False):
         nextdir = os.path.abspath(nextdir)
         cur_path = Path(nextdir)
         dir_tag = bool(
-            (any([Path(epath) in cur_path.parents for epath in sub_dirs])) or nextdir in sub_dirs
+            (any(Path(epath) in cur_path.parents for epath in sub_dirs)) or nextdir in sub_dirs
         )
         if exclude == dir_tag:
             continue
@@ -428,7 +428,7 @@ def open_minian_mf(
         if flist:
             print(f"opening dataset under {nextdir}")
             if len(flist) > 1:
-                warnings.warn(f"multiple dataset found: {flist}")
+                warnings.warn(f"multiple dataset found: {flist}", stacklevel=2)
             fname = flist[-1]
             print(f"opening {fname}")
             minian = open_minian(dpath=os.path.join(nextdir, fname), **kwargs)
@@ -520,14 +520,12 @@ def save_minian(
     ds = var.to_dataset()
     if meta_dict is not None:
         pathlist = os.path.split(os.path.abspath(dpath))[0].split(os.sep)
-        ds = ds.assign_coords(**dict([(dn, pathlist[di]) for dn, di in meta_dict.items()]))
+        ds = ds.assign_coords(**{dn: pathlist[di] for dn, di in meta_dict.items()})
     md = {True: "a", False: "w-"}[overwrite]
     fp = os.path.join(dpath, var.name + ".zarr")
     if overwrite:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(fp)
-        except FileNotFoundError:
-            pass
     arr = ds.to_zarr(fp, compute=compute, mode=md)
     if (chunks is not None) and compute:
         chunks = {d: var.sizes[d] if v <= 0 else v for d, v in chunks.items()}
@@ -542,10 +540,8 @@ def save_minian(
                 zstore[var.name], chunks, mem_limit, dst_path, temp_store=temp_path
             )
             rechk.execute()
-        try:
+        with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(temp_path)
-        except FileNotFoundError:
-            pass
         arr_path = os.path.join(fp, var.name)
         for f in os.listdir(arr_path):
             os.remove(os.path.join(arr_path, f))
@@ -591,17 +587,15 @@ def xrconcat_recursive(var: dict | list, dims: list[str]) -> xr.Dataset:
             var_dict = {tuple([np.asscalar(v[d]) for d in dims]): v for v in var}
         else:
             raise NotImplementedError(f"type {type(var)} not supported")
-        try:
+        with contextlib.suppress(AttributeError):
             var_dict = {k: v.to_dataset() for k, v in var_dict.items()}
-        except AttributeError:
-            pass
         data = np.empty(len(var_dict), dtype=object)
         for iv, ds in enumerate(var_dict.values()):
             data[iv] = ds
         index = pd.MultiIndex.from_tuples(list(var_dict.keys()), names=dims)
         var_ps = pd.Series(data=data, index=index)
         xr_ls = []
-        for idx, v in var_ps.groupby(level=dims[0]):
+        for _idx, v in var_ps.groupby(level=dims[0]):
             v.index = v.index.droplevel(dims[0])
             xarr = xrconcat_recursive(v.to_dict(), dims[1:])
             xr_ls.append(xarr)
@@ -612,7 +606,7 @@ def xrconcat_recursive(var: dict | list, dims: list[str]) -> xr.Dataset:
         return xr.concat(var, dim=dims[0])
 
 
-def update_meta(dpath, pattern=r"^minian\.nc$", meta_dict=None, backend="netcdf"):
+def update_meta(dpath, pattern=r"^minian\.nc$", meta_dict=None, backend="netcdf") -> None:
     for dirpath, dirnames, fnames in os.walk(dpath):
         if backend == "netcdf":
             fnames = filter(lambda fn: re.search(pattern, fn), fnames)
@@ -628,7 +622,7 @@ def update_meta(dpath, pattern=r"^minian\.nc$", meta_dict=None, backend="netcdf"
             new_ds.attrs = deepcopy(old_ds.attrs)
             old_ds.close()
             new_ds = new_ds.assign_coords(
-                **dict([(cdname, pathlist[cdval]) for cdname, cdval in meta_dict.items()])
+                **{cdname: pathlist[cdval] for cdname, cdval in meta_dict.items()}
             )
             if backend == "netcdf":
                 new_ds.to_netcdf(f_path, mode="a")
@@ -651,7 +645,7 @@ def get_chk(arr: xr.DataArray) -> dict:
     chk : dict
         Dictionary mapping dimension names to chunks.
     """
-    return {d: c for d, c in zip(arr.dims, arr.chunks)}
+    return dict(zip(arr.dims, arr.chunks))
 
 
 def rechunk_like(x: xr.DataArray, y: xr.DataArray) -> xr.DataArray:
@@ -681,7 +675,7 @@ def rechunk_like(x: xr.DataArray, y: xr.DataArray) -> xr.DataArray:
 
 def get_optimal_chk(
     arr: xr.DataArray,
-    dim_grp=[("frame",), ("height", "width")],
+    dim_grp=None,
     csize=256,
     dtype: type | None = None,
 ) -> dict:
@@ -717,12 +711,14 @@ def get_optimal_chk(
     chk : dict
         Dictionary mapping dimension names to chunk sizes.
     """
+    if dim_grp is None:
+        dim_grp = [("frame",), ("height", "width")]
     if dtype is not None:
         arr = arr.astype(dtype)
     dims = arr.dims
     if not dim_grp:
         dim_grp = [(d,) for d in dims]
-    chk_compute = dict()
+    chk_compute = {}
     for dg in dim_grp:
         d_rest = set(dims) - set(dg)
         dg_dict = dict.fromkeys(dg, "auto")
@@ -735,7 +731,7 @@ def get_optimal_chk(
     with da.config.set({"array.chunk-size": f"{csize}MiB"}):
         arr_chk = arr.chunk(dict.fromkeys(dims, "auto"))
     chk_store_da = get_chunksize(arr_chk)
-    chk_store = dict()
+    chk_store = {}
     for d in dims:
         ncomp = int(arr.sizes[d] / chk_compute[d])
         sz = np.array(factors(ncomp)) * chk_compute[d]
@@ -759,7 +755,7 @@ def get_chunksize(arr: xr.DataArray) -> dict:
     """
     dims = arr.dims
     sz = arr.data.chunksize
-    return {d: s for d, s in zip(dims, sz)}
+    return dict(zip(dims, sz))
 
 
 def factors(x: int) -> list[int]:
@@ -835,9 +831,9 @@ class TaskAnnotation(SchedulerPlugin):
         super().__init__()
         self.annt_dict = ANNOTATIONS
 
-    def update_graph(self, scheduler, client, tasks, **kwargs):
+    def update_graph(self, scheduler, client, tasks, **kwargs) -> None:
         parent = cast(SchedulerState, scheduler)
-        for tk in tasks.keys():
+        for tk in tasks:
             for pattern, annt in self.annt_dict.items():
                 if re.search(pattern, tk):
                     ts = parent._tasks.get(tk)
@@ -855,10 +851,10 @@ def custom_arr_optimize(
     dsk: dict,
     keys: list,
     fast_funcs: list = FAST_FUNCTIONS,
-    inline_patterns=[],
+    inline_patterns=None,
     rename_dict: dict | None = None,
     rewrite_dict: dict | None = None,
-    keep_patterns=[],
+    keep_patterns=None,
     **kwargs,
 ) -> dict:
     """
@@ -897,6 +893,10 @@ def custom_arr_optimize(
     """
     # inlining lots of array operations ref:
     # https://github.com/dask/dask/issues/6668
+    if keep_patterns is None:
+        keep_patterns = []
+    if inline_patterns is None:
+        inline_patterns = []
     keep_keys = []
     if keep_patterns:
         key_ls = list(dsk.keys())
@@ -1053,7 +1053,7 @@ def split_key(key: tuple | str, rename_dict: dict | None = None) -> str:
         key = key[0]
     kls = key.split("-")
     if rename_dict:
-        kls = list(map(lambda k: rename_dict.get(k, k), kls))
+        kls = [rename_dict.get(k, k) for k in kls]
     kls_ft = list(filter(lambda k: k in ANNOTATIONS, kls))
     if kls_ft:
         return "-".join(kls_ft)
@@ -1099,10 +1099,7 @@ def check_pat(key: str | tuple, pat_ls: list[str]) -> bool:
     bool
         Whether `key` contains any pattern in the list.
     """
-    for pat in pat_ls:
-        if check_key(key, pat):
-            return True
-    return False
+    return any(check_key(key, pat) for pat in pat_ls)
 
 
 def inline_pattern(dsk: dict, pat_ls: list[str], inline_constants: bool) -> dict:
@@ -1133,12 +1130,12 @@ def inline_pattern(dsk: dict, pat_ls: list[str], inline_constants: bool) -> dict
         for k in keys:
             del dsk[k]
         if inline_constants:
-            dsk, dep = cull(dsk, set(list(flatten(keys))))
+            dsk, dep = cull(dsk, set(flatten(keys)))
     return dsk
 
 
 def custom_delay_optimize(
-    dsk: dict, keys: list, fast_functions=[], inline_patterns=[], **kwargs
+    dsk: dict, keys: list, fast_functions=None, inline_patterns=None, **kwargs
 ) -> dict:
     """
     Custom optimization functions for delayed tasks.
@@ -1161,6 +1158,10 @@ def custom_delay_optimize(
     dsk : dict
         Optimized dask graph.
     """
+    if inline_patterns is None:
+        inline_patterns = []
+    if fast_functions is None:
+        fast_functions = []
     if _DASK_HAS_TASK_SPEC:
         # `optimization.fuse.delayed` defaults to False on dask >=2025, so
         # `dask.delayed.optimize` is a no-op. Invoke `fuse_linear_task_spec`

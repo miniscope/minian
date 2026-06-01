@@ -50,7 +50,7 @@ def remove_background(varr: xr.DataArray, method: str, wnd: int) -> xr.DataArray
         vectorize=True,
         dask="parallelized",
         output_dtypes=[varr.dtype],
-        kwargs=dict(method=method, wnd=wnd, selem=selem),
+        kwargs={"method": method, "wnd": wnd, "selem": selem},
     )
     res = res.astype(varr.dtype)
     return res.rename(varr.name + "_subtracted")

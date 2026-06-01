@@ -90,7 +90,7 @@ def get_noise_fft(
         output_core_dims=[[]],
         dask="parallelized",
         vectorize=True,
-        kwargs=dict(noise_range=noise_range, noise_method=noise_method, threads=threads),
+        kwargs={"noise_range": noise_range, "noise_method": noise_method, "threads": threads},
         output_dtypes=[float],
     )
     return sn
@@ -174,11 +174,11 @@ def get_noise_welch(
     """
     sn = xr.apply_ufunc(
         noise_welch,
-        varr.chunk(dict(frame=-1)),
+        varr.chunk({"frame": -1}),
         input_core_dims=[["frame"]],
         dask="parallelized",
         vectorize=True,
-        kwargs=dict(noise_range=noise_range, noise_method=noise_method),
+        kwargs={"noise_range": noise_range, "noise_method": noise_method},
         output_dtypes=[varr.dtype],
     )
     return sn
@@ -350,7 +350,7 @@ def update_spatial(
         input_core_dims=[["height", "width"]],
         output_core_dims=[["height", "width"]],
         vectorize=True,
-        kwargs=dict(kernel=selem),
+        kwargs={"kernel": selem},
         dask="parallelized",
         output_dtypes=[A.dtype],
     )
@@ -507,10 +507,7 @@ def update_spatial_perpx(
     -------
     update_spatial : for more explanation of parameters
     """
-    if f is not None:
-        idx = sub[:-1].nonzero()[0]
-    else:
-        idx = sub.nonzero()[0]
+    idx = sub[:-1].nonzero()[0] if f is not None else sub.nonzero()[0]
     try:
         C = C_store.get_orthogonal_selection((idx, slice(None))).T
     except AttributeError:
@@ -887,14 +884,11 @@ def update_temporal(
                 f"{cur_YrA.shape[0]} cells will be updated togeter, "
                 f"which takes roughly {mem_demand} MB of memory. "
                 "Consider merging the units "
-                "or changing jac_thres"
+                "or changing jac_thres", stacklevel=2
             )
         if not warm_start:
             cur_C = None
-        if cur_YrA.shape[0] > 1:
-            dl_opt = inline_opt
-        else:
-            dl_opt = custom_delay_optimize
+        dl_opt = inline_opt if cur_YrA.shape[0] > 1 else custom_delay_optimize
         # explicitly using delay (rather than gufunc) seem to promote the
         # depth-first behavior of dask
         with da.config.set(delayed_optimize=dl_opt):
@@ -1050,10 +1044,7 @@ def get_ar_coef(
     g : np.ndarray
         The estimated AR coefficients.
     """
-    if add_lag == "p":
-        max_lag = p * 2
-    else:
-        max_lag = p + add_lag
+    max_lag = p * 2 if add_lag == "p" else p + add_lag
     cov = acovf(y, fft=True)
     C_mat = toeplitz(cov[:max_lag], cov[:p]) - sn**2 * np.eye(max_lag, p)
     g = lstsq(C_mat, cov[1 : max_lag + 1])[0]
@@ -1147,7 +1138,7 @@ def update_temporal_block(
         excluded=["noise_range", "noise_method"],
         signature="(f)->()",
     )
-    vec_get_p = np.vectorize(get_p, otypes=[int], signature="(f)->()")
+    np.vectorize(get_p, otypes=[int], signature="(f)->()")
     vec_get_ar_coef = np.vectorize(
         get_ar_coef,
         otypes=[float],
@@ -1265,9 +1256,8 @@ def update_temporal_cvxpy(
     if g.ndim < 2:
         g = g.reshape((1, -1))
     sn = np.atleast_1d(sn)
-    if A is not None:
-        if A.ndim < 2:
-            A = A.reshape((-1, 1))
+    if A is not None and A.ndim < 2:
+        A = A.reshape((-1, 1))
     # get count of frames and units
     _T = y.shape[-1]
     _u = g.shape[0]
@@ -1347,7 +1337,7 @@ def update_temporal_cvxpy(
             _ = prob.solve(solver="ECOS")
         if not (prob.status == "optimal" or prob.status == "optimal_inaccurate"):
             if use_cons:
-                warnings.warn("constrained version of problem infeasible")
+                warnings.warn("constrained version of problem infeasible", stacklevel=2)
             raise ValueError
     except (ValueError, cvx.SolverError):
         lam = sn * sparse_penal
@@ -1368,11 +1358,11 @@ def update_temporal_cvxpy(
             except (cvx.SolverError, ValueError):
                 warnings.warn(
                     f"problem status is {prob.status}, returning zero",
-                    RuntimeWarning,
+                    RuntimeWarning, stacklevel=2,
                 )
                 return [np.zeros(c.shape, dtype=float)] * 4
-    if not (prob.status == "optimal"):
-        warnings.warn("problem solved sub-optimally", RuntimeWarning)
+    if prob.status != "optimal":
+        warnings.warn("problem solved sub-optimally", RuntimeWarning, stacklevel=2)
     c = np.where(c.value > zero_thres, c.value, 0)
     s = np.where(s.value > zero_thres, s.value, 0)
     b = np.where(b.value > zero_thres, b.value, 0)
@@ -1679,7 +1669,7 @@ def graph_optimize_corr(
     varr: xr.DataArray,
     G: nx.Graph,
     freq: float,
-    idx_dims=["height", "width"],
+    idx_dims=None,
     chunk=600,
     step_size=50,
 ) -> pd.DataFrame:
@@ -1727,6 +1717,8 @@ def graph_optimize_corr(
         with computed value of correlation.
     """
     # a heuristic to make number of partitions scale with nodes
+    if idx_dims is None:
+        idx_dims = ["height", "width"]
     n_cuts, membership = pymetis.part_graph(
         max(int(np.ceil(G.number_of_nodes() / chunk)), 1), adjacency=adj_list(G)
     )
@@ -1952,10 +1944,7 @@ def update_background(
     AtC = compute_AtC(A, C)
     Yb = (Y - AtC).clip(0)
     Yb = save_minian(Yb.rename("Yb"), intpath, overwrite=True)
-    if b is None:
-        b_new = Yb.mean("frame").persist()
-    else:
-        b_new = b.persist()
+    b_new = Yb.mean("frame").persist() if b is None else b.persist()
     b_stk = (
         b_new.stack(spatial=["height", "width"])
         .transpose("spatial")
