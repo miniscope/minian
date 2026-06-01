@@ -18,7 +18,7 @@ pdm run test-notebooks
 # or: pytest --with-notebooks
 ```
 
-CI runs notebooks in a separate job via `pytest --with-notebooks`.
+CI runs notebooks in a separate workflow job (same Python/OS matrix as unit tests) via `pytest --with-notebooks`.
 
 # Update fixtures
 
