@@ -5,7 +5,7 @@
 groups = ["default", "numba", "test"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:971a79022afc598d27b2b8113fdcc5749905bf22935f323e1243b1fe22d62309"
+content_hash = "sha256:676022098b5624d6164758b8c20503b46dc807bcc22464f0d0386b95d944a243"
 
 [[metadata.targets]]
 requires_python = ">=3.10,<3.12"
@@ -1062,33 +1062,33 @@ files = [
 
 [[package]]
 name = "debugpy"
-version = "1.8.20"
+version = "1.8.21"
 requires_python = ">=3.8"
 summary = "An implementation of the Debug Adapter Protocol for Python"
 groups = ["default"]
 files = [
-    {file = "debugpy-1.8.20-cp310-cp310-macosx_15_0_x86_64.whl", hash = "sha256:157e96ffb7f80b3ad36d808646198c90acb46fdcfd8bb1999838f0b6f2b59c64"},
-    {file = "debugpy-1.8.20-cp310-cp310-manylinux_2_34_x86_64.whl", hash = "sha256:c1178ae571aff42e61801a38b007af504ec8e05fde1c5c12e5a7efef21009642"},
-    {file = "debugpy-1.8.20-cp310-cp310-win32.whl", hash = "sha256:c29dd9d656c0fbd77906a6e6a82ae4881514aa3294b94c903ff99303e789b4a2"},
-    {file = "debugpy-1.8.20-cp310-cp310-win_amd64.whl", hash = "sha256:3ca85463f63b5dd0aa7aaa933d97cbc47c174896dcae8431695872969f981893"},
-    {file = "debugpy-1.8.20-cp311-cp311-macosx_15_0_universal2.whl", hash = "sha256:eada6042ad88fa1571b74bd5402ee8b86eded7a8f7b827849761700aff171f1b"},
-    {file = "debugpy-1.8.20-cp311-cp311-manylinux_2_34_x86_64.whl", hash = "sha256:7de0b7dfeedc504421032afba845ae2a7bcc32ddfb07dae2c3ca5442f821c344"},
-    {file = "debugpy-1.8.20-cp311-cp311-win32.whl", hash = "sha256:773e839380cf459caf73cc533ea45ec2737a5cc184cf1b3b796cd4fd98504fec"},
-    {file = "debugpy-1.8.20-cp311-cp311-win_amd64.whl", hash = "sha256:1f7650546e0eded1902d0f6af28f787fa1f1dbdbc97ddabaf1cd963a405930cb"},
-    {file = "debugpy-1.8.20-cp312-cp312-macosx_15_0_universal2.whl", hash = "sha256:4ae3135e2089905a916909ef31922b2d733d756f66d87345b3e5e52b7a55f13d"},
-    {file = "debugpy-1.8.20-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:88f47850a4284b88bd2bfee1f26132147d5d504e4e86c22485dfa44b97e19b4b"},
-    {file = "debugpy-1.8.20-cp312-cp312-win32.whl", hash = "sha256:4057ac68f892064e5f98209ab582abfee3b543fb55d2e87610ddc133a954d390"},
-    {file = "debugpy-1.8.20-cp312-cp312-win_amd64.whl", hash = "sha256:a1a8f851e7cf171330679ef6997e9c579ef6dd33c9098458bd9986a0f4ca52e3"},
-    {file = "debugpy-1.8.20-cp313-cp313-macosx_15_0_universal2.whl", hash = "sha256:5dff4bb27027821fdfcc9e8f87309a28988231165147c31730128b1c983e282a"},
-    {file = "debugpy-1.8.20-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:84562982dd7cf5ebebfdea667ca20a064e096099997b175fe204e86817f64eaf"},
-    {file = "debugpy-1.8.20-cp313-cp313-win32.whl", hash = "sha256:da11dea6447b2cadbf8ce2bec59ecea87cc18d2c574980f643f2d2dfe4862393"},
-    {file = "debugpy-1.8.20-cp313-cp313-win_amd64.whl", hash = "sha256:eb506e45943cab2efb7c6eafdd65b842f3ae779f020c82221f55aca9de135ed7"},
-    {file = "debugpy-1.8.20-cp314-cp314-macosx_15_0_universal2.whl", hash = "sha256:9c74df62fc064cd5e5eaca1353a3ef5a5d50da5eb8058fcef63106f7bebe6173"},
-    {file = "debugpy-1.8.20-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:077a7447589ee9bc1ff0cdf443566d0ecf540ac8aa7333b775ebcb8ce9f4ecad"},
-    {file = "debugpy-1.8.20-cp314-cp314-win32.whl", hash = "sha256:352036a99dd35053b37b7803f748efc456076f929c6a895556932eaf2d23b07f"},
-    {file = "debugpy-1.8.20-cp314-cp314-win_amd64.whl", hash = "sha256:a98eec61135465b062846112e5ecf2eebb855305acc1dfbae43b72903b8ab5be"},
-    {file = "debugpy-1.8.20-py2.py3-none-any.whl", hash = "sha256:5be9bed9ae3be00665a06acaa48f8329d2b9632f15fd09f6a9a8c8d9907e54d7"},
-    {file = "debugpy-1.8.20.tar.gz", hash = "sha256:55bc8701714969f1ab89a6d5f2f3d40c36f91b2cbe2f65d98bf8196f6a6a2c33"},
+    {file = "debugpy-1.8.21-cp310-cp310-macosx_15_0_x86_64.whl", hash = "sha256:8eeab7b5462f683452c57c0126aaa5ec4e974ddb705f39ba87dff8818c8e08f9"},
+    {file = "debugpy-1.8.21-cp310-cp310-manylinux_2_34_x86_64.whl", hash = "sha256:0fddfdc130ac6d8bfc0415b0409822fa901c8f310e5c945ac5653a0352532344"},
+    {file = "debugpy-1.8.21-cp310-cp310-win32.whl", hash = "sha256:72b5d676c4cbfac3bac5bb01c138a4656e843f93f03ce2a5f4e394ad49fbee73"},
+    {file = "debugpy-1.8.21-cp310-cp310-win_amd64.whl", hash = "sha256:a7fe47fd23da57b9e0bec3f4a8ee65a2dc55782455ed7f2141d75ab5d2eaeef5"},
+    {file = "debugpy-1.8.21-cp311-cp311-macosx_15_0_universal2.whl", hash = "sha256:da456226c7b4c69e35dbe35dcee6623d912000a77816db7856a41af1c72a0264"},
+    {file = "debugpy-1.8.21-cp311-cp311-manylinux_2_34_x86_64.whl", hash = "sha256:f68b891688e61bdc08b8d364d919ff0051e0b94657b39dcd027bc3173edb7cdc"},
+    {file = "debugpy-1.8.21-cp311-cp311-win32.whl", hash = "sha256:f843a8b08c2edeaf9b1582eed4f25441af21a297c22ff16bf76a662557aa9c9e"},
+    {file = "debugpy-1.8.21-cp311-cp311-win_amd64.whl", hash = "sha256:84c564d8cc701d41843b29a92814c1f1bef6798724ca9d675c284ad9f6a547d7"},
+    {file = "debugpy-1.8.21-cp312-cp312-macosx_15_0_universal2.whl", hash = "sha256:9f96713896f39c3dff0ee841f47320c3f2983d33c341e009361bb0ebc79adc4e"},
+    {file = "debugpy-1.8.21-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:c193d474f0a211191f2b4449d2d06157c689013035bd952f3b617e0ef422b176"},
+    {file = "debugpy-1.8.21-cp312-cp312-win32.whl", hash = "sha256:4743373c1cac7f9e74a1b9915bf1dbe0e900eca657ffb170ae07ac8363205ae9"},
+    {file = "debugpy-1.8.21-cp312-cp312-win_amd64.whl", hash = "sha256:bd7ba9dd3daa7c2f942c6ca8d4695a16bf9ac16b63615261c7982bc74f7ed20c"},
+    {file = "debugpy-1.8.21-cp313-cp313-macosx_15_0_universal2.whl", hash = "sha256:13678151fc401e2d68c9880b91e28714f797d40422994572b24560ef80910a88"},
+    {file = "debugpy-1.8.21-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:ecbd158386c31ffe71d46f72d44d56e66331ab9b16cad649156d514368f23ab2"},
+    {file = "debugpy-1.8.21-cp313-cp313-win32.whl", hash = "sha256:2c2ae706dec41d99a9ca1f7ebc987a83e65578363be6f6b3ac9067504917fae1"},
+    {file = "debugpy-1.8.21-cp313-cp313-win_amd64.whl", hash = "sha256:aa648733047443eb1d07682c4ef287d36a54507b643ffdf38b09a3ef002c72a0"},
+    {file = "debugpy-1.8.21-cp314-cp314-macosx_15_0_universal2.whl", hash = "sha256:9bb2a685287a2ac9b181cde89edcec64845cb51de7faaa75badb9a698bc24782"},
+    {file = "debugpy-1.8.21-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:3d6922439bf33fd38a3e2c447869ebc7b97da5cd3d329ff1ef9bc06c4903437e"},
+    {file = "debugpy-1.8.21-cp314-cp314-win32.whl", hash = "sha256:15d4963bd5ffa48f0da0947fd06757fa7621945048a14ad7705431566d3c0e7c"},
+    {file = "debugpy-1.8.21-cp314-cp314-win_amd64.whl", hash = "sha256:fe0744a12353406de0ae8ccff0d0a4a666f00801a3db8fd04e7a5f761cd520e8"},
+    {file = "debugpy-1.8.21-py2.py3-none-any.whl", hash = "sha256:b1e37d333663c8851516a47364ef473da127f9caebe4417e6df6f5825a7e9a92"},
+    {file = "debugpy-1.8.21.tar.gz", hash = "sha256:a3c53278e84c94e11bd87c53970ec391d1a67396c8b22609fcac576520e611a6"},
 ]
 
 [[package]]
@@ -1550,7 +1550,7 @@ files = [
 
 [[package]]
 name = "ipython"
-version = "9.13.0"
+version = "9.14.0"
 requires_python = ">=3.11"
 summary = "IPython: Productive Interactive Computing"
 groups = ["default"]
@@ -1563,15 +1563,15 @@ dependencies = [
     "matplotlib-inline>=0.1.6",
     "pexpect>4.6; sys_platform != \"win32\" and sys_platform != \"emscripten\"",
     "prompt-toolkit<3.1.0,>=3.0.41",
-    "psutil>=7",
+    "psutil>=7; sys_platform != \"emscripten\"",
     "pygments>=2.14.0",
     "stack-data>=0.6.0",
     "traitlets>=5.13.0",
     "typing-extensions>=4.6; python_version < \"3.12\"",
 ]
 files = [
-    {file = "ipython-9.13.0-py3-none-any.whl", hash = "sha256:57f9d4639e20818d328d287c7b549af3d05f12486ea8f2e7f73e52a36ec4d201"},
-    {file = "ipython-9.13.0.tar.gz", hash = "sha256:7e834b6afc99f020e3f05966ced34792f40267d64cb1ea9043886dab0dde5967"},
+    {file = "ipython-9.14.0-py3-none-any.whl", hash = "sha256:8fd984a3372c14b12790b084ba6b5cff5678c0cb063244a0034f06a51f20d6c2"},
+    {file = "ipython-9.14.0.tar.gz", hash = "sha256:6f27ff0f1d9ea050e0551f71568bc4b34d8aba579e8f111c5b4175f44ac6b4aa"},
 ]
 
 [[package]]
@@ -1847,8 +1847,8 @@ files = [
 
 [[package]]
 name = "jupyter-server"
-version = "2.18.2"
-requires_python = ">=3.9"
+version = "2.19.0"
+requires_python = ">=3.10"
 summary = "The backend—i.e. core services, APIs, and REST endpoints—to Jupyter web applications."
 groups = ["default"]
 dependencies = [
@@ -1873,8 +1873,8 @@ dependencies = [
     "websocket-client>=1.7",
 ]
 files = [
-    {file = "jupyter_server-2.18.2-py3-none-any.whl", hash = "sha256:fa5e46539ded65791838035a2b6001f13e54d5f64b8b3752eb1e91fdd641a5b8"},
-    {file = "jupyter_server-2.18.2.tar.gz", hash = "sha256:06b4f40d8a7a00bb39d5216859c81374a0e7cfefe6d8a5a7facc5a5c37c679a7"},
+    {file = "jupyter_server-2.19.0-py3-none-any.whl", hash = "sha256:cb76591b76d7093584c2ad2ae72ac3d58614a4b597507a1bb04e1f9f683cf9ea"},
+    {file = "jupyter_server-2.19.0.tar.gz", hash = "sha256:1731236bc32b680223e1ceb9d68209a845203475012ef68773a81434b46a31a7"},
 ]
 
 [[package]]
@@ -2510,13 +2510,13 @@ files = [
 
 [[package]]
 name = "narwhals"
-version = "2.21.2"
+version = "2.22.0"
 requires_python = ">=3.10"
 summary = "Extremely lightweight compatibility layer between dataframe libraries"
 groups = ["default"]
 files = [
-    {file = "narwhals-2.21.2-py3-none-any.whl", hash = "sha256:7bb57c3700486039215455b9bf2d64261915cc0fd845cc30272d631df696b251"},
-    {file = "narwhals-2.21.2.tar.gz", hash = "sha256:5c5b2d0b47aef7c73ea412cfcbcd467f2f2d5be73e3c2ab19d78f4a97718790a"},
+    {file = "narwhals-2.22.0-py3-none-any.whl", hash = "sha256:1421797ede01789cc1537619dbc3f36f840737240f748fdb24a60a0225fc80be"},
+    {file = "narwhals-2.22.0.tar.gz", hash = "sha256:6486282bb7e4b4ab55963efbd8be1451b764cc4874b74d1fd625eba9dc60b86f"},
 ]
 
 [[package]]
@@ -3139,7 +3139,7 @@ files = [
 
 [[package]]
 name = "panel"
-version = "1.9.2"
+version = "1.9.3"
 requires_python = ">=3.10"
 summary = "The powerful data exploration & web app framework for Python."
 groups = ["default"]
@@ -3161,8 +3161,8 @@ dependencies = [
     "typing-extensions",
 ]
 files = [
-    {file = "panel-1.9.2-py3-none-any.whl", hash = "sha256:7099ad4334c305d7e2654d46945d3117e63379f15d0b8635e67f3f825dbccd9b"},
-    {file = "panel-1.9.2.tar.gz", hash = "sha256:ede8daa7a2515a2f3b49f19ed9aff75fcef48d6d8c3b9df3a4ebf26a551a0407"},
+    {file = "panel-1.9.3-py3-none-any.whl", hash = "sha256:46e8d82541b7ae47d2c2393dd746800b95fa7ad8eb545cc39ab5f366ba00a664"},
+    {file = "panel-1.9.3.tar.gz", hash = "sha256:4d7de30561e31674451ade5f029cddbec6156fd30f3e4cfd7da82f6ecfcbb98f"},
 ]
 
 [[package]]
@@ -4707,7 +4707,7 @@ files = [
 
 [[package]]
 name = "tifffile"
-version = "2026.5.15"
+version = "2026.6.1"
 requires_python = ">=3.12"
 summary = "Read and write TIFF files"
 groups = ["default"]
@@ -4716,8 +4716,8 @@ dependencies = [
     "numpy>=2.1",
 ]
 files = [
-    {file = "tifffile-2026.5.15-py3-none-any.whl", hash = "sha256:6715515a53cabc0cefc5c9f13a0ae2c250e63e2ca784ce02d0b6c333810c2a17"},
-    {file = "tifffile-2026.5.15.tar.gz", hash = "sha256:ee4f3e07ee0d8ff4745a8c735ac2b72caa3173c7d6059b00fdc3ff492a0b635b"},
+    {file = "tifffile-2026.6.1-py3-none-any.whl", hash = "sha256:0d7382d2769b855b81ce358528e2b40c16d48aa39031746efa81215205332a8d"},
+    {file = "tifffile-2026.6.1.tar.gz", hash = "sha256:626c892c0e899d959b9438e7c0e1491dc154a7fead1f1f37a991724a50eceba9"},
 ]
 
 [[package]]

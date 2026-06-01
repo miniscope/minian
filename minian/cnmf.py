@@ -1442,6 +1442,9 @@ def unit_merge(
         The cut-off frequency used to smooth `C` before calculation of
         correlation. If `None` then no smoothing will be done. By default
         `None`.
+    chunk : int, optional
+        Chunk size for the out-of-core correlation computation, passed through
+        to :func:`adj_corr` / :func:`graph_optimize_corr`. By default `600`.
 
     Returns
     -------
@@ -1468,34 +1471,34 @@ def unit_merge(
             k=-1,
         )
     print("computing temporal correlation")
-    nod_df = pd.DataFrame({"unit_id": A.coords["unit_id"].values})
-    # Footprint centroids for spatial_partition. Computed in a single
-    # dask.compute so the three reductions share one pass over A.
-    mass, mom_h, mom_w = da.compute(
-        A.sum(["height", "width"]).data,
-        (A * A.coords["height"]).sum(["height", "width"]).data,
-        (A * A.coords["width"]).sum(["height", "width"]).data,
-    )
-    mass = np.asarray(mass, dtype=float)
-    if (mass <= 0).any():
-        bad_ids = A.coords["unit_id"].values[mass <= 0]
-        # Cast each id to a plain Python scalar so the message reads
-        # `unit_id=[20]` instead of `unit_id=[np.int64(20)]` on numpy 2.x.
-        bad_ids_py = [v.item() if hasattr(v, "item") else v for v in bad_ids]
+    # `C` is indexed by `unit_id` only and carries no spatial coordinates, so
+    # the positions used to partition the correlation graph come from the
+    # footprint centroids. Attach them as `height` / `width` columns on
+    # `nod_df` -- the single, consistent way positions are carried everywhere --
+    # and index the time series by `unit_id`.
+    from .visualization import centroid
+
+    unit_ids = A.coords["unit_id"].values
+    cents = centroid(A, verbose=True)
+    have = set(cents["unit_id"].tolist())
+    missing = [uid for uid in unit_ids if uid not in have]
+    if missing:
+        # `centroid` drops zero-mass (all-NaN) footprints, so a missing unit
+        # here means an empty footprint reached `unit_merge`. `update_spatial`
+        # drops empty footprints via size_thres / mask, so this indicates an
+        # upstream pipeline bug. Cast ids to plain scalars so the message reads
+        # `unit_id=[20]` rather than `unit_id=[np.int64(20)]` on numpy 2.x.
+        missing_py = [v.item() if hasattr(v, "item") else v for v in missing]
         raise ValueError(
-            f"unit_merge received {len(bad_ids_py)} unit(s) with zero-mass "
-            f"footprints (unit_id={bad_ids_py}). update_spatial drops "
-            "empty footprints via size_thres / mask, so an empty footprint "
-            "reaching unit_merge indicates an upstream pipeline bug."
+            f"unit_merge received {len(missing_py)} unit(s) with zero-mass "
+            f"footprints (unit_id={missing_py}). update_spatial drops empty "
+            "footprints via size_thres / mask, so an empty footprint reaching "
+            "unit_merge indicates an upstream pipeline bug."
         )
-    centroids = np.stack(
-        [np.asarray(mom_h, dtype=float) / mass,
-         np.asarray(mom_w, dtype=float) / mass],
-        axis=1,
+    nod_df = (
+        cents.set_index("unit_id").loc[unit_ids, ["height", "width"]].reset_index()
     )
-    adj = adj_corr(
-        C, A_inter, nod_df, freq=noise_freq, positions=centroids, chunk=chunk
-    )
+    adj = adj_corr(C, A_inter, nod_df, freq=noise_freq, idx_dims=["unit_id"], chunk=chunk)
     print("labeling units to be merged")
     adj = adj > thres_corr
     adj = adj + adj.T
@@ -1741,7 +1744,6 @@ def graph_optimize_corr(
     varr: xr.DataArray,
     G: nx.Graph,
     freq: float,
-    positions: np.ndarray,
     idx_dims=["height", "width"],
     chunk: int = 600,
     step_size=50,
@@ -1769,7 +1771,11 @@ def graph_optimize_corr(
         Graph representing computation to be carried out. Should be undirected
         and un-weighted. Each node should have unique attributes with keys
         specified in `idx_dims`, which will be used to index the timeseries in
-        `varr`. Each edge represent a desired correlation.
+        `varr`. Each node must additionally carry ``height`` and ``width``
+        attributes; these 2D coordinates are used to spatially partition the
+        graph (via :func:`spatial_partition`) so the chunked computation
+        recomputes as little smoothing as possible. Each edge represent a
+        desired correlation.
     freq : float
         Cut-off frequency for the optional smoothing. If `None` then no
         smoothing will be done.
@@ -1782,11 +1788,6 @@ def graph_optimize_corr(
         Step size to iterate through all edges. If too small then the iteration
         will take a long time. If too large then the variances in the actual
         chunksize of computation will be large. By default `50`.
-    positions : np.ndarray
-        `(N, 2)` array of 2D coordinates per node, in `sorted(G.nodes)`
-        order, used by :func:`spatial_partition` to chunk the work.
-        Required; callers must surface coordinates explicitly — the graph
-        itself does not carry positional attributes by contract.
 
     Returns
     -------
@@ -1796,15 +1797,18 @@ def graph_optimize_corr(
         with computed value of correlation.
     """
     nodes_sorted = sorted(G.nodes)
-    positions = np.asarray(positions)
-    if positions.shape[0] != len(nodes_sorted):
-        raise ValueError(
-            f"graph_optimize_corr: positions has {positions.shape[0]} rows "
-            f"but G has {len(nodes_sorted)} nodes; they must match in "
-            "sorted(G.nodes) order."
+    try:
+        positions = np.array(
+            [(G.nodes[n]["height"], G.nodes[n]["width"]) for n in nodes_sorted],
+            dtype=float,
         )
+    except KeyError as exc:
+        raise ValueError(
+            "graph_optimize_corr: every node must carry 'height' and 'width' "
+            f"attributes for spatial partitioning (missing key {exc})."
+        ) from None
     membership = spatial_partition(positions, target_chunk=chunk)
-    # Plain int -- keeps the graph JSON-serializable.
+    # Cast np.int64 -> plain int to keep node attributes as plain Python types.
     nx.set_node_attributes(
         G, {k: {"part": int(v)} for k, v in zip(nodes_sorted, membership)}
     )
@@ -1877,7 +1881,7 @@ def adj_corr(
     adj: np.ndarray,
     nod_df: pd.DataFrame,
     freq: float,
-    positions: np.ndarray | None = None,
+    idx_dims=["height", "width"],
     chunk: int = 600,
 ) -> scipy.sparse.csr_matrix:
     """
@@ -1896,16 +1900,22 @@ def adj_corr(
     adj : np.ndarray
         Adjacency matrix.
     nod_df : pd.DataFrame
-        Dataframe containing node attributes. Should have length `adj.shape[0]`
-        and only contain columns relevant to index the time series.
+        Dataframe containing node attributes. Should have length `adj.shape[0]`.
+        Must contain ``height`` and ``width`` columns (the 2D positions used to
+        spatially partition the graph) in addition to the columns named in
+        `idx_dims`.
     freq : float
         Cut-off frequency for the optional smoothing. If `None` then no
         smoothing will be done.
-    positions : np.ndarray, optional
-        `(N, 2)` array of 2D positions per node used for spatial chunking.
-        If `None`, derived from the ``height`` / ``width`` columns of
-        `nod_df`. Supply explicitly when the indexing columns aren't 2D
-        coordinates (`unit_merge` hands in footprint centroids).
+    idx_dims : list, optional
+        Columns of `nod_df` used to index the time series in `varr`. By default
+        `["height", "width"]`. When the time series is indexed by something
+        other than position (e.g. `unit_merge` indexes `C` by ``unit_id``),
+        pass that here; `height` / `width` are still read off `nod_df` for
+        partitioning.
+    chunk : int, optional
+        Chunk size passed through to :func:`graph_optimize_corr`. By default
+        `600`.
 
     Returns
     -------
@@ -1913,14 +1923,10 @@ def adj_corr(
         Sparse matrix of the same shape as `adj` but with values corresponding
         the computed correlation.
     """
-    if positions is None:
-        positions = nod_df[["height", "width"]].to_numpy(dtype=float)
     G = nx.Graph()
     G.add_nodes_from([(i, d) for i, d in enumerate(nod_df.to_dict("records"))])
     G.add_edges_from([(s, t) for s, t in zip(*adj.nonzero())])
-    corr_df = graph_optimize_corr(
-        varr, G, freq, positions, idx_dims=nod_df.columns, chunk=chunk
-    )
+    corr_df = graph_optimize_corr(varr, G, freq, idx_dims=idx_dims, chunk=chunk)
     return scipy.sparse.csr_matrix(
         (corr_df["corr"], (corr_df["source"], corr_df["target"])), shape=adj.shape
     )
