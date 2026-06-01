@@ -46,6 +46,17 @@ except ImportError:
     _DASK_HAS_TASK_SPEC = False
 
 
+def ensure_ffmpeg() -> None:
+    """Require ``ffmpeg`` and ``ffprobe`` on ``PATH`` before video I/O."""
+    for name in ("ffmpeg", "ffprobe"):
+        if shutil.which(name) is None:
+            raise RuntimeError(
+                f"{name!r} not found on PATH. MiniAn needs FFmpeg for "
+                "AVI/MKV ingest and MP4 export. Install FFmpeg and ensure it "
+                "is on PATH (https://ffmpeg.org/download.html)."
+            )
+
+
 def load_videos(
     vpath: str,
     pattern=r"msCam[0-9]+\.avi$",
@@ -233,6 +244,7 @@ def load_avi_lazy(fname: str) -> darr.array:
     arr : darr.array
         The array representation of the video.
     """
+    ensure_ffmpeg()
     probe = ffmpeg.probe(fname)
     video_info = next(s for s in probe["streams"] if s["codec_type"] == "video")
     w = int(video_info["width"])
