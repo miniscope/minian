@@ -1,0 +1,60 @@
+name: pipeline notebook
+
+# Slow end-to-end pipeline.ipynb run — kept separate from pytest so the main
+# test matrix stays fast. See minian/test/test_pipeline.py::test_pipeline_notebook.
+on:
+  push:
+    branches:
+      - master
+      - dev
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  execute-pipeline-notebook:
+    name: pipeline.ipynb · py ${{ matrix.python-version }} · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.10"]
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up ffmpeg
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y ffmpeg
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            brew install ffmpeg
+          fi
+
+      - name: Install minian and test dependencies
+        run: |
+          python -m pip install pdm
+          pdm install --with test
+
+      - name: Run pipeline notebook test
+        run: |
+          mkdir -p artifact
+          cp -r img artifact/img
+          pdm run test-notebook
+
+      - name: Upload notebook artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: notebooks-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifact

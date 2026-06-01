@@ -84,7 +84,8 @@ lock.composite = [
     'pdm lock --with :all --python=">=3.12,<3.14" --append',
     'pdm lock --with :all --python=">=3.14" --append'
 ]
-test = "pytest"
+test = "pytest -m 'not notebook'"
+test-notebook = "pytest -m notebook --no-cov"
 
 [tool.commitizen]
 name = "cz_conventional_commits"
@@ -111,6 +112,9 @@ addopts = [
 ]
 testpaths = [
   "minian/test"
+]
+markers = [
+    "notebook: full pipeline.ipynb execution (slow; run via pdm run test-notebook)",
 ]
 
 

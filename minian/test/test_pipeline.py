@@ -7,6 +7,7 @@ import pytest
 from ..utilities import open_minian
 
 
+@pytest.mark.notebook
 def test_pipeline_notebook():
     os.makedirs("artifact", exist_ok=True)
     args = [
