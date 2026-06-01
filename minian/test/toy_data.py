@@ -14,9 +14,7 @@ from ..utilities import save_minian
 from ..visualization import write_video
 
 
-def gauss_cell(
-    height: int, width: int, sigma: float, cov_coef: float, cent=None, nsamp=1000
-):
+def gauss_cell(height: int, width: int, sigma: float, cov_coef: float, cent=None, nsamp=1000):
     # generate centroid
     if cent is None:
         cent = (random.randint(height), random.randint(width))
@@ -88,10 +86,7 @@ def generate_data(
         )
     A = xr.DataArray(
         np.stack(
-            [
-                gauss_cell(hh_pad, ww_pad, sp_sigma, cov_coef=sp_cov_coef, cent=c)
-                for c in cent
-            ]
+            [gauss_cell(hh_pad, ww_pad, sp_sigma, cov_coef=sp_cov_coef, cent=c) for c in cent]
         ),
         dims=["unit_id", "height", "width"],
         coords={
@@ -101,9 +96,7 @@ def generate_data(
         },
         name="A",
     )
-    tmp_g = np.clip(
-        random.normal(tmp_g_avg, tmp_g_var, size=ncell), a_min=0.8, a_max=0.95
-    )
+    tmp_g = np.clip(random.normal(tmp_g_avg, tmp_g_var, size=ncell), a_min=0.8, a_max=0.95)
     traces = [ar_trace(ff, tmp_pfire, np.array([g])) for g in tmp_g]
     C = xr.DataArray(
         np.stack([t[0] for t in traces]),
@@ -227,11 +220,7 @@ if __name__ == "__main__":
         .astype(np.uint8)
         .rename("Y_true")
     )
-    Y = (
-        ((Y - Y.min()) / (Y.max() - Y.min()) * 255)
-        .astype(np.uint8)
-        .chunk({"frame": 500})
-    )
+    Y = ((Y - Y.min()) / (Y.max() - Y.min()) * 255).astype(np.uint8).chunk({"frame": 500})
     write_video(Y, "toy.mp4", testpath)
     for dat in [Y, Y_true, A, C, S, shifts]:
         save_minian(

@@ -42,6 +42,7 @@ except ImportError:
     def jit(**kwargs) -> Callable:
         def wrapper(fn: Callable) -> Callable:
             return fn
+
         return wrapper
 
 
@@ -90,17 +91,13 @@ def get_noise_fft(
         output_core_dims=[[]],
         dask="parallelized",
         vectorize=True,
-        kwargs=dict(
-            noise_range=noise_range, noise_method=noise_method, threads=threads
-        ),
+        kwargs=dict(noise_range=noise_range, noise_method=noise_method, threads=threads),
         output_dtypes=[float],
     )
     return sn
 
 
-def noise_fft(
-    px: np.ndarray, noise_range=(0.25, 0.5), noise_method="logmexp", threads=1
-) -> float:
+def noise_fft(px: np.ndarray, noise_range=(0.25, 0.5), noise_method="logmexp", threads=1) -> float:
     """
     Estimates noise of the input by aggregating power spectral density within
     `noise_range`.
@@ -188,9 +185,7 @@ def get_noise_welch(
     return sn
 
 
-def noise_welch(
-    y: np.ndarray, noise_range=(0.25, 0.5), noise_method="logmexp"
-) -> float:
+def noise_welch(y: np.ndarray, noise_range=(0.25, 0.5), noise_method="logmexp") -> float:
     """
     Estimates noise of the input by aggregating power spectral density within
     `noise_range`.
@@ -441,13 +436,9 @@ def update_spatial(
         A_bin = A_new > 0
         mask = np.ones(A_new.sizes["unit_id"], dtype=bool)
         if low:
-            mask = np.logical_and(
-                (A_bin.sum(["height", "width"]) > low).compute(), mask
-            )
+            mask = np.logical_and((A_bin.sum(["height", "width"]) > low).compute(), mask)
         if high:
-            mask = np.logical_and(
-                (A_bin.sum(["height", "width"]) < high).compute(), mask
-            )
+            mask = np.logical_and((A_bin.sum(["height", "width"]) < high).compute(), mask)
         mask = xr.DataArray(
             mask, dims=["unit_id"], coords={"unit_id": A_new.coords["unit_id"].values}
         )
@@ -537,9 +528,7 @@ def update_spatial_perpx(
 
 
 @darr.as_gufunc(signature="(f),(),(u)->(u)", output_dtypes=float)
-def update_spatial_block(
-    y: np.ndarray, alpha: np.ndarray, sub: sparse.COO, **kwargs
-) -> sparse.COO:
+def update_spatial_block(y: np.ndarray, alpha: np.ndarray, sub: sparse.COO, **kwargs) -> sparse.COO:
     """
     Carry out spatial update for each 3d block of data.
 
@@ -630,19 +619,12 @@ def compute_trace(
     Y = Y.data
     A = darr.from_array(A.data.map_blocks(sparse.COO).compute(), chunks=-1)
     C = C.data.map_blocks(sparse.COO).T
-    b = (
-        b.fillna(0)
-        .data.map_blocks(sparse.COO)
-        .reshape((1, Y.shape[1], Y.shape[2]))
-        .compute()
-    )
+    b = b.fillna(0).data.map_blocks(sparse.COO).reshape((1, Y.shape[1], Y.shape[2])).compute()
     f = f.fillna(0).data.reshape((-1, 1))
     AtA = darr.tensordot(A, A, axes=[(1, 2), (1, 2)]).compute()
     A_norm = (
-        (1 / (A ** 2).sum(axis=(1, 2)))
-        .map_blocks(
-            lambda a: sparse.diagonalize(sparse.COO(a)), chunks=(A.shape[0], A.shape[0])
-        )
+        (1 / (A**2).sum(axis=(1, 2)))
+        .map_blocks(lambda a: sparse.diagonalize(sparse.COO(a)), chunks=(A.shape[0], A.shape[0]))
         .compute()
     )
     B = darr.tensordot(f, b, axes=[(1), (0)])
@@ -689,9 +671,7 @@ def update_temporal(
     post_scal=False,
     scs_fallback=False,
     concurrent_update=False,
-) -> tuple[
-    xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray
-]:
+) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray]:
     """
     Update temporal components and deconvolve calcium traces for each cell given
     spatial footprints.
@@ -940,12 +920,8 @@ def update_temporal(
         c_ls.append(darr.from_delayed(res[0], shape=cur_YrA.shape, dtype=cur_YrA.dtype))
         s_ls.append(darr.from_delayed(res[1], shape=cur_YrA.shape, dtype=cur_YrA.dtype))
         b_ls.append(darr.from_delayed(res[2], shape=cur_YrA.shape, dtype=cur_YrA.dtype))
-        c0_ls.append(
-            darr.from_delayed(res[3], shape=cur_YrA.shape, dtype=cur_YrA.dtype)
-        )
-        g_ls.append(
-            darr.from_delayed(res[4], shape=(cur_YrA.shape[0], p), dtype=cur_YrA.dtype)
-        )
+        c0_ls.append(darr.from_delayed(res[3], shape=cur_YrA.shape, dtype=cur_YrA.dtype))
+        g_ls.append(darr.from_delayed(res[4], shape=(cur_YrA.shape[0], p), dtype=cur_YrA.dtype))
     uids_new = np.concatenate(uid_ls)
     C_new = xr.DataArray(
         darr.concatenate(c_ls, axis=0),
@@ -993,9 +969,7 @@ def update_temporal(
     with da.config.set(array_optimize=arr_opt):
         da.compute(
             [
-                save_minian(
-                    var.chunk({"unit_id": 1}), intpath, compute=False, overwrite=True
-                )
+                save_minian(var.chunk({"unit_id": 1}), intpath, compute=False, overwrite=True)
                 for var in [C_new, S_new, b0_new, c0_new, g]
             ]
         )
@@ -1082,7 +1056,7 @@ def get_ar_coef(
     else:
         max_lag = p + add_lag
     cov = acovf(y, fft=True)
-    C_mat = toeplitz(cov[:max_lag], cov[:p]) - sn ** 2 * np.eye(max_lag, p)
+    C_mat = toeplitz(cov[:max_lag], cov[:p]) - sn**2 * np.eye(max_lag, p)
     g = lstsq(C_mat, cov[1 : max_lag + 1])[0]
     if pad:
         res = np.zeros(pad)
@@ -1113,7 +1087,7 @@ def update_temporal_block(
     use_smooth=True,
     med_wd=None,
     concurrent=False,
-    **kwargs
+    **kwargs,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Update temporal components given residule traces of a group of cells.
@@ -1455,8 +1429,7 @@ def unit_merge(
     """
     print("computing spatial overlap")
     with da.config.set(
-        array_optimize=darr.optimization.optimize,
-        **{"optimization.fuse.subgraphs": False}
+        array_optimize=darr.optimization.optimize, **{"optimization.fuse.subgraphs": False}
     ):
         A_sps = (A.data.map_blocks(sparse.COO) > 0).rechunk(-1).persist()
         A_inter = sparse.tril(
@@ -1541,9 +1514,7 @@ def label_connected(adj: np.ndarray, only_connected=False) -> np.ndarray:
     return labels
 
 
-def smooth_sig(
-    sig: xr.DataArray, freq: float, method="fft", btype="low"
-) -> xr.DataArray:
+def smooth_sig(sig: xr.DataArray, freq: float, method="fft", btype="low") -> xr.DataArray:
     """
     Filter the input timeseries with a cut-off frequency in vecorized fashion.
 
@@ -1692,16 +1663,10 @@ def compute_AtC(A: xr.DataArray, C: xr.DataArray) -> xr.DataArray:
         A.coords["height"].values,
         A.coords["width"].values,
     )
-    A = darr.from_array(
-        A.data.map_blocks(sparse.COO, dtype=A.dtype).compute(), chunks=-1
-    )
+    A = darr.from_array(A.data.map_blocks(sparse.COO, dtype=A.dtype).compute(), chunks=-1)
     C = C.transpose("frame", "unit_id").data.map_blocks(sparse.COO, dtype=C.dtype)
-    AtC = darr.tensordot(C, A, axes=(1, 0)).map_blocks(
-        lambda a: a.todense(), dtype=A.dtype
-    )
-    arr_opt = fct.partial(
-        custom_arr_optimize, rename_dict={"tensordot": "tensordot_restricted"}
-    )
+    AtC = darr.tensordot(C, A, axes=(1, 0)).map_blocks(lambda a: a.todense(), dtype=A.dtype)
+    arr_opt = fct.partial(custom_arr_optimize, rename_dict={"tensordot": "tensordot_restricted"})
     with da.config.set(array_optimize=arr_opt):
         AtC = da.optimize(AtC)[0]
     return xr.DataArray(
@@ -1766,9 +1731,7 @@ def graph_optimize_corr(
     n_cuts, membership = pymetis.part_graph(
         max(int(np.ceil(G.number_of_nodes() / chunk)), 1), adjacency=adj_list(G)
     )
-    nx.set_node_attributes(
-        G, {k: {"part": v} for k, v in zip(sorted(G.nodes), membership)}
-    )
+    nx.set_node_attributes(G, {k: {"part": v} for k, v in zip(sorted(G.nodes), membership)})
     eg_df = nx.to_pandas_edgelist(G)
     part_map = nx.get_node_attributes(G, "part")
     eg_df["part_src"] = eg_df["source"].map(part_map)
@@ -1785,8 +1748,7 @@ def graph_optimize_corr(
         ridx = edf["source"].map(px_map).values
         cidx = edf["target"].map(px_map).values
         idx_arr = {
-            d: xr.DataArray([dd[p] for p in pxs], dims="pixels")
-            for d, dd in idx_dict.items()
+            d: xr.DataArray([dd[p] for p in pxs], dims="pixels") for d, dd in idx_dict.items()
         }
         vsub = varr.sel(**idx_arr).data
         if len(idx_arr) > 1:  # vectorized indexing
@@ -1882,9 +1844,7 @@ def adj_list(G: nx.Graph) -> list[np.ndarray]:
 
 
 @darr.as_gufunc(signature="(p,f),(i),(i)->(i)", output_dtypes=[float])
-def smooth_corr(
-    X: np.ndarray, ridx: np.ndarray, cidx: np.ndarray, freq: float
-) -> np.ndarray:
+def smooth_corr(X: np.ndarray, ridx: np.ndarray, cidx: np.ndarray, freq: float) -> np.ndarray:
     """
     Wraps around :func:`filt_fft_vec` and :func:`idx_corr` to carry out both
     smoothing and computation of partial correlation.

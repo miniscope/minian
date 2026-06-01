@@ -53,9 +53,7 @@ def notebook(version: str):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--notebooks", action="store_true", help="Installs the notebooks"
-    )
+    parser.add_argument("--notebooks", action="store_true", help="Installs the notebooks")
     parser.add_argument("--demo", action="store_true", help="Installs the demo data")
     parser.add_argument(
         "-v",

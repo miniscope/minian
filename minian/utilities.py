@@ -120,13 +120,10 @@ def load_videos(
         if `downsample_strategy` is not "subset" or "mean"
     """
     vpath = os.path.normpath(vpath)
-    vlist = natsorted(
-        [vpath + os.sep + v for v in os.listdir(vpath) if re.search(pattern, v)]
-    )
+    vlist = natsorted([vpath + os.sep + v for v in os.listdir(vpath) if re.search(pattern, v)])
     if not vlist:
         raise FileNotFoundError(
-            f"No data with pattern {pattern}"
-            f" found in the specified folder {vpath}"
+            f"No data with pattern {pattern} found in the specified folder {vpath}"
         )
     print(f"loading {len(vlist)} videos in folder {vpath}")
 
@@ -188,10 +185,7 @@ def load_tif_lazy(fname: str) -> darr.array:
     flist = [fmread(fname, i) for i in range(f)]
 
     sample = flist[0].compute()
-    arr = [
-        da.array.from_delayed(fm, dtype=sample.dtype, shape=sample.shape)
-        for fm in flist
-    ]
+    arr = [da.array.from_delayed(fm, dtype=sample.dtype, shape=sample.shape) for fm in flist]
     return da.array.stack(arr, axis=0)
 
 
@@ -220,10 +214,7 @@ def load_avi_lazy_framewise(fname: str) -> darr.array:
     fmread = da.delayed(load_avi_perframe)
     flist = [fmread(fname, i) for i in range(f)]
     sample = flist[0].compute()
-    arr = [
-        da.array.from_delayed(fm, dtype=sample.dtype, shape=sample.shape)
-        for fm in flist
-    ]
+    arr = [da.array.from_delayed(fm, dtype=sample.dtype, shape=sample.shape) for fm in flist]
     return da.array.stack(arr, axis=0)
 
 
@@ -355,9 +346,7 @@ def open_minian(
             arr_path = pjoin(dpath, d)
             if isdir(arr_path):
                 arr = list(xr.open_zarr(arr_path).values())[0]
-                arr.data = darr.from_zarr(
-                    os.path.join(arr_path, arr.name), inline_array=True
-                )
+                arr.data = darr.from_zarr(os.path.join(arr_path, arr.name), inline_array=True)
                 dslist.append(arr)
         if return_dict:
             ds = {d.name: d for d in dslist}
@@ -432,10 +421,7 @@ def open_minian_mf(
         nextdir = os.path.abspath(nextdir)
         cur_path = Path(nextdir)
         dir_tag = bool(
-            
-                (any([Path(epath) in cur_path.parents for epath in sub_dirs]))
-                or nextdir in sub_dirs
-            
+            (any([Path(epath) in cur_path.parents for epath in sub_dirs])) or nextdir in sub_dirs
         )
         if exclude == dir_tag:
             continue
@@ -535,9 +521,7 @@ def save_minian(
     ds = var.to_dataset()
     if meta_dict is not None:
         pathlist = os.path.split(os.path.abspath(dpath))[0].split(os.sep)
-        ds = ds.assign_coords(
-            **dict([(dn, pathlist[di]) for dn, di in meta_dict.items()])
-        )
+        ds = ds.assign_coords(**dict([(dn, pathlist[di]) for dn, di in meta_dict.items()]))
     md = {True: "a", False: "w-"}[overwrite]
     fp = os.path.join(dpath, var.name + ".zarr")
     if overwrite:
@@ -645,9 +629,7 @@ def update_meta(dpath, pattern=r"^minian\.nc$", meta_dict=None, backend="netcdf"
             new_ds.attrs = deepcopy(old_ds.attrs)
             old_ds.close()
             new_ds = new_ds.assign_coords(
-                **dict(
-                    [(cdname, pathlist[cdval]) for cdname, cdval in meta_dict.items()]
-                )
+                **dict([(cdname, pathlist[cdval]) for cdname, cdval in meta_dict.items()])
             )
             if backend == "netcdf":
                 new_ds.to_netcdf(f_path, mode="a")

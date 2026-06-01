@@ -179,9 +179,7 @@ def pd_dist(A: pd.DataFrame, B: pd.DataFrame) -> pd.Series:
     dist : pd.Series
         Distance between centroid locations. Has same row index as `A` and `B`.
     """
-    return np.sqrt(
-        ((A[["height", "width"]] - B[["height", "width"]]) ** 2).sum("columns")
-    )
+    return np.sqrt(((A[["height", "width"]] - B[["height", "width"]]) ** 2).sum("columns"))
 
 
 def cartesian(*args: Iterable) -> np.ndarray:
@@ -521,9 +519,7 @@ def resolve(mapping: pd.DataFrame, mode: str) -> pd.DataFrame:
         mapping_new = pd.concat(map_ls, axis="columns", ignore_index=True).T
     else:
         return pd.DataFrame()
-    mapping_new.columns = pd.MultiIndex.from_tuples(
-        [("session", s) for s in mapping_new.columns]
-    )
+    mapping_new.columns = pd.MultiIndex.from_tuples([("session", s) for s in mapping_new.columns])
     try:
         for mc in mapping["meta"]:
             val = mapping["meta", mc].unique().item()

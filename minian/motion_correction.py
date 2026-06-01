@@ -214,17 +214,11 @@ def est_motion_part(
     tmp_ls = []
     sh_ls = []
     for blk in varr.blocks:
-        res = da.delayed(est_motion_chunk)(
-            blk, None, alt_error=alt_error, npart=npart, **kwargs
-        )
+        res = da.delayed(est_motion_chunk)(blk, None, alt_error=alt_error, npart=npart, **kwargs)
         if alt_error:
-            tmp = darr.from_delayed(
-                res[0], shape=(3, blk.shape[1], blk.shape[2]), dtype=blk.dtype
-            )
+            tmp = darr.from_delayed(res[0], shape=(3, blk.shape[1], blk.shape[2]), dtype=blk.dtype)
         else:
-            tmp = darr.from_delayed(
-                res[0], shape=(blk.shape[1], blk.shape[2]), dtype=blk.dtype
-            )
+            tmp = darr.from_delayed(res[0], shape=(blk.shape[1], blk.shape[2]), dtype=blk.dtype)
         if kwargs.get("mesh_size", None):
             sh = darr.from_delayed(
                 res[1],
@@ -341,9 +335,7 @@ def est_motion_chunk(
             tmp = varr[0]
         return tmp, motions
     while varr.shape[0] > npart:
-        part_idx = np.array_split(
-            np.arange(varr.shape[0]), np.ceil(varr.shape[0] / npart)
-        )
+        part_idx = np.array_split(np.arange(varr.shape[0]), np.ceil(varr.shape[0] / npart))
         tmp_ls = []
         sh_ls = []
         for idx in part_idx:
@@ -378,8 +370,7 @@ def est_motion_chunk(
     prop_good = len(good_idxs) / len(good_fm)
     if prop_good < 0.9:
         warnings.warn(
-            f"only {prop_good} of the frames are good."
-            "Consider lowering your circularity threshold"
+            f"only {prop_good} of the frames are good.Consider lowering your circularity threshold"
         )
     # use good frame closest to center as template
     mid = good_idxs[np.abs(good_idxs - varr.shape[0] / 2).argmin()]
@@ -467,9 +458,7 @@ def est_motion_chunk(
             tmp1 = varr[1]
         tmp = np.stack([tmp0, tmp, tmp1], axis=0)
     if sh_org is not None:
-        motions = np.concatenate(
-            [motions[i] + sh for i, sh in enumerate(sh_org)], axis=0
-        )
+        motions = np.concatenate([motions[i] + sh for i, sh in enumerate(sh_org)], axis=0)
     return tmp, motions
 
 
@@ -533,9 +522,7 @@ def est_motion_perframe(
         reg.SetMetricMovingMask(sitk.GetImageFromArray(src_ma.astype(np.uint8)))
     if dst_ma is not None:
         reg.SetMetricFixedMask(sitk.GetImageFromArray(dst_ma.astype(np.uint8)))
-    trans_opt = sitk.BSplineTransformInitializer(
-        image1=dst, transformDomainMeshSize=mesh_size
-    )
+    trans_opt = sitk.BSplineTransformInitializer(image1=dst, transformDomainMeshSize=mesh_size)
     reg.SetInitialTransform(trans_opt)
     reg.SetMetricAsCorrelation()
     reg.SetInterpolator(sitk.sitkLinear)
@@ -543,18 +530,14 @@ def est_motion_perframe(
         learningRate=0.1, convergenceMinimumValue=1e-5, numberOfIterations=niter
     )
     tx = reg.Execute(dst, src)
-    coef = np.stack(
-        [sitk.GetArrayFromImage(im) for im in tx.Downcast().GetCoefficientImages()]
-    )
+    coef = np.stack([sitk.GetArrayFromImage(im) for im in tx.Downcast().GetCoefficientImages()])
     coef = coef + sh.reshape((2, 1, 1))
     return coef
 
 
 def match_temp(src, dst, max_sh, local, subpixel=False):
     dst = np.pad(dst, max_sh)
-    cor = cv2.matchTemplate(
-        src.astype(np.float32), dst.astype(np.float32), cv2.TM_CCOEFF_NORMED
-    )
+    cor = cv2.matchTemplate(src.astype(np.float32), dst.astype(np.float32), cv2.TM_CCOEFF_NORMED)
     if not len(np.unique(cor)) > 1:
         return np.array([0, 0])
     cent = np.floor(np.array(cor.shape) / 2)
@@ -604,9 +587,7 @@ def check_temp(fm: np.ndarray, max_sh: int) -> float:
     estimate_motion
     """
     fm_pad = np.pad(fm, max_sh)
-    cor = cv2.matchTemplate(
-        fm.astype(np.float32), fm_pad.astype(np.float32), cv2.TM_SQDIFF_NORMED
-    )
+    cor = cv2.matchTemplate(fm.astype(np.float32), fm_pad.astype(np.float32), cv2.TM_SQDIFF_NORMED)
     conts = cv2.findContours(
         (cor < 1).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )[0]
@@ -617,7 +598,7 @@ def check_temp(fm: np.ndarray, max_sh: int) -> float:
     if perimeter <= 0:
         return 0
     area = cv2.contourArea(cont)
-    circularity = 4 * np.pi * (area / (perimeter ** 2))
+    circularity = 4 * np.pi * (area / (perimeter**2))
     return circularity
 
 

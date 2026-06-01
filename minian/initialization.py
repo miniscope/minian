@@ -89,9 +89,7 @@ def seeds_init(
         hwnd = np.ceil(wnd_size / 2)
         max_idx = list(
             map(
-                lambda c: slice(
-                    int(np.floor(c - hwnd).clip(0)), int(np.ceil(c + hwnd))
-                ),
+                lambda c: slice(int(np.floor(c - hwnd).clip(0)), int(np.ceil(c + hwnd))),
                 centers,
             )
         )
@@ -112,9 +110,7 @@ def seeds_init(
         output_dtypes=[np.uint8],
         kwargs=dict(k0=2, k1=max_wnd, diff=diff_thres),
     ).sum("sample")
-    seeds = (
-        loc_max.where(loc_max > 0).rename("seeds").to_dataframe().dropna().reset_index()
-    )
+    seeds = loc_max.where(loc_max > 0).rename("seeds").to_dataframe().dropna().reset_index()
     return seeds[["height", "width", "seeds"]]
 
 
@@ -137,9 +133,7 @@ def max_proj_frame(varr: xr.DataArray, idx: np.ndarray) -> xr.DataArray:
     return varr.isel(frame=idx).max("frame")
 
 
-def local_max_roll(
-    fm: np.ndarray, k0: int, k1: int, diff: int | float
-) -> np.ndarray:
+def local_max_roll(fm: np.ndarray, k0: int, k1: int, diff: int | float) -> np.ndarray:
     """
     Compute local maxima of a frame with a range of kernel size.
 
@@ -338,9 +332,7 @@ def pnr_refine(
     chk_size = min(int(len(seeds) / 128), 100)
     vsub_ls = []
     for _, seed_sub in seeds.groupby(np.arange(len(seeds)) // chk_size):
-        vsub = varr.sel(
-            height=seed_sub["height"].to_xarray(), width=seed_sub["width"].to_xarray()
-        )
+        vsub = varr.sel(height=seed_sub["height"].to_xarray(), width=seed_sub["width"].to_xarray())
         vsub_ls.append(vsub)
     varr_sub = xr.concat(vsub_ls, "index")
     if med_wnd:
@@ -427,9 +419,7 @@ def pnr_perseed(a: np.ndarray, freq: float, q: tuple) -> float:
     return ptp / ptp_noise
 
 
-def intensity_refine(
-    varr: xr.DataArray, seeds: pd.DataFrame, thres_mul=2
-) -> pd.DataFrame:
+def intensity_refine(varr: xr.DataArray, seeds: pd.DataFrame, thres_mul=2) -> pd.DataFrame:
     """
     Filter seeds by thresholding the intensity of their corresponding pixels in
     the max projection of the movie.
@@ -507,9 +497,7 @@ def ks_refine(varr: xr.DataArray, seeds: pd.DataFrame, sig=0.01) -> pd.DataFrame
     chk_size = min(int(len(seeds) / 128), 100)
     vsub_ls = []
     for _, seed_sub in seeds.groupby(np.arange(len(seeds)) // chk_size):
-        vsub = varr.sel(
-            height=seed_sub["height"].to_xarray(), width=seed_sub["width"].to_xarray()
-        )
+        vsub = varr.sel(height=seed_sub["height"].to_xarray(), width=seed_sub["width"].to_xarray())
         vsub_ls.append(vsub)
     varr_sub = xr.concat(vsub_ls, "index")
     print("performing KS test")
@@ -608,9 +596,7 @@ def seeds_merge(
         cur_smp = np.where(labels == cur_cmp)[0]
         cur_max = np.array(
             [
-                max_proj.sel(
-                    height=seeds.iloc[s]["height"], width=seeds.iloc[s]["width"]
-                )
+                max_proj.sel(height=seeds.iloc[s]["height"], width=seeds.iloc[s]["width"])
                 for s in cur_smp
             ]
         )
@@ -667,9 +653,7 @@ def initA(
     """
     print("optimizing computation graph")
     nod_df = pd.DataFrame(
-        np.array(
-            list(itt.product(varr.coords["height"].values, varr.coords["width"].values))
-        ),
+        np.array(list(itt.product(varr.coords["height"].values, varr.coords["width"].values))),
         columns=["height", "width"],
     ).merge(seeds.reset_index(), how="outer", on=["height", "width"])
     seed_df = nod_df[nod_df["index"].notnull()]
@@ -677,12 +661,7 @@ def initA(
     nns_arr = nn_tree.query_radius(seed_df[["height", "width"]], r=wnd)
     sdg = nx.Graph()
     sdg.add_nodes_from(
-        [
-            (i, d)
-            for i, d in enumerate(
-                nod_df[["height", "width", "index"]].to_dict("records")
-            )
-        ]
+        [(i, d) for i, d in enumerate(nod_df[["height", "width", "index"]].to_dict("records"))]
     )
     for isd, nns in enumerate(nns_arr):
         cur_sd = seed_df.index[isd]
@@ -736,9 +715,7 @@ def initA(
         cur_corr["iheight"] = cur_corr["height"].map(ih_dict)
         cur_corr["iwidth"] = cur_corr["width"].map(iw_dict)
         cur_A = darr.array(
-            sparse.COO(
-                cur_corr[["iheight", "iwidth"]].T, cur_corr["corr"], shape=Ashape
-            )
+            sparse.COO(cur_corr[["iheight", "iwidth"]].T, cur_corr["corr"], shape=Ashape)
         )
         A_ls.append(cur_A)
     A = xr.DataArray(
