@@ -41,6 +41,7 @@ from scipy.ndimage.measurements import center_of_mass
 from scipy.spatial import cKDTree
 
 from .cnmf import compute_AtC
+from .ffmpeg_utils import H264, RawGray, VideoExport, ensure_ffmpeg
 from .motion_correction import apply_shifts
 from .utilities import custom_arr_optimize, rechunk_like
 
@@ -1200,6 +1201,7 @@ class AlignViewer:
 
 
 def write_vid_blk(arr, vpath, options):
+    ensure_ffmpeg()
     uid = uuid4()
     vname = f"{uid}.mp4"
     fpath = os.path.join(vpath, vname)
@@ -1219,7 +1221,7 @@ def write_video(
     vname: str | None = None,
     vpath: str | None = ".",
     norm=True,
-    options={"crf": "18", "preset": "ultrafast"},
+    options=H264.OUTPUT_OPTIONS,
 ) -> str:
     """
     Write a video from a movie array using `python-ffmpeg`.
@@ -1238,8 +1240,8 @@ def write_video(
         Whether to normalize the values of the input array such that they span
         the full pixel depth range (0, 255). By default `True`.
     options : dict, optional
-        Optional output arguments passed to `ffmpeg`. By default `{"crf": "18",
-        "preset": "ultrafast"}`.
+        Optional output arguments passed to `ffmpeg`. By default
+        :attr:`~minian.ffmpeg_utils.H264.OUTPUT_OPTIONS`.
 
     Returns
     -------
@@ -1250,6 +1252,7 @@ def write_video(
     --------
     ffmpeg.output
     """
+    ensure_ffmpeg()
     if not vname:
         vname = f"{uuid4()}.mp4"
     fname = os.path.join(vpath, vname)
@@ -1268,9 +1271,20 @@ def write_video(
     arr = arr.clip(0, 255).astype(np.uint8)
     w, h = arr.sizes["width"], arr.sizes["height"]
     process = (
-        ffmpeg.input("pipe:", format="rawvideo", pix_fmt="gray", s=f"{w}x{h}")
-        .filter("pad", int(np.ceil(w / 2) * 2), int(np.ceil(h / 2) * 2))
-        .output(fname, pix_fmt="yuv420p", vcodec="libx264", r=30, **options)
+        ffmpeg.input(
+            RawGray.PIPE,
+            format=RawGray.FORMAT,
+            pix_fmt=RawGray.PIX_FMT,
+            s=f"{w}x{h}",
+        )
+        .filter(H264.PAD_FILTER, int(np.ceil(w / 2) * 2), int(np.ceil(h / 2) * 2))
+        .output(
+            fname,
+            pix_fmt=H264.OUTPUT_PIX_FMT,
+            vcodec=H264.VCODEC,
+            r=H264.FRAME_RATE,
+            **options,
+        )
         .overwrite_output()
         .run_async(pipe_stdin=True)
     )
@@ -1282,10 +1296,11 @@ def write_video(
 
 
 def concat_video_recursive(vlist, vname=None):
+    ensure_ffmpeg()
     if not len(vlist) > 1:
         return vlist[0]
-    if len(vlist) > 256:
-        vlist = np.array_split(vlist, 256)
+    if len(vlist) > VideoExport.CONCAT_LIST_CHUNK:
+        vlist = np.array_split(vlist, VideoExport.CONCAT_LIST_CHUNK)
         vlist = [concat_video_recursive(list(v)) for v in vlist]
     vpath = os.path.dirname(vlist[0])
     streams = [ffmpeg.input(p) for p in vlist]

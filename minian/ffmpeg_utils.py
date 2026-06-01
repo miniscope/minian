@@ -2,7 +2,6 @@
 
 import shutil
 import subprocess
-from typing import Optional
 
 
 class RawGray:
@@ -42,7 +41,7 @@ class FFmpegUnavailableError(RuntimeError):
 
 
 _success: bool = False
-_failure: Optional[str] = None
+_failure: str | None = None
 
 
 def ensure_ffmpeg() -> None:
