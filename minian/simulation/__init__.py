@@ -10,6 +10,7 @@ See ``proposals/simulation-plan.md`` and ``proposals/simulation-spec.md``.
 
 from minian.simulation.recording import GroundTruth, Recording, finalize
 from minian.simulation.scene import Cell, GroundTruthBuilder, Scene
+from minian.simulation.simulate import simulate
 from minian.simulation.spec import (
     Acquisition,
     AnyStep,
@@ -62,4 +63,5 @@ __all__ = [
     "Vasculature",
     "Vignette",
     "finalize",
+    "simulate",
 ]

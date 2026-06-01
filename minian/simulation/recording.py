@@ -223,7 +223,15 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         neuropil_temporal=scene.truth.neuropil_temporal,
         neuropil_spatial=_crop_components(scene.truth.neuropil_spatial, fov_h, fov_w),
     )
-    observed_movie = scene.movie.values.astype(spec.output.store_dtype)
+    # observed is always the sensor FOV: brain_motion already crops the movie,
+    # but a partial build (until= before motion) can leave it canvas-sized, so
+    # crop the centered FOV here too for consistency with the cropped footprints.
+    movie = scene.movie.values
+    crop_h = (movie.shape[1] - fov_h) // 2
+    crop_w = (movie.shape[2] - fov_w) // 2
+    if crop_h > 0 or crop_w > 0:
+        movie = movie[:, crop_h : crop_h + fov_h, crop_w : crop_w + fov_w]
+    observed_movie = movie.astype(spec.output.store_dtype)
     return Recording(
         spec=spec, observed=observed_movie, ground_truth=gt, snapshots=scene.snapshots
     )
