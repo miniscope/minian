@@ -12,3 +12,4 @@ nbsphinx==0.8.7
 docutils==0.16
 m2r2==0.2.7
 jinja2==2.11.3
+markupsafe==2.0.1

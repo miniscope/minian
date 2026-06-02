@@ -1,8 +1,12 @@
 import dask as da
 import os
+from importlib.metadata import version
 from .utilities import custom_arr_optimize, custom_delay_optimize
 
-__version__ = "1.2.1"
+try:
+    __version__ = version("minian")
+except:
+    __version__ = "0.0.0"
 
 da.config.set(
     array_optimize=custom_arr_optimize, delayed_optimize=custom_delay_optimize
@@ -28,3 +32,4 @@ da.config.set(
 # os.environ["LD_PRELOAD"] = "~/.conda/envs/minian-dev/lib/libjemalloc.so"
 # alternatively one can limit the malloc pool, which is the default for minian
 os.environ["MALLOC_MMAP_THRESHOLD_"] = "16384"
+

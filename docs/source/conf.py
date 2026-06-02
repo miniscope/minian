@@ -33,7 +33,7 @@ dask.array.as_gufunc = custom_as_gufunc
 # -- Project information -----------------------------------------------------
 
 project = "MiniAn"
-copyright = "2018-%s, MiniAn Developers" % datetime.datetime.now().year
+copyright = f"2018-{datetime.datetime.now().year}, MiniAn Developers"
 
 
 # -- General configuration ---------------------------------------------------

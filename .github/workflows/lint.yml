@@ -1,0 +1,37 @@
+name: lint
+
+# Run this workflow every time for pull requests and pushes to master and dev branch
+on:
+  push:
+    branches:
+      - master
+      - dev
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install Ruff
+        run: python -m pip install ruff
+      - name: Ruff Linting
+        run: ruff check minian
+
+  lock:
+    name: lockfile current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: install python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: install pdm
+        # exclude-newer in [tool.pdm.resolution] requires PDM >= 2.26.9; see pyproject.toml
+        run: python -m pip install "pdm>=2.26.9"
+      - name: check lockfile
+        run: pdm lock --check --with :all

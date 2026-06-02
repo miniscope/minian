@@ -1,6 +1,7 @@
 import argparse
 import os
 import requests
+from importlib.metadata import version
 
 NOTEBOOK_FILES = [
     "pipeline.ipynb",
@@ -13,7 +14,10 @@ NOTEBOOK_FILES = [
 DEMO_FILES = [f"demo_movies/msCam{i}.avi" for i in range(1, 11)] + [
     f"demo_data/session{i}/minian.nc" for i in range(1, 3)
 ]
-VERSION = "1.2.1"
+try:
+    VERSION = version("minian")
+except:
+    VERSION = "0.0.0"
 
 
 def _get_file(filename: str, version: str):
@@ -57,7 +61,7 @@ def main():
         "-v",
         action="store",
         default=VERSION,
-        help="Git repo branch or tag name, default {}".format(VERSION),
+        help=f"Git repo branch or tag name, default {VERSION}",
     )
     args = parser.parse_args()
 

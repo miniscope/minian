@@ -1,5 +1,5 @@
 import itertools as itt
-from typing import Iterable
+from collections.abc import Iterable
 
 import dask as da
 import networkx as nx

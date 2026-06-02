@@ -2,7 +2,8 @@ import functools as fct
 import itertools as itt
 import os
 from collections import OrderedDict
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Optional, Union
+from collections.abc import Callable
 from uuid import uuid4
 
 import colorcet as cc
@@ -41,7 +42,7 @@ from scipy.spatial import cKDTree
 
 from .cnmf import compute_AtC
 from .motion_correction import apply_shifts
-from .utilities import custom_arr_optimize, rechunk_like
+from .utilities import custom_arr_optimize, ensure_ffmpeg, rechunk_like
 
 
 class VArrayViewer:
@@ -91,17 +92,17 @@ class VArrayViewer:
 
     def __init__(
         self,
-        varr: Union[xr.DataArray, List[xr.DataArray], xr.Dataset],
+        varr: xr.DataArray | list[xr.DataArray] | xr.Dataset,
         framerate=30,
         summary=["mean"],
-        meta_dims: List[str] = None,
+        meta_dims: list[str] = None,
         datashading=True,
         layout=False,
     ):
         """
         Parameters
         ----------
-        varr : Union[xr.DataArray, List[xr.DataArray], xr.Dataset]
+        varr : Union[xr.DataArray, list[xr.DataArray], xr.Dataset]
             Input array, list of arrays, or dataset to be visualized. Each array
             should contain dimensions "height", "width" and "frame". If a
             dataset, then the dimensions specified in `meta_dims` will be used
@@ -112,10 +113,10 @@ class VArrayViewer:
         framerate : int, optional
             The framerate of playback when using the toolbar. By default `30`.
         summary : list, optional
-            List of summary statistics to plot. The statistics should be one of
+            list of summary statistics to plot. The statistics should be one of
             `{"mean", "max", "min", "diff"}`. By default `["mean"]`.
-        meta_dims : List[str], optional
-            List of dimension names that can uniquely identify each input array
+        meta_dims : list[str], optional
+            list of dimension names that can uniquely identify each input array
             in `varr`. Only used if `varr` is a `xr.Dataset`. By default `None`.
         datashading : bool, optional
             Whether to use datashading on the summary statistics. By default
@@ -141,7 +142,7 @@ class VArrayViewer:
             self.ds = varr
         else:
             raise NotImplementedError(
-                "video array of type {} not supported".format(type(varr))
+                f"video array of type {type(varr)} not supported"
             )
         try:
             self.meta_dicts = OrderedDict(
@@ -179,7 +180,7 @@ class VArrayViewer:
             try:
                 summ = {k: summ_all[k] for k in summary}
             except KeyError:
-                print("{} Not understood for specifying summary".format(summary))
+                print(f"{summary} Not understood for specifying summary")
             if summ:
                 print("computing summary")
                 sum_list = []
@@ -208,13 +209,13 @@ class VArrayViewer:
             except ValueError:
                 curds = self.ds_sub
             fim = fct.partial(img, ds=curds)
-            im = hv.DynamicMap(fim, streams=[self.strm_f]).opts(
+            im = hv.DynamicMap(fim, streams=[self.strm_f]).options(
                 frame_width=500, aspect=self._w / self._h, cmap="Viridis"
             )
             self.xyrange = RangeXY(source=im).rename(x_range="w", y_range="h")
             if not self._layout:
-                hv_box = hv.Polygons([]).opts(
-                    style={"fill_alpha": 0.3, "line_color": "white"}
+                hv_box = hv.Rectangles([]).options(
+                    fill_alpha=0.3, line_color="white"
                 )
                 self.str_box = BoxEdit(source=hv_box)
                 im_ovly = im * hv_box
@@ -238,7 +239,7 @@ class VArrayViewer:
             his = hv.DynamicMap(fhist, streams=[self.strm_f, self.xyrange]).opts(
                 frame_height=int(500 * self._h / self._w), width=150, cmap="Viridis"
             )
-            im_ovly = (im_ovly << his).map(lambda p: p.opts(style=dict(cmap="Viridis")))
+            im_ovly = (im_ovly << his).map(lambda p: p)
             return im_ovly
 
         if self._layout and self.meta_dicts:
@@ -261,8 +262,8 @@ class VArrayViewer:
                 hvsum = hvsum.layout(list(self.meta_dicts.keys()))
             except:
                 pass
-            vl = hv.DynamicMap(lambda f: hv.VLine(f), streams=[self.strm_f]).opts(
-                style=dict(color="red")
+            vl = hv.DynamicMap(lambda f: hv.VLine(f), streams=[self.strm_f]).options(
+                color="red"
             )
             summ = (hvsum * vl).map(
                 lambda p: p.opts(frame_width=500, aspect=3), [hv.RGB, hv.Curve]
@@ -414,11 +415,11 @@ class CNMFViewer:
 
     def __init__(
         self,
-        minian: Optional[xr.Dataset] = None,
-        A: Optional[xr.DataArray] = None,
-        C: Optional[xr.DataArray] = None,
-        S: Optional[xr.DataArray] = None,
-        org: Optional[xr.DataArray] = None,
+        minian: xr.Dataset | None = None,
+        A: xr.DataArray | None = None,
+        C: xr.DataArray | None = None,
+        S: xr.DataArray | None = None,
+        org: xr.DataArray | None = None,
         sortNN=True,
     ):
         """
@@ -673,7 +674,7 @@ class CNMFViewer:
             ).to(hv.Curve, "frame")
         cur_vl = hv.DynamicMap(
             lambda f, y: hv.VLine(f) if f else hv.VLine(0), streams=[self.strm_f]
-        ).opts(style=dict(color="red"))
+        ).options(color="red")
         cur_cv = hv.Curve([], kdims=["frame"], vdims=["Internsity (A.U.)"])
         self.strm_f.source = cur_cv
         h_cv = len(self._w) // 8
@@ -688,14 +689,14 @@ class CNMFViewer:
                 .add_dimension("time", 0, 0),
                 "trace",
             )
-            .opts(plot=dict(shared_xaxis=True))
+            .options(shared_xaxis=True)
             .map(
-                lambda p: p.opts(plot=dict(frame_height=h_cv, frame_width=w_cv)), hv.RGB
+                lambda p: p.options(frame_height=h_cv, frame_width=w_cv), hv.RGB
             )
             * cur_vl
         )
-        temp_comp[temp_comp.keys()[0]] = temp_comp[temp_comp.keys()[0]].opts(
-            plot=dict(height=h_cv + 75)
+        temp_comp[temp_comp.keys()[0]] = temp_comp[temp_comp.keys()[0]].options(
+            height=h_cv + 75
         )
         return pn.panel(temp_comp)
 
@@ -715,7 +716,7 @@ class CNMFViewer:
         ntabs = np.ceil(len(cur_idxs) / 5)
         sub_idxs = np.array_split(cur_idxs, ntabs)
         idxs_dict = OrderedDict(
-            [("group{}".format(i), g.tolist()) for i, g in enumerate(sub_idxs)]
+            [(f"group{i}", g.tolist()) for i, g in enumerate(sub_idxs)]
         )
         def_idxs = list(idxs_dict.values())[0]
         wgt_grp = pnwgt.Select(
@@ -816,7 +817,7 @@ class CNMFViewer:
             sel.param.watch(cb, "value")
         wgt_check = {
             uid: pnwgt.Checkbox(
-                name="Unit ID: {}".format(uid), value=False, height=50, width=100
+                name=f"Unit ID: {uid}", value=False, height=50, width=100
             )
             for uid in usub
         }
@@ -868,7 +869,10 @@ class CNMFViewer:
             usub = self.strm_usub.usub
         if usub:
             if self._useAC:
-                umask = (self.A_sub.sel(unit_id=usub) > 0).any("unit_id")
+                # xarray refuses to use a boolean dask array as an indexer
+                # (the result would be of unknown shape). The mask is per
+                # (height, width) so .compute()-ing it is cheap.
+                umask = (self.A_sub.sel(unit_id=usub) > 0).any("unit_id").compute()
                 A_sub = self.A_sub.sel(unit_id=usub).where(umask, drop=True).fillna(0)
                 C_sub = self.C_sub.sel(unit_id=usub)
                 AC = xr.apply_ufunc(
@@ -921,9 +925,9 @@ class CNMFViewer:
 
     def _spatial_all(self):
         metas = self.metas
-        Asum = hv.Image(self.Asum.sel(**metas), ["width", "height"]).opts(
-            plot=dict(frame_height=len(self._h), frame_width=len(self._w)),
-            style=dict(cmap="Viridis"),
+        Asum = hv.Image(self.Asum.sel(**metas), ["width", "height"]).options(
+            frame_height=len(self._h), frame_width=len(self._w),
+            cmap="Viridis",
         )
         cents = (
             hv.Dataset(
@@ -931,32 +935,30 @@ class CNMFViewer:
                 kdims=["width", "height", "unit_id"],
             )
             .to(hv.Points, ["width", "height"])
-            .opts(
-                style=dict(
-                    alpha=0.1,
-                    line_alpha=0,
-                    size=5,
-                    nonselection_alpha=0.1,
-                    selection_alpha=0.9,
-                )
+            .options(
+                alpha=0.1,
+                line_alpha=0,
+                size=5,
+                nonselection_alpha=0.1,
+                selection_alpha=0.9,
             )
             .collate()
             .overlay("unit_id")
-            .opts(plot=dict(tools=["hover", "box_select"]))
+            .options(tools=["hover", "box_select"])
         )
         self.strm_uid.source = cents
         fim = fct.partial(hv.Image, kdims=["width", "height"])
-        AC = hv.DynamicMap(fim, streams=[self.pipAC]).opts(
-            plot=dict(frame_height=len(self._h), frame_width=len(self._w)),
-            style=dict(cmap="Viridis"),
+        AC = hv.DynamicMap(fim, streams=[self.pipAC]).options(
+            frame_height=len(self._h), frame_width=len(self._w),
+            cmap="Viridis",
         )
-        mov = hv.DynamicMap(fim, streams=[self.pipmov]).opts(
-            plot=dict(frame_height=len(self._h), frame_width=len(self._w)),
-            style=dict(cmap="Viridis"),
+        mov = hv.DynamicMap(fim, streams=[self.pipmov]).options(
+            frame_height=len(self._h), frame_width=len(self._w),
+            cmap="Viridis",
         )
         lab = fct.partial(hv.Labels, kdims=["width", "height"], vdims=["unit_id"])
-        ulab = hv.DynamicMap(lab, streams=[self.pipusub]).opts(
-            style=dict(text_color="red")
+        ulab = hv.DynamicMap(lab, streams=[self.pipusub]).options(
+            text_color="red"
         )
         return pn.panel(Asum * cents + AC * ulab + mov)
 
@@ -1041,7 +1043,7 @@ class AlignViewer:
         # handling meta
         try:
             self.meta_dict = {
-                col: c.unique().tolist() for col, c in mappings["meta"].iteritems()
+                col: c.unique().tolist() for col, c in mappings["meta"].items()
             }
         except KeyError:
             self.meta_dict = None
@@ -1061,7 +1063,7 @@ class AlignViewer:
         sess = list(mappings["session"].columns)
         self.sess_rgb = {"r": sess[0], "g": sess[0], "b": sess[0]}
         wgt_sess = {
-            c: pnwgt.Select(name="session{}".format(c.upper()), options=sess)
+            c: pnwgt.Select(name=f"session{c.upper()}", options=sess)
             for c in ["r", "g", "b"]
         }
         for wname, w in wgt_sess.items():
@@ -1198,8 +1200,9 @@ class AlignViewer:
 
 
 def write_vid_blk(arr, vpath, options):
+    ensure_ffmpeg()
     uid = uuid4()
-    vname = "{}.mp4".format(uid)
+    vname = f"{uid}.mp4"
     fpath = os.path.join(vpath, vname)
     if len(arr.shape) == 2:
         arr = np.expand_dims(arr, axis=0)
@@ -1214,8 +1217,8 @@ def write_vid_blk(arr, vpath, options):
 
 def write_video(
     arr: xr.DataArray,
-    vname: Optional[str] = None,
-    vpath: Optional[str] = ".",
+    vname: str | None = None,
+    vpath: str | None = ".",
     norm=True,
     options={"crf": "18", "preset": "ultrafast"},
 ) -> str:
@@ -1248,8 +1251,9 @@ def write_video(
     --------
     ffmpeg.output
     """
+    ensure_ffmpeg()
     if not vname:
-        vname = "{}.mp4".format(uuid4())
+        vname = f"{uuid4()}.mp4"
     fname = os.path.join(vpath, vname)
     if norm:
         arr_opt = fct.partial(
@@ -1266,7 +1270,7 @@ def write_video(
     arr = arr.clip(0, 255).astype(np.uint8)
     w, h = arr.sizes["width"], arr.sizes["height"]
     process = (
-        ffmpeg.input("pipe:", format="rawvideo", pix_fmt="gray", s="{}x{}".format(w, h))
+        ffmpeg.input("pipe:", format="rawvideo", pix_fmt="gray", s=f"{w}x{h}")
         .filter("pad", int(np.ceil(w / 2) * 2), int(np.ceil(h / 2) * 2))
         .output(fname, pix_fmt="yuv420p", vcodec="libx264", r=30, **options)
         .overwrite_output()
@@ -1280,6 +1284,7 @@ def write_video(
 
 
 def concat_video_recursive(vlist, vname=None):
+    ensure_ffmpeg()
     if not len(vlist) > 1:
         return vlist[0]
     if len(vlist) > 256:
@@ -1288,7 +1293,7 @@ def concat_video_recursive(vlist, vname=None):
     vpath = os.path.dirname(vlist[0])
     streams = [ffmpeg.input(p) for p in vlist]
     if vname is None:
-        vname = "{}.mp4".format(uuid4())
+        vname = f"{uuid4()}.mp4"
     fpath = os.path.join(vpath, vname)
     ffmpeg.concat(*streams).output(fpath).run(overwrite_output=True)
     for vp in vlist:
@@ -1299,9 +1304,9 @@ def concat_video_recursive(vlist, vname=None):
 def generate_videos(
     varr: xr.DataArray,
     Y: xr.DataArray,
-    A: Optional[xr.DataArray] = None,
-    C: Optional[xr.DataArray] = None,
-    AC: Optional[xr.DataArray] = None,
+    A: xr.DataArray | None = None,
+    C: xr.DataArray | None = None,
+    AC: xr.DataArray | None = None,
     nfm_norm: int = None,
     gain=1.5,
     vpath=".",
@@ -1392,7 +1397,7 @@ def generate_videos(
 
 
 def datashade_ndcurve(
-    ovly: hv.NdOverlay, kdim: Optional[Union[str, List[str]]] = None, spread=False
+    ovly: hv.NdOverlay, kdim: str | list[str] | None = None, spread=False
 ) -> hv.Overlay:
     """
     Apply datashading to an overlay of curves with legends.
@@ -1401,7 +1406,7 @@ def datashade_ndcurve(
     ----------
     ovly : hv.NdOverlay
         The input overlay of curves.
-    kdim : Union[str, List[str]], optional
+    kdim : Union[str, list[str]], optional
         Key dimensions of the overlay. If `None` then the first key dimension of
         `ovly` will be used. By default `None`.
     spread : bool, optional
@@ -1419,7 +1424,7 @@ def datashade_ndcurve(
     color_key = [(v, Category10_10[iv]) for iv, v in enumerate(var)]
     color_pts = hv.NdOverlay(
         {
-            k: hv.Points([0, 0], label=str(k)).opts(style=dict(color=v))
+            k: hv.Points([0, 0], label=str(k)).options(color=v)
             for k, v in color_key
         }
     )
@@ -1428,7 +1433,6 @@ def datashade_ndcurve(
         aggregator=count_cat(kdim),
         color_key=dict(color_key),
         min_alpha=200,
-        normalization="linear",
     )
     if spread:
         ds_ovly = dynspread(ds_ovly)
@@ -1539,7 +1543,7 @@ def convolve_G(s: np.ndarray, g: np.ndarray) -> np.ndarray:
 
 def construct_pulse_response(
     g: np.ndarray, length=500
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Construct a model pulse response corresponding to certain AR coefficients.
 
@@ -1630,7 +1634,7 @@ def centroid(A: xr.DataArray, verbose=False) -> pd.DataFrame:
 
 
 def visualize_preprocess(
-    fm: xr.DataArray, fn: Optional[Callable] = None, include_org=True, **kwargs
+    fm: xr.DataArray, fn: Callable | None = None, include_org=True, **kwargs
 ) -> hv.HoloMap:
     """
     Generalized visualization of preprocessing functions.
@@ -1663,25 +1667,19 @@ def visualize_preprocess(
     fh, fw = fm.sizes["height"], fm.sizes["width"]
     asp = fw / fh
     opts_im = {
-        "plot": {
-            "frame_width": 500,
-            "aspect": asp,
-            "title": "Image {label} {group} {dimensions}",
-        },
-        "style": {"cmap": "viridis"},
+        "frame_width": 500,
+        "aspect": asp,
+        "title": "Image {label} {group} {dimensions}",
     }
     opts_cnt = {
-        "plot": {
-            "frame_width": 500,
-            "aspect": asp,
-            "title": "Contours {label} {group} {dimensions}",
-        },
-        "style": {"cmap": "viridis"},
+        "frame_width": 500,
+        "aspect": asp,
+        "title": "Contours {label} {group} {dimensions}",
     }
 
     def _vis(f):
-        im = hv.Image(f, kdims=["width", "height"]).opts(**opts_im)
-        cnt = hv.operation.contours(im).opts(**opts_cnt)
+        im = hv.Image(f, kdims=["width", "height"]).options(**opts_im)
+        cnt = hv.operation.contours(im).options(**opts_cnt)
         return im, cnt
 
     if fn is not None:
@@ -1699,17 +1697,17 @@ def visualize_preprocess(
             )
             im_dict[p_str] = cur_im
             cnt_dict[p_str] = cur_cnt
-        hv_im = Dynamic(hv.HoloMap(im_dict, kdims=list(pkey)).opts(**opts_im))
+        hv_im = Dynamic(hv.HoloMap(im_dict, kdims=list(pkey)).options(**opts_im))
         hv_cnt = datashade(
             hv.HoloMap(cnt_dict, kdims=list(pkey)), precompute=True, cmap=Viridis256
-        ).opts(**opts_cnt)
+        ).options(**opts_cnt)
         if include_org:
             im, cnt = _vis(fm)
             im = im.relabel("Before").opts(**opts_im)
             cnt = (
                 datashade(cnt, precompute=True, cmap=Viridis256)
                 .relabel("Before")
-                .opts(**opts_cnt)
+                .options(**opts_cnt)
             )
         return (im + cnt + hv_im + hv_cnt).cols(2)
     else:
@@ -1720,7 +1718,7 @@ def visualize_preprocess(
 
 
 def visualize_seeds(
-    max_proj: xr.DataArray, seeds: pd.DataFrame, mask: Optional[str] = None
+    max_proj: xr.DataArray, seeds: pd.DataFrame, mask: str | None = None
 ) -> hv.Overlay:
     """
     Visualization of seeds.
@@ -1750,25 +1748,23 @@ def visualize_seeds(
     h, w = max_proj.sizes["height"], max_proj.sizes["width"]
     asp = w / h
     pt_cmap = {True: "white", False: "red"}
-    opts_im = dict(plot=dict(frame_width=600, aspect=asp), style=dict(cmap="Viridis"))
+    opts_im = dict(frame_width=600, aspect=asp, cmap="Viridis")
     opts_pts = dict(
-        plot=dict(
-            frame_width=600,
-            aspect=asp,
-            size_index="seeds",
-            color_index=mask,
-            tools=["hover"],
-        ),
-        style=dict(fill_alpha=0.8, line_alpha=0, cmap=pt_cmap),
+        frame_width=600,
+        aspect=asp,
+        size_index="seeds",
+        color_index=mask,
+        tools=["hover"],
+        fill_alpha=0.8, line_alpha=0, cmap=pt_cmap,
     )
     if mask:
         vdims = ["seeds", mask]
     else:
         vdims = ["seeds"]
-        opts_pts["style"]["color"] = "white"
+        opts_pts["color"] = "white"
     im = hv.Image(max_proj, kdims=["width", "height"])
     pts = hv.Points(seeds, kdims=["width", "height"], vdims=vdims)
-    return im.opts(**opts_im) * pts.opts(**opts_pts)
+    return im.options(**opts_im) * pts.options(**opts_pts)
 
 
 def visualize_gmm_fit(
@@ -1808,17 +1804,17 @@ def visualize_gmm_fit(
         gss = gaussian(hist[1], np.asscalar(mu), np.asscalar(np.sqrt(sig)))
         gss_dict[igss] = hv.Curve((hist[1], gss))
     return (
-        hv.Histogram(((hist[0] - hist[0].min()) / np.ptp(hist[0]), hist[1])).opts(
-            style=dict(alpha=0.6, fill_color="gray")
+        hv.Histogram(((hist[0] - hist[0].min()) / np.ptp(hist[0]), hist[1])).options(
+            alpha=0.6, fill_color="gray"
         )
         * hv.NdOverlay(gss_dict)
-    ).opts(plot=dict(height=350, width=500))
+    ).options(height=350, width=500)
 
 
 def visualize_spatial_update(
     A_dict: dict,
     C_dict: dict,
-    kdims: Optional[Union[str, List[str]]] = None,
+    kdims: str | list[str] | None = None,
     norm=True,
     datashading=True,
 ) -> hv.HoloMap:
@@ -1842,7 +1838,7 @@ def visualize_spatial_update(
         format as `A_dict`. The temporal activities of cells are not expected to
         change across different runs of spatial update, except the number of
         cells may be different due to dropping of cells in the update process.
-    kdims : Union[str, List[str]], optional
+    kdims : Union[str, list[str]], optional
         Names of key dimensions identifying the parameter space. Should have
         same length as the keys in `A_dict` and `C_dict`. If `None` then a
         dimension names "dummy" will be created and the visualization can be
@@ -1885,8 +1881,8 @@ def visualize_spatial_update(
         cents_df = centroid(A)
         hv_pts_dict[key] = hv.Points(
             cents_df, kdims=["width", "height"], vdims=["unit_id"]
-        ).opts(
-            plot=dict(tools=["hover"]), style=dict(fill_alpha=0.2, line_alpha=0, size=8)
+        ).options(
+            tools=["hover"], fill_alpha=0.2, line_alpha=0, size=8
         )
         hv_A_dict[key] = hv.Image(
             A.sum("unit_id").rename("A"), kdims=["width", "height"]
@@ -1930,7 +1926,7 @@ def visualize_temporal_update(
     g_dict: dict,
     sig_dict: dict,
     A_dict: dict,
-    kdims: Optional[Union[str, List[str]]] = None,
+    kdims: str | list[str] | None = None,
     norm=True,
     datashading=True,
 ) -> hv.HoloMap:
@@ -1972,7 +1968,7 @@ def visualize_temporal_update(
         `C_dict`. The spatial footprints of cells are note expected to change
         across different runs of temporal update, except the number of cells may
         be different due to dropping of cells in the update process.
-    kdims : Union[str, List[str]], optional
+    kdims : Union[str, list[str]], optional
         Names of key dimensions identifying the parameter space. Should have
         same length as the keys in `C_dict` etc. If `None` then a dimension
         names "dummy" will be created and the visualization can be used to
@@ -2078,20 +2074,23 @@ def visualize_temporal_update(
         hv_unit = Dynamic(hv_unit)
     hv_pul = Dynamic(hv_pul)
     hv_unit = hv_unit.map(
-        lambda p: p.opts(plot=dict(frame_height=400, frame_width=1000))
+        lambda p: p.options(frame_height=400, frame_width=1000)
     )
-    hv_pul = hv_pul.opts(plot=dict(frame_width=500, aspect=w / h)).redim(
+    hv_pul = hv_pul.opts(frame_width=500, aspect=w / h).redim(
         t=hv.Dimension("t", soft_range=pul_range)
     )
-    hv_A = hv_A.opts(
-        plot=dict(frame_width=500, aspect=w / h), style=dict(cmap="Viridis")
+    hv_A = hv_A.options(
+        frame_width=500, aspect=w / h, cmap="Viridis"
     )
     return (
         hv_unit.relabel("Current Unit: Temporal Traces")
-        + hv.NdLayout(
-            {"Simulated Pulse Response": hv_pul, "Spatial Footprint": hv_A},
-            kdims="Current Unit",
-        )
+        # NdLayout in modern HoloViews requires all children to be the same
+        # element type. `hv_pul` is an NdOverlay (datashaded curves) and
+        # `hv_A` is an Image; combine them with `+` (a permissive Layout)
+        # and preserve labels with `.relabel()`. The `Current Unit` kdim
+        # is dropped — it was only acting as a header label here.
+        + hv_pul.relabel("Simulated Pulse Response")
+        + hv_A.relabel("Spatial Footprint")
     ).cols(1)
 
 
@@ -2137,7 +2136,7 @@ def NNsort(cents: pd.DataFrame) -> pd.Series:
     return result
 
 
-def visualize_motion(motion: xr.DataArray) -> Union[hv.Layout, hv.NdOverlay]:
+def visualize_motion(motion: xr.DataArray) -> hv.Layout | hv.NdOverlay:
     """
     Visualize result of motion estimation.
 
@@ -2195,3 +2194,191 @@ def visualize_motion(motion: xr.DataArray) -> Union[hv.Layout, hv.NdOverlay]:
                 height=hv.Curve(motion.sel(shift_dim="height")).opts(**opts_cv),
             )
         )
+
+
+def visualize_spatial_partition(
+    max_proj: xr.DataArray,
+    positions: np.ndarray,
+    membership: np.ndarray,
+    adj: "scisps.spmatrix",
+    n_frames: int,
+) -> "pn.layout.Row":
+    """
+    Render a precomputed k-d tree spatial partition with diagnostics.
+
+    Scatters node positions on top of ``max_proj``, colored by partition
+    label, alongside three histograms (nodes / intra-partition edges /
+    memory per partition) for tuning ``target_chunk`` before a pipeline
+    run.
+
+    Parameters
+    ----------
+    max_proj : xr.DataArray
+        Background image (typically the same max projection used by
+        :func:`visualize_seeds`).
+    positions : np.ndarray
+        ``(N, 2)`` node positions in ``(height, width)`` order.
+    membership : np.ndarray
+        ``(N,)`` integer partition label per node, matching ``positions``
+        row order. Produced by :func:`minian.cnmf.spatial_partition`.
+    adj : scipy.sparse.spmatrix
+        ``(N, N)`` adjacency (symmetric or triangular). Drives the intra-
+        partition edges histogram and the cross-partition fraction in
+        the overlay title.
+    n_frames : int
+        Length of the time axis, used for the memory-per-partition
+        histogram (MiB, assuming float32).
+
+    Returns
+    -------
+    pn.layout.Row
+        Spatial overlay on the left and a ``pn.layout.Column`` of three
+        diagnostic histograms on the right.
+    """
+    from .cnmf import partition_diagnostics
+
+    positions = np.asarray(positions, dtype=float)
+    membership = np.asarray(membership, dtype=int)
+    if positions.shape[0] != membership.shape[0]:
+        raise ValueError(
+            "visualize_spatial_partition: positions has "
+            f"{positions.shape[0]} rows but membership has "
+            f"{membership.shape[0]}; they must align row-for-row."
+        )
+    diag = partition_diagnostics(membership, adj=adj, n_frames=n_frames)
+    n_parts = diag["n_parts"]
+    sizes = diag["sizes"]
+    eps = diag["edges_per_partition"]
+    mem = diag["mem_mb"]
+
+    h, w = max_proj.sizes["height"], max_proj.sizes["width"]
+    # Fix both overlay dimensions so the histogram column can be sized to
+    # match the overlay's height exactly.
+    overlay_frame_width = 600
+    overlay_frame_height = int(round(overlay_frame_width * h / w))
+    # Resolve hex colors per point. Bypasses bokeh's color mapper, which
+    # degenerates when n_parts == 1 (vmin == vmax) and otherwise has fiddly
+    # categorical-factor ordering. Modular indexing wraps cleanly past 256.
+    palette = cc.glasbey
+    pts_df = pd.DataFrame({
+        "height": positions[:, 0],
+        "width": positions[:, 1],
+        "partition": membership,
+        "color": [palette[int(p) % len(palette)] for p in membership],
+    })
+    opts_im = dict(
+        frame_width=overlay_frame_width,
+        frame_height=overlay_frame_height,
+        cmap="Greys_r",
+    )
+    opts_pts = dict(
+        size=6,
+        color="color",
+        tools=["hover"],
+        line_alpha=0,
+        fill_alpha=0.9,
+        show_legend=False,
+        title=(
+            f"{n_parts} partitions"
+            f" — cross-partition edges: {diag['cross_fraction']:.1%}"
+        ),
+    )
+    overlay = hv.Image(max_proj, kdims=["width", "height"]).opts(**opts_im) * hv.Points(
+        pts_df, kdims=["width", "height"], vdims=["partition", "color"]
+    ).opts(**opts_pts)
+
+    hist_specs = [
+        (
+            sizes,
+            "nodes per partition",
+            f"Nodes / partition (min {sizes.min()}, max {sizes.max()}, "
+            f"median {int(np.median(sizes))})",
+        ),
+        (
+            eps,
+            "intra-partition edges",
+            f"Edges / partition (min {eps.min()}, max {eps.max()}, "
+            f"cross {diag['cross_edges']}/{diag['total_edges']})",
+        ),
+        (
+            mem,
+            "MiB per partition",
+            f"Memory / partition @ {n_frames} frames "
+            f"(min {mem.min():.1f}, max {mem.max():.1f} MiB)",
+        ),
+    ]
+
+    # Split the overlay height across the three histograms so the right
+    # edge of the row lines up with the bottom of the image. Floor at
+    # 100 px to keep axis labels legible if the overlay is very short.
+    hist_frame_height = max(100, overlay_frame_height // len(hist_specs))
+    hist_opts = dict(
+        frame_width=360,
+        frame_height=hist_frame_height,
+        tools=["hover"],
+    )
+
+    def _hist(values: np.ndarray, label: str, title: str) -> hv.Histogram:
+        # A single-bar histogram means perfect balance, not a render error.
+        values = np.asarray(values)
+        if values.size == 0:
+            counts, edges = np.array([0]), np.array([0.0, 1.0])
+        else:
+            n_bins = min(20, max(1, int(np.unique(values).size)))
+            counts, edges = np.histogram(values, bins=n_bins)
+        return hv.Histogram((counts, edges), kdims=[label]).opts(
+            title=title, xlabel=label, ylabel="# partitions", **hist_opts
+        )
+
+    hist_panels = [_hist(*spec) for spec in hist_specs]
+    return pn.layout.Row(overlay, pn.layout.Column(*hist_panels))
+
+
+def visualize_seeds_merge_partition(
+    seeds: pd.DataFrame,
+    max_proj: xr.DataArray,
+    n_frames: int,
+    *,
+    thres_dist: float,
+    chunk: int,
+) -> "pn.layout.Row":
+    """
+    Preview the spatial partition :func:`minian.initialization.seeds_merge`
+    will use internally, before running the merge itself.
+
+    Wraps :func:`visualize_spatial_partition` with the same seed filtering
+    and radius-neighbour graph construction that ``seeds_merge`` does
+    internally, so the rendered partition matches the one the merge will
+    use for the current ``thres_dist`` / ``chunk``.
+
+    Parameters
+    ----------
+    seeds : pd.DataFrame
+        Seeds dataframe, including the ``mask_ks`` and ``mask_pnr`` columns
+        produced upstream by ``ks_refine`` and ``pnr_refine``.
+    max_proj : xr.DataArray
+        Max projection background for the overlay.
+    n_frames : int
+        Number of frames (e.g. ``Y_hw_chk.sizes["frame"]``); drives the
+        memory-per-partition histogram.
+    thres_dist : float
+        Radius for the seed-neighbour graph (``param_seeds_merge["thres_dist"]``).
+    chunk : int
+        Target partition size (``param_seeds_merge["chunk"]``).
+
+    Returns
+    -------
+    pn.layout.Row
+        Same row layout returned by :func:`visualize_spatial_partition`.
+    """
+    from sklearn.neighbors import radius_neighbors_graph
+
+    from .cnmf import spatial_partition
+
+    seeds_in = seeds[seeds["mask_ks"] & seeds["mask_pnr"]].reset_index(drop=True)
+    positions = seeds_in[["height", "width"]].values
+    adj = radius_neighbors_graph(positions, radius=thres_dist).astype(bool)
+    membership = spatial_partition(positions, target_chunk=chunk)
+    return visualize_spatial_partition(
+        max_proj, positions, membership, adj=adj, n_frames=n_frames
+    )

@@ -97,7 +97,7 @@ def stripe_correction(varr, reduce_dim="height", on="mean"):
     elif on == "perframe":
         temp = varr
     else:
-        raise NotImplementedError("on {} not understood".format(on))
+        raise NotImplementedError(f"on {on} not understood")
     mean1d = temp.mean(dim=reduce_dim)
     varr_sc = varr - mean1d
     return varr_sc.rename(varr.name + "_Stripe_Corrected")
@@ -145,7 +145,7 @@ def denoise(varr: xr.DataArray, method: str, **kwargs) -> xr.DataArray:
     elif method == "bilateral":
         func = cv2.bilateralFilter
     else:
-        raise NotImplementedError("denoise method {} not understood".format(method))
+        raise NotImplementedError(f"denoise method {method} not understood")
     res = xr.apply_ufunc(
         func,
         varr,
