@@ -654,7 +654,7 @@ def update_meta(dpath, pattern=r"^minian$", meta_dict=None):
     -------
     save_minian : for how `meta_dict` is applied when first saving a dataset.
     """
-    for dirpath, dirnames, fnames in os.walk(dpath):
+    for dirpath, dirnames, _ in os.walk(dpath):
         dnames = filter(lambda dn: re.search(pattern, dn), dirnames)
         for dname in dnames:
             f_path = os.path.join(dirpath, dname)
