@@ -483,12 +483,12 @@ def save_minian(
     dpath : str
         The path to the minian dataset directory.
     meta_dict : dict, optional
-        How metadata should be retrieved from directory hierarchy. The keys
-        should be negative integers representing directory level relative to
-        `dpath` (so `-1` means the immediate parent directory of `dpath`), and
-        values should be the name of dimensions represented by the corresponding
-        level of directory. The actual coordinate value of the dimensions will
-        be the directory name of corresponding level. By default `None`.
+        How metadata should be retrieved from the directory hierarchy. The keys
+        should be the name of the dimension to assign, and the values should be
+        negative integers representing the directory level relative to `dpath`
+        (so `-1` means the immediate parent directory of `dpath`). The
+        coordinate value will be the directory name of the corresponding level.
+        For example `{"session": -1, "animal": -2}`. By default `None`.
     overwrite : bool, optional
         Whether to overwrite the result on disk. By default `False`.
     chunks : dict, optional
@@ -522,7 +522,7 @@ def save_minian(
     >>> save_minian(
     ...     var.rename("important_array"),
     ...     "/spatial_memory/alpha/learning1/minian",
-    ...     {-1: "session", -2: "animal", -3: "experiment"},
+    ...     {"session": -1, "animal": -2, "experiment": -3},
     ... ) # doctest: +SKIP
     """
     dpath = os.path.normpath(dpath)
