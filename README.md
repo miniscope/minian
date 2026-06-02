@@ -12,6 +12,10 @@
 
 MiniAn is an analysis pipeline and visualization tool inspired by both [CaImAn](https://github.com/flatironinstitute/CaImAn) and [MIN1PIPE](https://github.com/JinghaoLu/MIN1PIPE) package specifically for [Miniscope](http://miniscope.org/index.php/Main_Page) data.
 
+# Prerequisites
+
+- [FFmpeg](https://ffmpeg.org/download.html) (`ffmpeg` and `ffprobe` on `PATH` for video I/O)
+
 # Quick Start Guide
 
 1. Create a new conda env: `conda create -y --name minian`

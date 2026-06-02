@@ -42,7 +42,7 @@ from scipy.spatial import cKDTree
 
 from .cnmf import compute_AtC
 from .motion_correction import apply_shifts
-from .utilities import custom_arr_optimize, rechunk_like
+from .utilities import custom_arr_optimize, ensure_ffmpeg, rechunk_like
 
 
 class VArrayViewer:
@@ -1200,6 +1200,7 @@ class AlignViewer:
 
 
 def write_vid_blk(arr, vpath, options):
+    ensure_ffmpeg()
     uid = uuid4()
     vname = f"{uid}.mp4"
     fpath = os.path.join(vpath, vname)
@@ -1250,6 +1251,7 @@ def write_video(
     --------
     ffmpeg.output
     """
+    ensure_ffmpeg()
     if not vname:
         vname = f"{uuid4()}.mp4"
     fname = os.path.join(vpath, vname)
@@ -1282,6 +1284,7 @@ def write_video(
 
 
 def concat_video_recursive(vlist, vname=None):
+    ensure_ffmpeg()
     if not len(vlist) > 1:
         return vlist[0]
     if len(vlist) > 256:

@@ -34,16 +34,22 @@ from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import lsqr
 from tifffile import TiffFile, imread
 
-# dask >=2025 ships a new TaskSpec optimizer. The legacy `fuse` /
-# `inline_pattern` paths produce graphs the new scheduler can't track,
-# so `custom_arr_optimize` / `custom_delay_optimize` branch on this flag.
-try:
-    from dask.array.optimization import fuse_linear_task_spec
+# dask >=2025 (a hard floor in pyproject) ships the TaskSpec optimizer, which
+# does its own graph optimisation. The legacy `fuse` / `inline_pattern` hooks
+# produced graphs its scheduler can't track, so they have been removed; see
+# `custom_arr_optimize` / `custom_delay_optimize` below.
+from dask.array.optimization import fuse_linear_task_spec
 
-    _DASK_HAS_TASK_SPEC = True
-except ImportError:
-    fuse_linear_task_spec = None
-    _DASK_HAS_TASK_SPEC = False
+
+def ensure_ffmpeg() -> None:
+    """Require ``ffmpeg`` and ``ffprobe`` on ``PATH`` before video I/O."""
+    for name in ("ffmpeg", "ffprobe"):
+        if shutil.which(name) is None:
+            raise RuntimeError(
+                f"{name!r} not found on PATH. MiniAn needs FFmpeg for "
+                "AVI/MKV ingest and MP4 export. Install FFmpeg and ensure it "
+                "is on PATH (https://ffmpeg.org/download.html)."
+            )
 
 
 def load_videos(
@@ -233,6 +239,7 @@ def load_avi_lazy(fname: str) -> darr.array:
     arr : darr.array
         The array representation of the video.
     """
+    ensure_ffmpeg()
     probe = ffmpeg.probe(fname)
     video_info = next(s for s in probe["streams"] if s["codec_type"] == "video")
     w = int(video_info["width"])
@@ -902,45 +909,19 @@ def custom_arr_optimize(
     :doc:`dask:optimize`
     `dask.array.optimization.optimize`
     """
-    # On dask >=2025 the legacy fuse_keys / fast_functions / key-rewrite
-    # path produces graphs the TaskSpec scheduler can't track, surfacing
-    # at compute time as `FutureCancelledError: <task> cancelled for
-    # reason: lost dependencies`. The trigger we hit in practice is
-    # `update_temporal`'s `keep_patterns=["^update_temporal_block"]`
-    # override: it forces `fuse_keys` to be non-empty, and that interacts
-    # badly with TaskSpec's expression-layer optimisation. Return the
-    # graph unchanged on new dask; TaskSpec does its own optimisation
-    # internally and the legacy hooks here would just interfere.
-    # TODO: port the `tensordot` / `rechunk-merge` memory-throttle
-    # rewrites to `dask.annotate(resources=...)` at the call sites in
-    # cnmf.py / visualization.py so MEM throttling is restored on new
-    # dask -- those annotations are currently lost on this path.
-    if _DASK_HAS_TASK_SPEC:
-        return dsk
-    # Legacy path for dask <2025.
-    # inlining lots of array operations ref:
-    # https://github.com/dask/dask/issues/6668
-    keep_keys = []
-    if keep_patterns:
-        key_ls = list(dsk.keys())
-        for pat in keep_patterns:
-            keep_keys.extend(list(filter(lambda k: check_key(k, pat), key_ls)))
-    dsk = darr.optimization.optimize(
-        dsk,
-        keys,
-        fuse_keys=keep_keys,
-        fast_functions=fast_funcs,
-    )
-    if inline_patterns:
-        dsk = inline_pattern(dsk, inline_patterns, inline_constants=False)
-    effective_rewrite = rewrite_dict if rewrite_dict is not None else rename_dict
-    if effective_rewrite:
-        dsk_old = dsk.copy()
-        for key, val in dsk_old.items():
-            key_new = rewrite_key(key, effective_rewrite)
-            if key_new != key:
-                dsk[key_new] = val
-                dsk[key] = key_new
+    # Pass-through on dask >=2025: the TaskSpec scheduler does its own graph
+    # optimisation, and the legacy fuse_keys / fast_functions / key-rewrite
+    # path produced graphs it couldn't track (surfacing at compute time as
+    # `FutureCancelledError: <task> cancelled for reason: lost dependencies`).
+    #
+    # As a result the `keep_patterns` / `rename_dict` / `rewrite_dict` /
+    # `inline_patterns` / `fast_funcs` arguments are currently INERT. They were
+    # the hooks that drove MEM throttling (renaming `tensordot` / `rechunk` so
+    # `TaskAnnotation` would cap their concurrency); that throttle is not in
+    # effect on new dask. Restoring it via `dask.annotate(resources=...)`, and
+    # removing this now-vestigial optimizer + its arguments, is tracked
+    # separately. The argument surface is kept for now so the call sites that
+    # still pass these kwargs keep working until that follow-up lands.
     return dsk
 
 
@@ -1172,25 +1153,11 @@ def custom_delay_optimize(
     dsk : dict
         Optimized dask graph.
     """
-    if _DASK_HAS_TASK_SPEC:
-        # `optimization.fuse.delayed` defaults to False on dask >=2025, so
-        # `dask.delayed.optimize` is a no-op. Invoke `fuse_linear_task_spec`
-        # directly to keep per-frame chains fused. Skip the legacy
-        # `inline_pattern` / `inline_functions` paths -- they don't compose
-        # with the new TaskSpec graph. Flatten `keys` because nested lists
-        # (e.g. `da.compute([a, b])`) crash the fuser's internal `set(keys)`.
-        return fuse_linear_task_spec(ensure_dict(dsk), list(flatten(keys)))
-    # Legacy path for dask <2025.
-    dsk, _ = fuse(ensure_dict(dsk), rename_keys=custom_fused_keys_renamer)
-    if inline_patterns:
-        dsk = inline_pattern(dsk, inline_patterns, inline_constants=False)
-    if fast_functions:
-        dsk = inline_functions(
-            dsk,
-            [],
-            fast_functions=fast_functions,
-        )
-    return dsk
+    # `optimization.fuse.delayed` defaults to False on dask >=2025, so
+    # `dask.delayed.optimize` is a no-op. Invoke `fuse_linear_task_spec`
+    # directly to keep per-frame chains fused. Flatten `keys` because nested
+    # lists (e.g. `da.compute([a, b])`) crash the fuser's internal `set(keys)`.
+    return fuse_linear_task_spec(ensure_dict(dsk), list(flatten(keys)))
 
 
 def unique_keys(keys: list) -> np.ndarray:

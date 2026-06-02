@@ -590,6 +590,9 @@ def seeds_merge(
         Cut-off frequency for optional smoothing of activities before computing
         the correlation. If `None` then no smoothing will be done. By default
         `None`.
+    chunk : int, optional
+        Chunk size for the out-of-core correlation computation, passed through
+        to :func:`minian.cnmf.adj_corr`. By default `600`.
 
     Returns
     -------
@@ -696,14 +699,9 @@ def initA(
         sdg.add_edges_from([(cur_sd, n) for n in nns if n != cur_sd])
     sdg.remove_nodes_from(list(nx.isolates(sdg)))
     sdg = nx.convert_node_labels_to_integers(sdg)
-    sdg_nodes = sorted(sdg.nodes)
-    sdg_positions = np.array(
-        [[sdg.nodes[n]["height"], sdg.nodes[n]["width"]] for n in sdg_nodes],
-        dtype=float,
-    )
-    corr_df = graph_optimize_corr(
-        varr, sdg, noise_freq, sdg_positions, chunk=chunk
-    )
+    # Nodes carry `height` / `width` attributes (set above), which
+    # `graph_optimize_corr` reads directly for spatial partitioning.
+    corr_df = graph_optimize_corr(varr, sdg, noise_freq, chunk=chunk)
     print("building spatial matrix")
     corr_df = corr_df[corr_df["corr"] > thres_corr]
     nod_df = pd.DataFrame.from_dict(dict(sdg.nodes(data=True)), orient="index")

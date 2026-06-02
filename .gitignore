@@ -145,3 +145,6 @@ minian_intermediate
 demo_data/cents.pkl
 demo_data/mappings.pkl
 demo_data/shiftds.nc
+
+# MacOS
+.DS_Store

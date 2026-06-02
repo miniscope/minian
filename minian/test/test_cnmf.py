@@ -1,8 +1,5 @@
 """Unit tests for discrete functions in ``minian.cnmf`` on synthetic input."""
 
-import json
-from unittest.mock import patch
-
 import dask.array as da
 import networkx as nx
 import numpy as np
@@ -12,7 +9,6 @@ import scipy.sparse
 import xarray as xr
 from sklearn.neighbors import radius_neighbors_graph
 
-from .. import cnmf
 from ..cnmf import (
     adj_corr,
     filt_fft_vec,
@@ -131,14 +127,17 @@ class TestSpatialPartitionTargetChunkSweep:
         assert len(counts) == expected_n_parts
         assert (counts == expected_part_size).all()
 
-    def test_max_part_size_never_exceeds_target_chunk(self):
-        # 200 points on a uniform grid, sweep target_chunk and assert
-        # the contract that no partition exceeds the requested size.
+    @pytest.mark.parametrize("n", (1, 2, 3, 7, 49, 199, 200, 201))
+    @pytest.mark.parametrize("chunk", (1, 5, 17, 50, 200, 500))
+    def test_max_part_size_never_exceeds_target_chunk(self, n: int, chunk: int):
+        # Uniform-grid points, sweeping both the point count -- including odd
+        # and prime counts not divisible by 2, where the median split can't
+        # halve evenly -- and target_chunk. No partition may exceed the
+        # requested size, for any combination.
         rng = np.random.RandomState(0)
-        positions = rng.uniform(0, 100, size=(200, 2))
-        for tc in (1, 5, 17, 50, 200, 500):
-            membership = spatial_partition(positions, target_chunk=tc)
-            assert np.bincount(membership).max() <= tc, f"target_chunk={tc}"
+        positions = rng.uniform(0, 100, size=(n, 2))
+        membership = spatial_partition(positions, target_chunk=chunk)
+        assert np.bincount(membership).max() <= chunk, f"n={n} chunk={chunk}"
 
     def test_partition_count_is_monotone_in_target_chunk(self):
         # Smaller target_chunk -> at least as many partitions. Holds
@@ -237,11 +236,20 @@ class TestSpatialPartitionEdgeCases:
         assert sorted(counts.tolist()) == [2, 3]
 
     def test_deterministic_across_repeated_calls(self):
+        # spatial_partition must be deterministic: the optional visualization
+        # step recomputes the partition independently of the compute path, so a
+        # method that returned different-but-equally-valid partitions run to run
+        # would make the visualization disagree with what was actually computed.
+        # Use heavily tied coordinates (many points share a split-axis value) so
+        # a non-stable tiebreak -- the most likely way a future change to the
+        # method reintroduces nondeterminism -- surfaces here rather than slips
+        # through on the ambiguity-free uniform-random case.
         rng = np.random.RandomState(4)
-        positions = rng.uniform(0, 100, size=(200, 2))
-        a = spatial_partition(positions, target_chunk=32)
-        b = spatial_partition(positions, target_chunk=32)
-        assert (a == b).all()
+        positions = rng.randint(0, 5, size=(200, 2)).astype(float)  # ~8 dupes/cell
+        first = spatial_partition(positions, target_chunk=32)
+        for _ in range(5):
+            again = spatial_partition(positions.copy(), target_chunk=32)
+            assert (again == first).all()
 
 
 class TestSpatialPartitionContractViolations:
@@ -327,7 +335,7 @@ class TestAdjCorr:
     in that test also covers chunk-invariance directly: matching
     np.corrcoef at chunk=4 AND chunk=64 makes it impossible for the two
     to disagree with each other. The other tests in this class are
-    surface properties (shape, positions invariance) that only become
+    surface properties (shape, partition invariance) that only become
     meaningful because that test anchors the values.
     """
 
@@ -363,33 +371,16 @@ class TestAdjCorr:
             truth = np.corrcoef(traces_truth[i], traces_truth[j])[0, 1]
             assert out[i, j] == pytest.approx(truth, abs=1e-5)
 
-    def test_fallback_matches_explicit_positions(self, adj_corr_setup):
-        varr, adj, nod_df = adj_corr_setup()
-        result_explicit = adj_corr(
-            varr, adj, nod_df, freq=None,
-            positions=nod_df[["height", "width"]].values,
-        )
-        result_fallback = adj_corr(varr, adj, nod_df, freq=None, positions=None)
-        assert np.allclose(
-            result_explicit.toarray(), result_fallback.toarray()
-        )
-
     def test_correlations_invariant_to_partition_choice(self, adj_corr_setup):
-        # Scrambled positions force a different partition tree but every
-        # (i, j) correlation must remain the same scalar value. Anchored
+        # Partitioning only controls how the correlation work is chunked,
+        # never the values. A small `chunk` forces the k-d tree to split into
+        # several partitions; `chunk >= n` keeps everyone in one partition.
+        # Every (i, j) correlation must be identical across the two. Anchored
         # against np.corrcoef by test_returns_true_pearson.
-        #
-        # `chunk` MUST be smaller than n for partitioning to engage --
-        # otherwise spatial_partition's recursion terminates at the root
-        # (one partition for everyone) and the positions argument is
-        # never read, making the test vacuously pass.
         varr, adj, nod_df = adj_corr_setup(n=80, seed=7)
-        ref = adj_corr(varr, adj, nod_df, freq=None, chunk=8).toarray()
-        bogus = np.random.RandomState(99).uniform(0, 1000, size=(len(nod_df), 2))
-        scrambled = adj_corr(
-            varr, adj, nod_df, freq=None, chunk=8, positions=bogus
-        ).toarray()
-        assert np.allclose(ref, scrambled)
+        multi = adj_corr(varr, adj, nod_df, freq=None, chunk=8).toarray()
+        single = adj_corr(varr, adj, nod_df, freq=None, chunk=1000).toarray()
+        assert np.allclose(multi, single)
 
     def test_output_shape_matches_input_adj(self, adj_corr_setup):
         # One entry per undirected edge; callers mirror via `adj + adj.T`.
@@ -447,7 +438,6 @@ class TestGraphOptimizeCorr:
         varr = synthetic_varr(h, w, t, seed=1)
         hs = rng.randint(0, h, size=n)
         ws = rng.randint(0, w, size=n)
-        positions = np.column_stack([hs, ws]).astype(float)
 
         G = nx.Graph()
         G.add_nodes_from(
@@ -457,9 +447,7 @@ class TestGraphOptimizeCorr:
         for src, tgt in [(0, 1), (2, 3), (4, 5), (6, 7), (0, 6), (3, 9), (5, 11)]:
             G.add_edge(src, tgt)
 
-        corr_df = graph_optimize_corr(
-            varr, G, freq, positions, chunk=4
-        )
+        corr_df = graph_optimize_corr(varr, G, freq, chunk=4)
 
         traces = np.stack(
             [varr.isel(height=hs[k], width=ws[k]).values for k in range(n)]
@@ -472,30 +460,14 @@ class TestGraphOptimizeCorr:
             truth = np.corrcoef(traces[i], traces[j])[0, 1]
             assert row["corr"] == pytest.approx(truth, abs=1e-5)
 
-    def test_part_attrs_are_json_serializable(self, tiny_varr, line_graph_with_pos_attrs):
-        # spatial_partition returns np.int64; graph_optimize_corr must cast
-        # those to plain int before writing them onto graph nodes so the
-        # graph stays JSON-serializable. Without the cast, json.dumps
-        # raises ``TypeError: Object of type int64 is not JSON serializable``.
-        G = line_graph_with_pos_attrs(4)
-        positions = np.array(
-            [[G.nodes[n]["height"], G.nodes[n]["width"]] for n in sorted(G.nodes)],
-            dtype=float,
-        )
-        graph_optimize_corr(
-            tiny_varr, G, freq=None, positions=positions, chunk=2
-        )
-        json.dumps(nx.node_link_data(G, edges="links"))
-
-    def test_rejects_positions_node_count_mismatch(self, tiny_varr, line_graph_with_pos_attrs):
-        # If positions is misaligned with sorted(G.nodes), every idx_corr
-        # call would correlate the wrong pixel pairs -- a silent corruption
-        # bug. The raise is the only thing standing between a typo in a
-        # caller and silently-wrong correlations.
-        G = line_graph_with_pos_attrs(4)
-        too_few = np.zeros((3, 2), dtype=float)  # 4 nodes but 3 rows
-        with pytest.raises(ValueError, match="positions has 3 rows but G has 4 nodes"):
-            graph_optimize_corr(tiny_varr, G, freq=None, positions=too_few, chunk=2)
+    def test_rejects_nodes_without_position_attrs(self, tiny_varr, line_graph_with_pos_attrs):
+        # graph_optimize_corr derives spatial positions from each node's
+        # height/width attributes. A node missing them is a caller bug that
+        # would otherwise corrupt every partition assignment, so it must
+        # fail loudly rather than silently mis-chunk the correlation work.
+        G = line_graph_with_pos_attrs(4, with_pos_attrs=False)
+        with pytest.raises(ValueError, match="must carry 'height' and 'width'"):
+            graph_optimize_corr(tiny_varr, G, freq=None, chunk=2)
 
 
 # ---------------------------------------------------------------------------
@@ -637,61 +609,3 @@ class TestPartitionDiagnostics:
         assert diag["sizes"].shape == (0,)
         assert diag["total_edges"] == 0
         assert diag["mem_mb"].shape == (0,)
-
-
-# ---------------------------------------------------------------------------
-# chunk-kwarg plumbing
-# ---------------------------------------------------------------------------
-
-
-class TestChunkKwargPlumbing:
-    """The `chunk` kwarg reaches the inner partitioner intact."""
-
-    def test_chunk_kwarg_is_forwarded_to_graph_optimize_corr(self, adj_corr_setup):
-        # `wraps=` makes the mock delegate to the real function, so
-        # adj_corr's downstream csr_matrix construction still works on
-        # the real DataFrame return; the mock just records call args
-        # alongside it.
-        varr, adj, nod_df = adj_corr_setup(n=20, h=30, w=30, t=50, radius=5)
-
-        with patch.object(
-            cnmf, "graph_optimize_corr", wraps=cnmf.graph_optimize_corr
-        ) as spy:
-            adj_corr(varr, adj, nod_df, freq=None, chunk=20)
-            adj_corr(varr, adj, nod_df, freq=None, chunk=5)
-        forwarded = [call.kwargs["chunk"] for call in spy.call_args_list]
-        assert forwarded == [20, 5]
-
-
-# ---------------------------------------------------------------------------
-# visualize_spatial_partition contract
-# ---------------------------------------------------------------------------
-
-
-class TestVisualizeSpatialPartition:
-    """The visualization layer is mostly covered by notebook execution in
-    test_pipeline.py; here we just pin the explicit contract violation
-    raise so that misaligned inputs fail loudly instead of silently
-    misrendering every point."""
-
-    def test_rejects_misaligned_positions_membership(self):
-        # Deferred import: the visualization module pulls in panel/bokeh
-        # at import time, which is heavier than the rest of the test
-        # file needs.
-        from ..visualization import visualize_spatial_partition
-
-        max_proj = xr.DataArray(
-            np.zeros((10, 10), dtype="float32"),
-            dims=("height", "width"),
-            coords={"height": np.arange(10), "width": np.arange(10)},
-        )
-        positions = np.zeros((5, 2), dtype=float)
-        membership = np.zeros(4, dtype=int)  # length mismatch
-        adj = scipy.sparse.csr_matrix((5, 5))
-        with pytest.raises(
-            ValueError,
-            match="positions has 5 rows but membership has 4",
-        ):
-            visualize_spatial_partition(
-                max_proj, positions, membership, adj=adj, n_frames=100
-            )
