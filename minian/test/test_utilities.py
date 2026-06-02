@@ -43,6 +43,29 @@ def test_update_meta_assigns_coords_from_hierarchy(tmp_path):
     np.testing.assert_array_equal(after["test_var"].values, var.values)
 
 
+def test_update_meta_is_lazy(tmp_path):
+    """
+    update_meta does not overwrite or copy existing arrays.
+    similar to, but separable from testing for value equality.
+    """
+    mn_path = tmp_path / "animalA" / "session1" / "minian"
+    meta_dict = {"session": -1, "animal": -2}
+    _make_dataset(mn_path)
+
+    non_updated_paths = [
+        p for p in mn_path.rglob("*")
+        if not p.is_dir()
+        and p.parent.name not in meta_dict
+    ]
+    assert len(non_updated_paths) > 0
+
+    before = {p: p.stat().st_mtime_ns for p in non_updated_paths}
+    update_meta(str(mn_path), meta_dict=meta_dict)
+    after = {p: p.stat().st_mtime_ns for p in non_updated_paths}
+
+    assert all(a == b for a, b in zip(before.values(), after.values()))
+
+
 def test_update_meta_only_matches_pattern(tmp_path):
     # A sibling directory that should be ignored by the default pattern.
     _make_dataset(tmp_path / "animalA" / "session1" / "minian")
