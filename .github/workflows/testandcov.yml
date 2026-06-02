@@ -15,14 +15,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-latest", "macos-latest"]
+        os: ["ubuntu-latest", "macos-latest", "windows-latest"]
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         exclude:
-        # Run only first and last versions on non-linux
+        # Run only the oldest and newest Python on non-Linux runners to keep
+        # CI cost down; Linux runs the full matrix.
         - os: "macos-latest"
           python-version: "3.11"
         - os: "macos-latest"
           python-version: "3.12"
+        - os: "windows-latest"
+          python-version: "3.11"
+        - os: "windows-latest"
+          python-version: "3.12"
+        - os: "windows-latest"
+          python-version: "3.13"
         # TODO: resolve macOS numcodecs pin without 3.14 wheels
         - os: "macos-latest"
           python-version: "3.14"
@@ -42,12 +49,14 @@ jobs:
         # ffmpeg-python is only a wrapper; the tests/notebooks need the
         # actual ffmpeg/ffprobe binaries (previously provided by conda).
         # Installed via the OS package manager so it works on the arm64
-        # macOS runners too.
+        # macOS runners too. Windows uses choco which ships ffmpeg.
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update && sudo apt-get install -y ffmpeg
           elif [ "$RUNNER_OS" = "macOS" ]; then
             brew install ffmpeg
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            choco install ffmpeg -y
           fi
       - name: Install minian and test dependencies
         run: |
