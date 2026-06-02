@@ -3,7 +3,6 @@ import os
 import re
 import shutil
 import warnings
-from copy import deepcopy
 from os import listdir
 from os.path import isdir, isfile
 from os.path import join as pjoin
@@ -630,10 +629,12 @@ def update_meta(dpath, pattern=r"^minian$", meta_dict=None):
 
     This function walks `dpath` and, for every dataset directory whose name
     matches `pattern`, re-derives metadata coordinates from the directory
-    hierarchy (following the same convention as :func:`save_minian`) and writes
-    them back to the on-disk `zarr` arrays. It is useful as a recovery tool when
-    datasets were originally saved without `meta_dict`, e.g. before a
-    cross-registration workflow that relies on `session`/`animal` coordinates.
+    hierarchy (following the same convention as :func:`save_minian`) and adds
+    them to the on-disk `zarr` stores. Only the small coordinate arrays are
+    written, so the variables' data chunks are left untouched. It is useful as
+    a recovery tool when datasets were originally saved without `meta_dict`,
+    e.g. before a cross-registration workflow that relies on `session`/`animal`
+    coordinates.
 
     Parameters
     ----------
@@ -659,24 +660,18 @@ def update_meta(dpath, pattern=r"^minian$", meta_dict=None):
         for dname in dnames:
             f_path = os.path.join(dirpath, dname)
             pathlist = os.path.split(os.path.abspath(f_path))[0].split(os.sep)
-            ds = open_minian(f_path)
 
             # Re-derive metadata coordinates from the directory hierarchy.
-            ds = ds.assign_coords(
-                **dict([(dn, pathlist[di]) for dn, di in meta_dict.items()])
-            )
+            coords = {dn: pathlist[di] for dn, di in meta_dict.items()}
 
-            # Save each variable back to its own zarr store. Write to a temp
-            # store first and swap, since the variables are lazily backed by the
-            # very stores we would otherwise overwrite while still reading them.
-            for varname, da in ds.data_vars.items():
-                store = os.path.join(f_path, varname + ".zarr")
-                tmp_store = store + ".tmp"
-                var_ds = da.to_dataset()
-                var_ds.attrs = deepcopy(ds.attrs)
-                var_ds.to_zarr(tmp_store, mode="w")
-                shutil.rmtree(store)
-                os.replace(tmp_store, store)
+            # Append the coordinates to each variable's zarr store. Writing a
+            # coords-only dataset with `mode="a"` adds just these small arrays
+            # without rewriting (or even reading) the variable's data chunks.
+            for store in os.listdir(f_path):
+                if store.endswith(".zarr"):
+                    xr.Dataset(coords=coords).to_zarr(
+                        os.path.join(f_path, store), mode="a"
+                    )
             print(f"updated: {f_path}")
 
 
