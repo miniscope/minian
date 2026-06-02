@@ -5,7 +5,7 @@
 groups = ["default", "numba", "test"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:fff2645dc4aa7fc886386245ce9ca254c6e86a4509909fc7b95513a9f9d86c76"
+content_hash = "sha256:a421629a6dbf18a0abc0897d82057ef4c677cc2575f5bd7945e2ca9aeaeeab86"
 
 [[metadata.targets]]
 requires_python = ">=3.10,<3.12"
@@ -3366,6 +3366,22 @@ groups = ["test"]
 files = [
     {file = "pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746"},
     {file = "pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3"},
+]
+
+[[package]]
+name = "pooch"
+version = "1.9.0"
+requires_python = ">=3.9"
+summary = "A friend to fetch your data files"
+groups = ["default"]
+dependencies = [
+    "packaging>=20.0",
+    "platformdirs>=2.5.0",
+    "requests>=2.19.0",
+]
+files = [
+    {file = "pooch-1.9.0-py3-none-any.whl", hash = "sha256:f265597baa9f760d25ceb29d0beb8186c243d6607b0f60b83ecf14078dbc703b"},
+    {file = "pooch-1.9.0.tar.gz", hash = "sha256:de46729579b9857ffd3e741987a2f6d5e0e03219892c167c6578c0091fb511ed"},
 ]
 
 [[package]]
