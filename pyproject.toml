@@ -81,6 +81,11 @@ lock.composite = [
 ]
 test = "pytest"
 
+# Dependency cooldown: exclude packages published in the last 7 days when
+# resolving the lockfile, dodging most supply-chain attacks (usually caught
+# within ~a week). PDM has no way to enforce a minimum tool version from
+# pyproject.toml, so note it here: reading exclude-newer from this table
+# requires PDM >= 2.26.9. Older PDMs SILENTLY IGNORE it. CI pins the floor.
 [tool.pdm.resolution]
 exclude-newer = "7d"
 
