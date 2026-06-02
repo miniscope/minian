@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-latest", "macos-latest"]
+        os: ["ubuntu-latest", "macos-latest", "windows-latest"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,6 +30,7 @@ jobs:
           path: |
             ~/.cache/minian
             ~/Library/Caches/minian
+            ~/AppData/Local/minian/minian/Cache
           key: minian-demo-data-${{ runner.os }}-${{ hashFiles('minian/data/_registry.py') }}
       - name: Download demo datasets (once per OS)
         if: steps.cache.outputs.cache-hit != 'true'
@@ -99,6 +100,7 @@ jobs:
           path: |
             ~/.cache/minian
             ~/Library/Caches/minian
+            ~/AppData/Local/minian/minian/Cache
           key: minian-demo-data-${{ runner.os }}-${{ hashFiles('minian/data/_registry.py') }}
       - name: Run tests and collect coverage
         # Run the full suite (unit + slow notebook runs) on every matrix cell.
