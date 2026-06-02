@@ -4,14 +4,22 @@ import xarray as xr
 from ..utilities import open_minian, save_minian, update_meta
 
 
-def _make_dataset(dpath):
-    """Save a small minian dataset at `dpath` with no metadata coords."""
+def _make_var(name, fill, attrs=None):
+    """Build a small named DataArray with optional attrs."""
     var = xr.DataArray(
-        np.arange(2 * 3 * 4, dtype=float).reshape(2, 3, 4),
+        np.full((2, 3, 4), fill, dtype=float),
         dims=["frame", "height", "width"],
         coords={"frame": [0, 1], "height": [0, 1, 2], "width": [0, 1, 2, 3]},
-        name="test_var",
+        name=name,
     )
+    if attrs:
+        var.attrs.update(attrs)
+    return var
+
+
+def _make_dataset(dpath):
+    """Save a single-variable minian dataset at `dpath` with no metadata coords."""
+    var = _make_var("test_var", fill=1.0)
     save_minian(var, str(dpath), overwrite=True)
     return var
 
@@ -46,3 +54,40 @@ def test_update_meta_only_matches_pattern(tmp_path):
     skipped = open_minian(str(tmp_path / "animalA" / "session1" / "not_minian"))
     assert str(matched.coords["session"].values) == "session1"
     assert "session" not in skipped.coords
+
+
+def test_update_meta_matches_save_minian_on_multivar_dataset(tmp_path):
+    # A realistic minian dataset bundles several variables in one `minian` dir.
+    meta_dict = {"session": -1, "animal": -2}
+    variables = [
+        _make_var("A", fill=1.0, attrs={"unit": "au", "doc": "footprints"}),
+        _make_var("C", fill=2.0),
+        _make_var("S", fill=3.0),
+    ]
+
+    # Path 1: save without metadata, then stamp it in with update_meta.
+    updated_root = tmp_path / "updated"
+    updated_mn = updated_root / "animalX" / "session9" / "minian"
+    for var in variables:
+        save_minian(var, str(updated_mn), overwrite=True)
+    update_meta(str(updated_root), meta_dict=meta_dict)
+
+    # Path 2: save the same data with meta_dict up front.
+    direct_root = tmp_path / "direct"
+    direct_mn = direct_root / "animalX" / "session9" / "minian"
+    for var in variables:
+        save_minian(var, str(direct_mn), meta_dict=meta_dict, overwrite=True)
+
+    updated = open_minian(str(updated_mn))
+    direct = open_minian(str(direct_mn))
+
+    # (b) every variable survives and the dir reopens / merges cleanly.
+    assert set(updated.data_vars) == {"A", "C", "S"}
+    assert str(updated.coords["session"].values) == "session9"
+    assert str(updated.coords["animal"].values) == "animalX"
+
+    # (c) updating after the fact is equivalent to saving with meta_dict,
+    # including data, coords, and the preserved variable attrs.
+    xr.testing.assert_identical(updated, direct)
+    assert updated["A"].attrs["unit"] == "au"
+    assert updated["A"].attrs["doc"] == "footprints"
