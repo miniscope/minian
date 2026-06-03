@@ -1,4 +1,3 @@
-import functools as fct
 import itertools as itt
 import warnings
 from typing import Optional
@@ -11,7 +10,7 @@ import SimpleITK as sitk
 import xarray as xr
 from skimage.registration import phase_cross_correlation
 
-from .utilities import custom_arr_optimize, xrconcat_recursive
+from .utilities import xrconcat_recursive
 
 
 def estimate_motion(
@@ -208,60 +207,82 @@ def est_motion_part(
     if chunk_nfm is None:
         chunk_nfm = varr.chunksize[0]
     varr = varr.rechunk((chunk_nfm, None, None))
-    arr_opt = fct.partial(custom_arr_optimize, keep_patterns=["^est_motion_chunk"])
-    if kwargs.get("mesh_size", None):
+    has_mesh = bool(kwargs.get("mesh_size", None))
+    if has_mesh:
         param = get_bspline_param(varr[0].compute(), kwargs["mesh_size"])
-    tmp_ls = []
-    sh_ls = []
-    for blk in varr.blocks:
-        res = da.delayed(est_motion_chunk)(
+    height, width = varr.shape[1], varr.shape[2]
+    tmp_shape = (3, height, width) if alt_error else (height, width)
+    sh_shape = (sum(varr.chunks[0]), 2)
+    if has_mesh:
+        sh_shape = sh_shape + (int(param[1]), int(param[0]))
+
+    # The recursion keeps each chunk's result as a single delayed
+    # `(template, shifts)` tuple and only ever feeds that whole tuple into the
+    # next reduction step. It deliberately does NOT expose `res[0]`/`res[1]` as
+    # separate dask nodes consumed by different downstream tasks: doing so makes
+    # the graph reach the shared `est_motion_chunk` task through two paths (the
+    # template branch and the shift branch), and -- because each leaf kernel is
+    # fused with its dask-array input -- the optimizer emits it under two
+    # path-dependent keys, executing it once per branch. That redundancy
+    # compounds with recursion depth (a ~chunk-count blow-up). Consuming the
+    # whole tuple keeps a single shared key per kernel call; the final tuple is
+    # split once at the end for the two returned arrays.
+    res_ls = [
+        da.delayed(est_motion_chunk)(
             blk, None, alt_error=alt_error, npart=npart, **kwargs
         )
-        if alt_error:
-            tmp = darr.from_delayed(
-                res[0], shape=(3, blk.shape[1], blk.shape[2]), dtype=blk.dtype
+        for blk in varr.blocks
+    ]
+    while len(res_ls) > 1:
+        res_ls = [
+            da.delayed(_est_motion_reduce)(
+                res_ls[idx : idx + npart], alt_error, npart, **kwargs
             )
-        else:
-            tmp = darr.from_delayed(
-                res[0], shape=(blk.shape[1], blk.shape[2]), dtype=blk.dtype
-            )
-        if kwargs.get("mesh_size", None):
-            sh = darr.from_delayed(
-                res[1],
-                shape=(blk.shape[0], 2, int(param[1]), int(param[0])),
-                dtype=float,
-            )
-        else:
-            sh = darr.from_delayed(res[1], shape=(blk.shape[0], 2), dtype=float)
-        tmp_ls.append(tmp)
-        sh_ls.append(sh)
-    with da.config.set(array_optimize=arr_opt):
-        temps = da.optimize(darr.stack(tmp_ls, axis=0))[0]
-        shifts = da.optimize(darr.concatenate(sh_ls, axis=0))[0]
-    while temps.shape[0] > 1:
-        tmp_ls = []
-        sh_ls = []
-        for idx in np.arange(0, temps.numblocks[0], npart):
-            tmps = temps.blocks[idx : idx + npart]
-            sh_org = shifts.blocks[idx : idx + npart]
-            sh_org_ls = [sh_org.blocks[i] for i in range(sh_org.numblocks[0])]
-            res = da.delayed(est_motion_chunk)(
-                tmps, sh_org_ls, alt_error=alt_error, npart=npart, **kwargs
-            )
-            if alt_error:
-                tmp = darr.from_delayed(
-                    res[0], shape=(3, tmps.shape[1], tmps.shape[2]), dtype=tmps.dtype
-                )
-            else:
-                tmp = darr.from_delayed(
-                    res[0], shape=(tmps.shape[1], tmps.shape[2]), dtype=tmps.dtype
-                )
-            sh_new = darr.from_delayed(res[1], shape=sh_org.shape, dtype=sh_org.dtype)
-            tmp_ls.append(tmp)
-            sh_ls.append(sh_new)
-        temps = darr.stack(tmp_ls, axis=0)
-        shifts = darr.concatenate(sh_ls, axis=0)
+            for idx in range(0, len(res_ls), npart)
+        ]
+    res = res_ls[0]
+    temps = darr.from_delayed(res[0], shape=tmp_shape, dtype=varr.dtype)
+    shifts = darr.from_delayed(res[1], shape=sh_shape, dtype=float)
     return temps, shifts
+
+
+def _est_motion_reduce(
+    res_grp: list, alt_error: float, npart: int, **kwargs
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Combine a group of per-chunk results for one reduction step.
+
+    Stacks the chunk templates into a single array and gathers their shifts, then
+    runs :func:`est_motion_chunk` on the aggregate. Takes the whole
+    `(template, shifts)` tuples (rather than pre-split arrays) so each producing
+    task is consumed exactly once in the dask graph. See :func:`est_motion_part`.
+
+    Parameters
+    ----------
+    res_grp : list
+        list of `(template, shifts)` tuples for the chunks in this group.
+    alt_error : float
+        Error threshold between estimated shifts from two alternative methods.
+    npart : int
+        Number of frames/chunks to combine for the recursive algorithm.
+
+    Returns
+    -------
+    tmp : np.ndarray
+        Aggregated template for the group.
+    motions : np.ndarray
+        Combined motion estimates for the group.
+
+    See Also
+    --------
+    est_motion_part
+    est_motion_chunk
+    """
+    tmps = np.stack([r[0] for r in res_grp], axis=0)
+    sh_org_ls = [r[1] for r in res_grp]
+    return est_motion_chunk(
+        tmps, sh_org_ls, alt_error=alt_error, npart=npart, **kwargs
+    )
 
 
 def est_motion_chunk(
