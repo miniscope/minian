@@ -410,39 +410,72 @@ def est_motion_chunk(
         motions = np.zeros((varr.shape[0], 2, int(param[1]), int(param[0])))
     else:
         motions = np.zeros((varr.shape[0], 2))
+    # Precompute each frame's rfft2 once for the rigid path so it can be reused
+    # across the two registrations it participates in (as src and as a
+    # neighbour's dst). `est_motion_perframe` consumes these via src_fft/dst_fft.
+    # For the 4D reduction input the relevant 2D image is the aggregated frame
+    # (slot 1); the alt-error check additionally uses the first/last frames
+    # (slots 0/2).
+    use_fft = mesh_size is None
+    fft_mid = fft_first = fft_last = None
+    if use_fft:
+        if varr.ndim > 3:
+            fft_mid = np.fft.rfft2(varr[:, 1], axes=(-2, -1))
+            if alt_error:
+                fft_first = np.fft.rfft2(varr[:, 0], axes=(-2, -1))
+                fft_last = np.fft.rfft2(varr[:, 2], axes=(-2, -1))
+        else:
+            fft_mid = np.fft.rfft2(varr, axes=(-2, -1))
     for i, fm in enumerate(varr):
+        src_fft = dst_fft = src_alt_fft = dst_alt_fft = None
         if i < mid:
             if varr.ndim > 3:
                 src, dst = varr[i][1], varr[i + 1][1]
                 src_ma, dst_ma = mask[i][1], mask[i + 1][1]
+                if use_fft:
+                    src_fft, dst_fft = fft_mid[i], fft_mid[i + 1]
                 if alt_error:
                     src_alt, dst_alt = varr[i][2], varr[i + 1][0]
                     src_alt_ma, dst_alt_ma = mask[i][2], mask[i + 1][0]
+                    if use_fft:
+                        src_alt_fft, dst_alt_fft = fft_last[i], fft_first[i + 1]
             else:
                 # select the next good frame as template
                 didx = good_idxs[good_idxs - (i + 1) >= 0][0]
                 src, dst = varr[i], varr[didx]
                 src_ma, dst_ma = mask[i], mask[didx]
+                if use_fft:
+                    src_fft, dst_fft = fft_mid[i], fft_mid[didx]
             slc = slice(0, i + 1)
         elif i > mid:
             if varr.ndim > 3:
                 src, dst = varr[i][1], varr[i - 1][1]
                 src_ma, dst_ma = mask[i][1], mask[i - 1][1]
+                if use_fft:
+                    src_fft, dst_fft = fft_mid[i], fft_mid[i - 1]
                 if alt_error:
                     src_alt, dst_alt = varr[i][0], varr[i - 1][2]
                     src_alt_ma, dst_alt_ma = mask[i][0], mask[i - 1][2]
+                    if use_fft:
+                        src_alt_fft, dst_alt_fft = fft_first[i], fft_last[i - 1]
             else:
                 # select the previous good frame as template
                 didx = good_idxs[good_idxs - (i - 1) <= 0][-1]
                 src, dst = varr[i], varr[didx]
                 src_ma, dst_ma = mask[i], mask[didx]
+                if use_fft:
+                    src_fft, dst_fft = fft_mid[i], fft_mid[didx]
             slc = slice(i, None)
         else:
             continue
-        mo = est_motion_perframe(src, dst, upsample, src_ma, dst_ma, mesh_size, niter)
+        mo = est_motion_perframe(
+            src, dst, upsample, src_ma, dst_ma, mesh_size, niter,
+            src_fft=src_fft, dst_fft=dst_fft,
+        )
         if alt_error and varr.ndim > 3:
             mo_alt = est_motion_perframe(
-                src_alt, dst_alt, upsample, src_alt_ma, dst_alt_ma, mesh_size, niter
+                src_alt, dst_alt, upsample, src_alt_ma, dst_alt_ma, mesh_size,
+                niter, src_fft=src_alt_fft, dst_fft=dst_alt_fft,
             )
             if ((np.abs(mo - mo_alt) > alt_error).any()) and (
                 np.abs(mo).sum() > np.abs(mo_alt).sum()
@@ -494,6 +527,52 @@ def est_motion_chunk(
     return tmp, motions
 
 
+def _xcorr_subpixel(
+    src_fft: np.ndarray, dst_fft: np.ndarray, shape: tuple[int, int]
+) -> np.ndarray:
+    """
+    Sub-pixel shift between two frames from their precomputed real FFTs.
+
+    Computes the (un-normalized) cross-correlation -- matching
+    :func:`skimage.registration.phase_cross_correlation` with
+    `normalization=None` -- and refines the integer peak with a 1D parabolic fit
+    along each axis. Taking precomputed `rfft2` results lets the caller reuse
+    each frame's transform across the two registrations it participates in.
+
+    Parameters
+    ----------
+    src_fft, dst_fft : np.ndarray
+        `np.fft.rfft2` of the source and destination frames.
+    shape : tuple[int, int]
+        Spatial shape `(height, width)` of the frames.
+
+    Returns
+    -------
+    sh : np.ndarray
+        Shift `(height, width)` such that `-sh` registers src onto dst (matching
+        the sign convention of the previous `phase_cross_correlation` call).
+    """
+    cc = np.fft.irfft2(src_fft * np.conj(dst_fft), s=shape)
+    peak = np.unravel_index(np.argmax(cc), cc.shape)
+    c0 = cc[peak]
+    sh = np.empty(2)
+    for ax in range(2):
+        n = cc.shape[ax]
+        pk = peak[ax]
+        idx_m = list(peak)
+        idx_p = list(peak)
+        idx_m[ax] = (pk - 1) % n
+        idx_p[ax] = (pk + 1) % n
+        cm, cp = cc[tuple(idx_m)], cc[tuple(idx_p)]
+        denom = cm - 2 * c0 + cp
+        delta = 0.5 * (cm - cp) / denom if denom != 0 else 0.0
+        pos = pk + delta
+        if pos > n // 2:  # wrap negative shifts
+            pos -= n
+        sh[ax] = pos
+    return sh
+
+
 def est_motion_perframe(
     src: np.ndarray,
     dst: np.ndarray,
@@ -502,6 +581,8 @@ def est_motion_perframe(
     dst_ma: np.ndarray | None = None,
     mesh_size: tuple[int, int] | None = None,
     niter=100,
+    src_fft: np.ndarray | None = None,
+    dst_fft: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Estimate motion given two frames.
@@ -513,7 +594,9 @@ def est_motion_perframe(
     dst : np.ndarray
         The destination frame of registration.
     upsample : int
-        Upsample factor.
+        Upsample factor. Only used for the non-rigid (`mesh_size`) path; the
+        rigid path estimates sub-pixel shifts by parabolic interpolation of the
+        cross-correlation peak (see :func:`_xcorr_subpixel`).
     src_ma : np.ndarray, optional
         Boolean mask for `src`. Only used if `mesh_size is not None`. By default
         `None`.
@@ -526,6 +609,9 @@ def est_motion_perframe(
     niter : int, optional
         Max number of iteration for the gradient descent process. By default
         `100`.
+    src_fft, dst_fft : np.ndarray, optional
+        Precomputed `np.fft.rfft2` of `src`/`dst` for the rigid path. If `None`
+        they are computed on the fly. By default `None`.
 
     Returns
     -------
@@ -536,14 +622,18 @@ def est_motion_perframe(
     --------
     estimate_motion : for detailed explanation of parameters
     """
+    if mesh_size is None:
+        if src_fft is None:
+            src_fft = np.fft.rfft2(src)
+        if dst_fft is None:
+            dst_fft = np.fft.rfft2(dst)
+        return -_xcorr_subpixel(src_fft, dst_fft, src.shape)
     sh, error, phasediff = phase_cross_correlation(
         src,
         dst,
         upsample_factor=upsample,
         normalization=None,
     )
-    if mesh_size is None:
-        return -sh
     src = sitk.GetImageFromArray(src.astype(np.float32))
     dst = sitk.GetImageFromArray(dst.astype(np.float32))
     reg = sitk.ImageRegistrationMethod()
