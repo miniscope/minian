@@ -5,7 +5,7 @@
 groups = ["default", "numba", "test"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:fff2645dc4aa7fc886386245ce9ca254c6e86a4509909fc7b95513a9f9d86c76"
+content_hash = "sha256:5c367f9fc42884a360d8675179d9d8192ba243f8499af6b5f93f25115d911fc8"
 
 [[metadata.targets]]
 requires_python = ">=3.10,<3.12"
