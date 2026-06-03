@@ -75,9 +75,9 @@ def estimate_motion(
         How frames should be aggregated to generate the template for each chunk.
         Should be either "mean" or "max". By default `"mean"`.
     upsample : int, optional
-        The upsample factor passed to
-        :func:`skimage.registration.phase_cross_correlation` to achieve
-        sub-pixel accuracy.
+        The upsample factor for sub-pixel accuracy on the non-rigid
+        (`mesh_size`) path. The rigid path refines the cross-correlation peak by
+        parabolic interpolation instead and ignores this factor.
     circ_thres : float, optional
         The circularity threshold to check whether a frame can serve as a good
         template for estimating motion. If not `None`, then for each frame a
@@ -216,17 +216,11 @@ def est_motion_part(
     if has_mesh:
         sh_shape = sh_shape + (int(param[1]), int(param[0]))
 
-    # The recursion keeps each chunk's result as a single delayed
-    # `(template, shifts)` tuple and only ever feeds that whole tuple into the
-    # next reduction step. It deliberately does NOT expose `res[0]`/`res[1]` as
-    # separate dask nodes consumed by different downstream tasks: doing so makes
-    # the graph reach the shared `est_motion_chunk` task through two paths (the
-    # template branch and the shift branch), and -- because each leaf kernel is
-    # fused with its dask-array input -- the optimizer emits it under two
-    # path-dependent keys, executing it once per branch. That redundancy
-    # compounds with recursion depth (a ~chunk-count blow-up). Consuming the
-    # whole tuple keeps a single shared key per kernel call; the final tuple is
-    # split once at the end for the two returned arrays.
+    # Keep each chunk's result as one delayed `(template, shifts)` tuple and feed
+    # the whole tuple into the next reduction step. Splitting it into separate
+    # `res[0]`/`res[1]` dask nodes would route the shared `est_motion_chunk` task
+    # through two graph paths and run it once per path -- a blow-up that compounds
+    # with recursion depth. The final tuple is split once, at the end.
     res_ls = [
         da.delayed(est_motion_chunk)(
             blk, None, alt_error=alt_error, npart=npart, **kwargs
@@ -253,9 +247,9 @@ def _est_motion_reduce(
     Combine a group of per-chunk results for one reduction step.
 
     Stacks the chunk templates into a single array and gathers their shifts, then
-    runs :func:`est_motion_chunk` on the aggregate. Takes the whole
-    `(template, shifts)` tuples (rather than pre-split arrays) so each producing
-    task is consumed exactly once in the dask graph. See :func:`est_motion_part`.
+    runs :func:`est_motion_chunk` on the aggregate. Consumes the whole
+    `(template, shifts)` tuples to avoid dask task duplication; see
+    :func:`est_motion_part`.
 
     Parameters
     ----------
@@ -412,10 +406,8 @@ def est_motion_chunk(
         motions = np.zeros((varr.shape[0], 2))
     # Precompute each frame's rfft2 once for the rigid path so it can be reused
     # across the two registrations it participates in (as src and as a
-    # neighbour's dst). `est_motion_perframe` consumes these via src_fft/dst_fft.
-    # For the 4D reduction input the relevant 2D image is the aggregated frame
-    # (slot 1); the alt-error check additionally uses the first/last frames
-    # (slots 0/2).
+    # neighbour's dst). For 4D reduction input the registered image is the
+    # aggregated frame (slot 1); alt-error additionally uses slots 0/2.
     use_fft = mesh_size is None
     fft_mid = fft_first = fft_last = None
     if use_fft:
@@ -428,46 +420,40 @@ def est_motion_chunk(
             fft_mid = np.fft.rfft2(varr, axes=(-2, -1))
     for i, fm in enumerate(varr):
         src_fft = dst_fft = src_alt_fft = dst_alt_fft = None
+        # register each frame against its neighbour toward the center frame
         if i < mid:
-            if varr.ndim > 3:
-                src, dst = varr[i][1], varr[i + 1][1]
-                src_ma, dst_ma = mask[i][1], mask[i + 1][1]
-                if use_fft:
-                    src_fft, dst_fft = fft_mid[i], fft_mid[i + 1]
-                if alt_error:
-                    src_alt, dst_alt = varr[i][2], varr[i + 1][0]
-                    src_alt_ma, dst_alt_ma = mask[i][2], mask[i + 1][0]
-                    if use_fft:
-                        src_alt_fft, dst_alt_fft = fft_last[i], fft_first[i + 1]
-            else:
-                # select the next good frame as template
-                didx = good_idxs[good_idxs - (i + 1) >= 0][0]
-                src, dst = varr[i], varr[didx]
-                src_ma, dst_ma = mask[i], mask[didx]
-                if use_fft:
-                    src_fft, dst_fft = fft_mid[i], fft_mid[didx]
-            slc = slice(0, i + 1)
+            j, slc = i + 1, slice(0, i + 1)
         elif i > mid:
-            if varr.ndim > 3:
-                src, dst = varr[i][1], varr[i - 1][1]
-                src_ma, dst_ma = mask[i][1], mask[i - 1][1]
-                if use_fft:
-                    src_fft, dst_fft = fft_mid[i], fft_mid[i - 1]
-                if alt_error:
-                    src_alt, dst_alt = varr[i][0], varr[i - 1][2]
-                    src_alt_ma, dst_alt_ma = mask[i][0], mask[i - 1][2]
-                    if use_fft:
-                        src_alt_fft, dst_alt_fft = fft_first[i], fft_last[i - 1]
-            else:
-                # select the previous good frame as template
-                didx = good_idxs[good_idxs - (i - 1) <= 0][-1]
-                src, dst = varr[i], varr[didx]
-                src_ma, dst_ma = mask[i], mask[didx]
-                if use_fft:
-                    src_fft, dst_fft = fft_mid[i], fft_mid[didx]
-            slc = slice(i, None)
+            j, slc = i - 1, slice(i, None)
         else:
             continue
+        if varr.ndim > 3:
+            src, dst = varr[i][1], varr[j][1]
+            src_ma, dst_ma = mask[i][1], mask[j][1]
+            if use_fft:
+                src_fft, dst_fft = fft_mid[i], fft_mid[j]
+            if alt_error:
+                # cross-chunk check against the adjacent first/last frames
+                if i < mid:
+                    src_alt, dst_alt = varr[i][2], varr[j][0]
+                    src_alt_ma, dst_alt_ma = mask[i][2], mask[j][0]
+                    if use_fft:
+                        src_alt_fft, dst_alt_fft = fft_last[i], fft_first[j]
+                else:
+                    src_alt, dst_alt = varr[i][0], varr[j][2]
+                    src_alt_ma, dst_alt_ma = mask[i][0], mask[j][2]
+                    if use_fft:
+                        src_alt_fft, dst_alt_fft = fft_first[i], fft_last[j]
+        else:
+            # select the nearest good frame toward the center as template
+            if i < mid:
+                didx = good_idxs[good_idxs - j >= 0][0]
+            else:
+                didx = good_idxs[good_idxs - j <= 0][-1]
+            src, dst = varr[i], varr[didx]
+            src_ma, dst_ma = mask[i], mask[didx]
+            if use_fft:
+                src_fft, dst_fft = fft_mid[i], fft_mid[didx]
         mo = est_motion_perframe(
             src, dst, upsample, src_ma, dst_ma, mesh_size, niter,
             src_fft=src_fft, dst_fft=dst_fft,
@@ -549,8 +535,8 @@ def _xcorr_subpixel(
     Returns
     -------
     sh : np.ndarray
-        Shift `(height, width)` such that `-sh` registers src onto dst (matching
-        the sign convention of the previous `phase_cross_correlation` call).
+        Shift `(height, width)` of src relative to dst; `-sh` registers src onto
+        dst (the convention :func:`est_motion_perframe` returns).
     """
     cc = np.fft.irfft2(src_fft * np.conj(dst_fft), s=shape)
     peak = np.unravel_index(np.argmax(cc), cc.shape)
@@ -868,13 +854,9 @@ def transform_perframe(
         The frame after transform.
     """
     if tx_coef.ndim == 1:
-        # Rigid translation: cv2.warpAffine with linear interpolation is ~7x
-        # faster than sitk.Resample for the same bilinear warp. The shift
-        # convention matches the previous sitk.TranslationTransform(2,
-        # -tx_coef[::-1]): a positive `tx_coef` of (height, width) moves content
-        # toward +height/+width. cv2 samples sub-pixel offsets on a 1/32 grid,
-        # so the resampled intensities differ from sitk by <~0.06 on average
-        # (0-255 scale), well below imaging noise.
+        # Rigid translation via cv2.warpAffine (much faster than sitk.Resample
+        # for a bilinear warp). `tx_coef` is (height, width): a positive shift
+        # moves content toward +height/+width.
         warp = np.array(
             [[1, 0, tx_coef[1]], [0, 1, tx_coef[0]]], dtype=np.float32
         )

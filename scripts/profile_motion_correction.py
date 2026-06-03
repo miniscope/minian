@@ -187,8 +187,6 @@ def run_profile(varr, n, npart, alt_error, line_prof):
     stats = pstats.Stats(pr)
     stats.calc_callees()
 
-    # total time
-    total = sum(v[2] for v in stats.stats.values())  # tottime sum != wall; use ct
     print(f"\nestimated shifts: {motions.shape}; template: {tmp.shape}")
 
     # ----- attribute time to suspects -----
