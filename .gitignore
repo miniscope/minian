@@ -148,3 +148,8 @@ demo_data/shiftds.nc
 
 # MacOS
 .DS_Store
+
+# Local motion-correction profiling harnesses (kept out of the repo)
+scripts/bench_mc_kernel.py
+scripts/diagnose_mc_scaling.py
+scripts/profile_motion_correction.py
