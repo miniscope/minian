@@ -1,0 +1,16 @@
+name: Update lockfile
+
+on:
+  schedule:
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Update dependencies
+        uses: pdm-project/update-deps-action@main
+        with:
+          update-strategy: all
