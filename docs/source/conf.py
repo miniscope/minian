@@ -33,7 +33,7 @@ dask.array.as_gufunc = custom_as_gufunc
 # -- Project information -----------------------------------------------------
 
 project = "MiniAn"
-copyright = "2018-%s, MiniAn Developers" % datetime.datetime.now().year
+copyright = f"2018-{datetime.datetime.now().year}, MiniAn Developers"
 
 
 # -- General configuration ---------------------------------------------------
@@ -119,7 +119,7 @@ nbsphinx_prolog = r"""
 rtds_action_github_token = os.getenv("GITHUB_TOKEN")
 if rtds_action_github_token:
     extensions.append("rtds_action")
-    rtds_action_github_repo = "denisecailab/minian"
+    rtds_action_github_repo = "miniscope/minian"
     rtds_action_path = "artifact"
     rtds_action_artifact_prefix = "notebooks-"
     rtds_action_error_if_missing = True

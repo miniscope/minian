@@ -1,17 +1,160 @@
-[build-system]
-requires = [
-    "setuptools>=42",
-    "wheel"
+[project]
+name = "minian"
+dynamic = ["version"]
+description = "MiniAn is an analysis pipeline and visualization tool inspired by both CaImAn and MIN1PIPE package specifically for Miniscope data."
+authors = [
+    {name = "MiniAn Developers", email = "denisecailab@gmail.com"},
 ]
-build-backend = "setuptools.build_meta"
-[tool]
+dependencies = [
+    "bokeh>=1.4.0",
+    "cvxpy>=1.1.11",
+    "dask>=2025.1.0",
+    "datashader>=0.12.1",
+    "distributed>=2025.1.0",
+    "ecos>=2.0.7",
+    "ffmpeg-python>=0.2.0",
+    "holoviews>=1.12.7",
+    "jinja2>=2.11.3",
+    "jupyter",
+    "matplotlib",
+    "medpy>=0.4.0",
+    "natsort",
+    "netcdf4",
+    "networkx>=2.4",
+    "numpy>=1.20.2",
+    "opencv-python>=4.2.0.34",
+    "pandas>=1.2.3",
+    "panel>=0.8.0",
+    "pyfftw>=0.12.0",
+    "rechunker>=0.3.3",
+    "scikit-image>=0.18.1",
+    "scikit-learn>=0.22.1",
+    "scipy>=1.4.1",
+    "scs",
+    "simpleitk>=2.0.2",
+    "sk-video",
+    "sparse>=0.11.2",
+    "statsmodels>=0.11.1",
+    "tifffile",
+    "xarray>=0.17.0",
+    "zarr",
+]
+
+requires-python = ">=3.10"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+keywords = [
+    "calcium-imaging",
+    "miniscope",
+    "neuroscience",
+    "cnmf",
+    "image-processing",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+
+[project.urls]
+Homepage = "https://github.com/miniscope/minian"
+Documentation = "https://minian.readthedocs.io/"
+Repository = "https://github.com/miniscope/minian"
+Issues = "https://github.com/miniscope/minian/issues"
+Changelog = "https://github.com/miniscope/minian/blob/master/CHANGELOG.md"
+
+[project.scripts]
+minian-install = "minian.install:main"
+
+[project.optional-dependencies]
+numba = [
+    "numba>=0.52.0",
+]
+test = [
+    "minian[numba]",
+    "pytest>=8.4.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.14",
+    "psutil>=7.2.2",
+]
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pdm]
+distribution = true
+
+[tool.pdm.version]
+# Derive the package version from `v*` git tags via pdm-backend's SCM
+# source. Builds between tags get a PEP 440 dev version like
+# `1.3.0.dev41+g<sha>`; tagged builds get the clean tag version. This
+# removes the four-way drift risk we had with a hardcoded version.
+source = "scm"
+tag_filter = "v*"
+tag_regex = 'v(?P<version>([1-9][0-9]*!)?(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))*((a|b|c|rc)(0|[1-9][0-9]*))?(\.post(0|[1-9][0-9]*))?(\.dev(0|[1-9][0-9]*))?$)$'
+
+[tool.pdm.build]
+# Keep build artifacts (bytecode, numba AOT caches) out of the wheel/sdist.
+# pdm-backend's defaults pick these up when the package directory is walked.
+excludes = [
+    "**/__pycache__",
+    "**/*.pyc",
+    "**/*.nbi",
+    "**/*.nbc",
+]
+
+[tool.pdm.scripts]
+lock.composite = [
+    'pdm lock --with :all --python=">=3.10,<3.12"',
+    'pdm lock --with :all --python=">=3.12,<3.14" --append',
+    'pdm lock --with :all --python=">=3.14" --append'
+]
+test = "pytest"
+
+# Dependency cooldown: exclude packages published in the last 7 days when
+# resolving the lockfile, dodging most supply-chain attacks (usually caught
+# within ~a week). PDM has no way to enforce a minimum tool version from
+# pyproject.toml, so note it here: reading exclude-newer from this table
+# requires PDM >= 2.26.9. Older PDMs SILENTLY IGNORE it. CI pins the floor.
+[tool.pdm.resolution]
+exclude-newer = "7d"
+
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "1.2.1"
+# `version_provider = "scm"` makes commitizen read the current version from
+# the latest git tag instead of from a static field, so `cz bump` no longer
+# writes to pyproject/__init__/install.py — it just creates the next tag
+# and updates the changelog.
+version_provider = "scm"
 tag_format = "v$version"
 changelog_incremental = true
-version_files = [
-    "minian/__init__.py:__version__",
-    "setup.py:version",
-    "minian/install.py:VERSION"
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["UP"]
+fixable = ["ALL"]
+
+[tool.pytest.ini_options]
+addopts = [
+    '-v',
+    '--color=yes',
+    '--cov=minian',
 ]
+testpaths = [
+  "minian/test"
+]
+
+
+
+

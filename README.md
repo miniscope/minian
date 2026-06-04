@@ -5,12 +5,12 @@
 </p>
 
 
-[![pytest status](https://github.com/denisecailab/minian/workflows/pytest/badge.svg?branch=master)](https://github.com/DeniseCaiLab/minian/actions?query=workflow%3Apytest)
-[![codecov](https://codecov.io/gh/DeniseCaiLab/minian/branch/master/graph/badge.svg)](https://codecov.io/gh/DeniseCaiLab/minian)
+[![pytest status](https://github.com/miniscope/minian/workflows/pytest/badge.svg?branch=master)](https://github.com/miniscope/minian/actions?query=workflow%3Apytest)
+[![codecov](https://codecov.io/gh/miniscope/minian/branch/master/graph/badge.svg)](https://codecov.io/gh/miniscope/minian)
 [![conda version](https://img.shields.io/conda/vn/conda-forge/minian.svg)](https://anaconda.org/conda-forge/minian)
 [![documentation status](https://readthedocs.org/projects/minian/badge/?version=latest)](https://minian.readthedocs.io/en/latest/?badge=latest)
 
-[![license](https://img.shields.io/github/license/denisecailab/minian)](https://www.gnu.org/licenses/gpl-3.0)
+[![license](https://img.shields.io/github/license/miniscope/minian)](https://www.gnu.org/licenses/gpl-3.0)
 [![code style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![commit style](https://img.shields.io/badge/commit_style-conventional-orange)](https://conventionalcommits.org)
 
@@ -18,6 +18,10 @@
 # MiniAn
 
 MiniAn is an analysis pipeline and visualization tool inspired by both [CaImAn](https://github.com/flatironinstitute/CaImAn) and [MIN1PIPE](https://github.com/JinghaoLu/MIN1PIPE) package specifically for [Miniscope](http://miniscope.org/index.php/Main_Page) data.
+
+# Prerequisites
+
+- [FFmpeg](https://ffmpeg.org/download.html) (`ffmpeg` and `ffprobe` on `PATH` for video I/O)
 
 # Quick Start Guide
 

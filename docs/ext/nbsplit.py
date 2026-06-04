@@ -23,7 +23,7 @@ def is_hv_init(cell):
 def split_and_parse(app):
     for src_nb, out_dir in app.config.nbsplit_dict.items():
         if not os.path.exists(src_nb):
-            warnings.warn("notebook not found: {}".format(src_nb), RuntimeWarning)
+            warnings.warn(f"notebook not found: {src_nb}", RuntimeWarning)
             continue
         srcpath = os.path.split(src_nb)[0]
         outpath = os.path.join(os.path.abspath(app.srcdir), out_dir)
@@ -33,7 +33,7 @@ def split_and_parse(app):
         if os.path.exists(img_path):
             shutil.copytree(img_path, os.path.join(outpath, "img"))
         # read source notebook
-        with open(src_nb, mode="r") as notebook:
+        with open(src_nb) as notebook:
             jnote = json.load(notebook)
         cells = jnote["cells"]
         # split and process cells
@@ -46,7 +46,7 @@ def split_and_parse(app):
         hv_init["execution_count"] = None
         # write notebooks
         for isplit, start in enumerate(split):
-            fname = "notebook_{}.ipynb".format(isplit)
+            fname = f"notebook_{isplit}.ipynb"
             meta = jnote["metadata"].copy()
             meta["name"] = fname
             try:

@@ -1,6 +1,10 @@
 Installation
 ============
 
+You need **FFmpeg** on ``PATH`` for video I/O (``ffmpeg`` and ``ffprobe``). Install
+it with your OS package manager or follow the `FFmpeg download page
+<https://ffmpeg.org/download.html>`_.
+
 Install using conda
 -------------------
 
@@ -44,7 +48,7 @@ Run the following to obtain a full copy of MiniAn repo and setup necessary depen
 
 .. code-block:: console
 
-    git clone https://github.com/DeniseCaiLab/minian.git
+    git clone https://github.com/miniscope/minian.git
     cd minian/
     conda env create -n minian -f environment.yml
 
@@ -57,10 +61,10 @@ Getting notebooks and demos
 The main features of Minian are exposed through `pipeline.ipynb` and `cross-registration.ipynb` `notebooks <https://jupyter.org/>`_.
 You can use the following links to get the latest version of the two notebooks:
 
-* Download `pipeline.ipynb <https://github.com/DeniseCaiLab/minian/raw/master/pipeline.ipynb>`_
-* Download `cross-registration.ipynb <https://github.com/DeniseCaiLab/minian/raw/master/cross-registration.ipynb>`_
+* Download `pipeline.ipynb <https://github.com/miniscope/minian/raw/master/pipeline.ipynb>`_
+* Download `cross-registration.ipynb <https://github.com/miniscope/minian/raw/master/cross-registration.ipynb>`_
 
-If you'd prefer specific version of them, head to `github release page <https://github.com/denisecailab/minian/releases>`_ to see all the released versions.
+If you'd prefer specific version of them, head to `github release page <https://github.com/miniscope/minian/releases>`_ to see all the released versions.
 
 Alternatively, MiniAn also come with convenient scripts to help you download notebooks and demos into your current folder.
 Run the following (in your activated environment if any) to get the notebooks:

@@ -134,3 +134,17 @@ build_artifacts
 
 # minian intermediate
 minian_intermediate
+
+# pdm
+.pdm-python
+
+# pytest test artifacts (at repo root, distinct from docs/source/artifact)
+/artifact/
+
+# cross_registration.ipynb outputs
+demo_data/cents.pkl
+demo_data/mappings.pkl
+demo_data/shiftds.nc
+
+# MacOS
+.DS_Store
