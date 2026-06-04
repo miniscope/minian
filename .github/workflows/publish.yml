@@ -1,0 +1,68 @@
+name: Publish to PyPI
+
+# Triggered by pushing a tag of the form `vX.Y.Z`. The package version is
+# derived from the tag via pdm-backend's SCM source (configured in
+# pyproject.toml), so no version file needs to be updated before tagging.
+# The build is published via PyPI Trusted Publishing (OIDC) — no API token
+# stored in the repo. The PyPI project must be configured with this repo,
+# this workflow filename, and the `pypi` environment as a trusted publisher.
+#
+# Manual `workflow_dispatch` runs only build the artifacts (no publish), so
+# the build can be exercised without cutting a release.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # pdm-backend's SCM source reads the latest matching tag via
+          # `git describe`, which needs the tag history to be present.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build backend
+        run: python -m pip install --upgrade pip build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Check distributions
+        run: python -m twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/minian
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish via Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1

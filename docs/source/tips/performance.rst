@@ -95,4 +95,4 @@ Depending on the conditions the solution are usually one of the following:
 #. If you have free RAM to spare then increasing ``memory_limit`` would almost certainly solve the problem.
 #. Otherwise you might have to limit the chunk size.
 
-However, if you can find a **reproducible** case where the default pipeline/settings would fail for a reasonable sized data (<60min recording), please do not hesitate to `file a bug report on github <https://github.com/denisecailab/minian/issues/new/choose>`_.
+However, if you can find a **reproducible** case where the default pipeline/settings would fail for a reasonable sized data (<60min recording), please do not hesitate to `file a bug report on github <https://github.com/miniscope/minian/issues/new/choose>`_.
