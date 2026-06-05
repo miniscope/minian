@@ -190,14 +190,14 @@ def test_out_of_order_domains_warn():
 
 
 def test_focal_plane_out_of_range_warns():
-    acq = _tiny_acquisition(optics=Optics(focal_plane_um=500.0))
+    acq = _tiny_acquisition(focal_depth_in_tissue_um=500.0)
     steps = [PlaceSomata(soma_radius_um=3.0, depth_range_um=(0.0, 200.0)), Render()]
     with pytest.warns(SpecWarning, match="focal"):
         Spec(acquisition=acq, steps=steps)
 
 
 def test_auto_focal_plane_does_not_warn(recwarn):
-    _valid_spec()  # default optics → focal_plane_um="auto"
+    _valid_spec()  # default acquisition → focal_depth_in_tissue_um="auto"
     assert not [w for w in recwarn.list if issubclass(w.category, SpecWarning)]
 
 

@@ -76,6 +76,11 @@ class _Base(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# Immersion/tissue refractive index used to derive the diffraction depth of field
+# from NA (≈ n·λ/NA²); ~1.33 for the watery cortex a miniscope images into.
+_DOF_IMMERSION_N = 1.33
+
+
 class Optics(_Base):
     """Objective optics — the measurable lens properties of a 1-photon scope.
 
@@ -91,15 +96,11 @@ class Optics(_Base):
     na: float = Field(gt=0, default=0.45, description="Numerical aperture of the GRIN objective.")
     magnification: float = Field(gt=0, default=8.0, description="Optical magnification (sensor side / object side).")
     emission_nm: float = Field(gt=0, default=525.0, description="Fluorophore emission wavelength, nm (GCaMP ≈ 525).")
-    focal_plane_um: float | Literal["auto"] = Field(
+    depth_of_field_um: float | Literal["auto"] = Field(
         default="auto",
-        description="Depth of the in-focus plane, µm into tissue; 'auto' resolves to the "
-        "median realized cell depth when the optics step runs.",
-    )
-    depth_of_field_um: float = Field(
-        gt=0,
-        default=15.0,
-        description="±range around the focal plane treated as 'in focus' for detectability.",
+        description="±in-focus half-depth around the focal plane, µm. 'auto' (default) "
+        "derives it from NA as ≈ n·λ/NA² (the diffraction depth of field — the physical "
+        "behavior, since DOF is set by the optics, not chosen); a number overrides it.",
     )
     field_curvature_radius_um: float | None = Field(
         default=None,
@@ -116,6 +117,27 @@ class Optics(_Base):
                 f"field_curvature_radius_um ({v}) must be > 0, or None for a flat field."
             )
         return v
+
+    @field_validator("depth_of_field_um")
+    @classmethod
+    def _check_dof(cls, v: float | str) -> float | str:
+        if v != "auto" and v <= 0:
+            raise ValueError(f"depth_of_field_um ({v}) must be > 0, or 'auto'.")
+        return v
+
+    @property
+    def resolved_depth_of_field_um(self) -> float:
+        """The in-focus half-depth, µm, resolving ``"auto"`` to ≈ n·λ/NA².
+
+        A numeric ``depth_of_field_um`` is used as-is. ``"auto"`` derives the
+        diffraction depth of field from the aperture: ``σ_z ≈ n·λ/NA²`` (immersion
+        index ``n`` ≈ tissue), the same half-depth the in-focus check uses. Higher
+        NA ⇒ shallower focus (DOF falls as 1/NA²), so a real scope's DOF is set by
+        its optics rather than picked by hand. At NA 0.30, λ ≈ 525 nm this is
+        ≈ 7.8 µm; at NA 0.45, ≈ 3.4 µm."""
+        if self.depth_of_field_um != "auto":
+            return float(self.depth_of_field_um)
+        return _DOF_IMMERSION_N * (self.emission_nm / 1000.0) / self.na**2
 
     # ---- Layer-2 helpers: small, documented, individually-testable approximations ----
 
@@ -154,8 +176,8 @@ class Optics(_Base):
         so the matching peak drop is applied in
         :meth:`Acquisition.cell_optics`; that is what separates defocus
         (spreads) from scatter (attenuates). ``focal_um`` is passed explicitly
-        because :attr:`focal_plane_um` may be ``"auto"``, resolved to a concrete
-        depth by the optics step before this is called.
+        because :attr:`Acquisition.focal_depth_in_tissue_um` may be ``"auto"``, resolved to a
+        concrete depth by the optics step before this is called.
         """
         return self.na * abs(z_um - focal_um)
 
@@ -301,6 +323,33 @@ class Acquisition(_Base):
     tissue: Tissue = Field(default_factory=Tissue)
     fps: float = Field(gt=0, default=20.0, description="Frame rate, frames per second.")
     duration_s: float = Field(gt=0, default=150.0, description="Recording duration, seconds.")
+    focal_depth_in_tissue_um: float | Literal["auto"] = Field(
+        default="auto",
+        description="Depth of the focal plane below the tissue surface, µm (0 = surface), "
+        "in the same coordinate as each cell's depth z. Cells above or below it defocus; "
+        "'auto' resolves to the median realized cell depth at the optics step.",
+    )
+    front_working_distance_um: float | None = Field(
+        default=None,
+        description="Front working distance (lens front → focal point), µm — Miniscope V4 ≈ "
+        "700. Informational only: it does NOT affect the simulation (the optics math uses "
+        "focal_depth_in_tissue_um), but it's a physically relevant number for surgery/implant "
+        "planning, so it's recorded here.",
+    )
+
+    @field_validator("focal_depth_in_tissue_um")
+    @classmethod
+    def _check_focal_depth(cls, v: float | str) -> float | str:
+        if v != "auto" and v < 0:
+            raise ValueError(f"focal_depth_in_tissue_um ({v}) must be ≥ 0, or 'auto'.")
+        return v
+
+    @field_validator("front_working_distance_um")
+    @classmethod
+    def _check_fwd(cls, v: float | None) -> float | None:
+        if v is not None and v <= 0:
+            raise ValueError(f"front_working_distance_um ({v}) must be > 0, or None.")
+        return v
 
     @property
     def pixel_size_um(self) -> float:
@@ -837,15 +886,15 @@ class Spec(_Base):
             )
 
     def _warn_focal_plane(self, by_kind: dict[str, StepSpec]) -> None:
-        """Rule 6: a numeric focal plane outside the cell depth range is unusual."""
-        focal = self.acquisition.optics.focal_plane_um
+        """Rule 6: a numeric focal depth outside the cell depth range is unusual."""
+        focal = self.acquisition.focal_depth_in_tissue_um
         pc = by_kind.get("place_somata")
         if focal == "auto" or pc is None:
             return
         lo, hi = pc.depth_range_um
         if not (lo <= focal <= hi):
             warnings.warn(
-                f"focal_plane_um={focal} µm is outside the cell depth range ({lo}, {hi}) µm.",
+                f"focal_depth_in_tissue_um={focal} µm is outside the cell depth range ({lo}, {hi}) µm.",
                 SpecWarning,
                 stacklevel=2,
             )

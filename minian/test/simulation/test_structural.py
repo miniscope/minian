@@ -38,14 +38,14 @@ from minian.simulation import (
 )
 
 
-def _acq(n_px=96, focal_plane_um=0.0, depth_of_field_um=40.0, duration_s=1.0):
+def _acq(n_px=96, focal_depth_in_tissue_um=0.0, depth_of_field_um=40.0, duration_s=1.0):
     """A ~96 µm FOV at a clean 1.0 µm/px scale (pitch 8 / mag 8)."""
     return Acquisition(
         fps=20.0,
         duration_s=duration_s,
+        focal_depth_in_tissue_um=focal_depth_in_tissue_um,
         optics=Optics(
-            magnification=8.0, na=0.45, focal_plane_um=focal_plane_um,
-            depth_of_field_um=depth_of_field_um,
+            magnification=8.0, na=0.45, depth_of_field_um=depth_of_field_um,
         ),
         image_sensor=ImageSensor(
             n_px_height=n_px, n_px_width=n_px, pixel_pitch_um=8.0, bit_depth=8
@@ -59,7 +59,7 @@ def test_detectability_falls_with_depth():
     # them, so both the in-focus and the detectable fraction fall with depth. The
     # in-focus fraction is the rock-solid geometric signal; detectability tracks it.
     base = Spec(
-        acquisition=_acq(focal_plane_um=0.0, depth_of_field_um=40.0, duration_s=3.0),
+        acquisition=_acq(focal_depth_in_tissue_um=0.0, depth_of_field_um=40.0, duration_s=3.0),
         seed=10,
         steps=[
             PlaceSomata(density_per_mm2=6000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
@@ -93,7 +93,7 @@ def test_strong_vignette_concentrates_detection_centrally():
     # A steep illumination falloff dims rim cells below the noise floor, so among
     # in-focus cells the detectable ones cluster toward the FOV center.
     spec = Spec(
-        acquisition=_acq(focal_plane_um=5.0, depth_of_field_um=40.0),
+        acquisition=_acq(focal_depth_in_tissue_um=5.0, depth_of_field_um=40.0),
         seed=11,
         steps=[
             PlaceSomata(density_per_mm2=6000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
@@ -116,7 +116,7 @@ def test_strong_vignette_concentrates_detection_centrally():
 
 def test_bleaching_dims_later_frames():
     spec = Spec(
-        acquisition=_acq(focal_plane_um=5.0, duration_s=2.0),
+        acquisition=_acq(focal_depth_in_tissue_um=5.0, duration_s=2.0),
         seed=12,
         steps=[
             PlaceSomata(density_per_mm2=4000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
@@ -139,7 +139,7 @@ def test_static_fields_are_invariant_to_motion():
     # shift trajectory differs. Same seed, differing only in motion magnitude.
     def _spec(max_shift_um, walk_step_um):
         return Spec(
-            acquisition=_acq(focal_plane_um=5.0),
+            acquisition=_acq(focal_depth_in_tissue_um=5.0),
             seed=13,
             steps=[
                 PlaceSomata(density_per_mm2=4000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),

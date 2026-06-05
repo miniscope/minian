@@ -401,12 +401,12 @@ def test_degrade_footprint_gain_scales_integral():
 
 
 def test_resolve_focal_plane_auto_is_median_and_numeric_passes_through():
-    acq = _acq()
+    acq = _acq()  # focal_depth_in_tissue_um defaults to "auto"
     cells = [_cell_with_footprint(acq, z) for z in (0.0, 50.0, 100.0, 150.0, 200.0)]
-    assert resolve_focal_plane(cells, acq.optics) == 100.0
-    assert resolve_focal_plane([], acq.optics) == 0.0  # empty scene -> surface
-    numeric = _acq(optics=Optics(magnification=8.0, focal_plane_um=42.0))
-    assert resolve_focal_plane(cells, numeric.optics) == 42.0
+    assert resolve_focal_plane(cells, acq.focal_depth_in_tissue_um) == 100.0
+    assert resolve_focal_plane([], acq.focal_depth_in_tissue_um) == 0.0  # empty -> surface
+    numeric = _acq(focal_depth_in_tissue_um=42.0)
+    assert resolve_focal_plane(cells, numeric.focal_depth_in_tissue_um) == 42.0
 
 
 def test_optics_in_focus_surface_cell_is_barely_degraded():
@@ -432,7 +432,7 @@ def test_optics_deeper_cell_is_broader_and_dimmer():
     # Both in focus (focal == z, defocus 0), so the difference is pure depth:
     # scatter broadens the footprint and attenuation removes light.
     def run(z):
-        acq = _acq(n_px=80, optics=Optics(magnification=8.0, focal_plane_um=z))
+        acq = _acq(n_px=80, optics=Optics(magnification=8.0), focal_depth_in_tissue_um=z)
         scene = Scene.zeros(acq)
         scene.cells.append(_cell_with_footprint(acq, z=z))
         CellOpticsStep(CellOptics(), acq, np.random.default_rng(0))(scene)
@@ -451,7 +451,7 @@ def test_optics_defocus_conserves_observed_integral():
     # (being a convolution) conserves its integral; attenuation(z) is fixed.
     z, sums = 50.0, []
     for focal in (48.0, 50.0, 52.0):
-        acq = _acq(n_px=80, optics=Optics(magnification=8.0, focal_plane_um=focal))
+        acq = _acq(n_px=80, optics=Optics(magnification=8.0), focal_depth_in_tissue_um=focal)
         scene = Scene.zeros(acq)
         scene.cells.append(_cell_with_footprint(acq, z=z, radius_um=3.0))
         CellOpticsStep(CellOptics(), acq, np.random.default_rng(0))(scene)
@@ -462,7 +462,8 @@ def test_optics_defocus_conserves_observed_integral():
 def test_optics_in_focus_flag_respects_depth_of_field():
     acq = _acq(
         n_px=64,
-        optics=Optics(magnification=8.0, focal_plane_um=80.0, depth_of_field_um=15.0),
+        optics=Optics(magnification=8.0, depth_of_field_um=15.0),
+        focal_depth_in_tissue_um=80.0,
     )
     scene = Scene.zeros(acq)
     for z in (70.0, 80.0, 96.0):  # within DOF, at plane, just outside DOF
@@ -483,6 +484,17 @@ def test_focal_curvature_shift_um():
         Optics(field_curvature_radius_um=0.0)  # must be > 0 or None
 
 
+def test_resolved_depth_of_field_um():
+    # a numeric value is used as-is
+    assert Optics(na=0.3, depth_of_field_um=12.0).resolved_depth_of_field_um == 12.0
+    # "auto" (the default) derives the DOF from NA: n·λ/NA², falling as 1/NA²
+    o30 = Optics(na=0.30, emission_nm=525.0)  # depth_of_field_um defaults to "auto"
+    assert o30.resolved_depth_of_field_um == pytest.approx(1.33 * 0.525 / 0.30**2, rel=1e-6)
+    assert Optics(na=0.45).resolved_depth_of_field_um < o30.resolved_depth_of_field_um
+    with pytest.raises(ValidationError, match="depth_of_field_um"):
+        Optics(depth_of_field_um=0.0)  # must be > 0 or "auto"
+
+
 def test_field_curvature_blurs_off_axis_cells():
     # Two cells at the same depth (the central focal plane): on-axis vs near the
     # FOV corner. With curvature the corner cell focuses shallower, so it falls
@@ -492,10 +504,10 @@ def test_field_curvature_blurs_off_axis_cells():
         n_px=npx,
         optics=Optics(
             magnification=8.0,
-            focal_plane_um=100.0,
             depth_of_field_um=5.0,
             field_curvature_radius_um=600.0,
         ),
+        focal_depth_in_tissue_um=100.0,
     )
     px = acq.pixel_size_um
     z = 100.0

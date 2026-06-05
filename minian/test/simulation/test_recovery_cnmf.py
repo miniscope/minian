@@ -84,7 +84,8 @@ def _recording():
     acq = Acquisition(
         fps=20.0,
         duration_s=60.0,
-        optics=Optics(magnification=8.0, na=0.45, focal_plane_um=5.0, depth_of_field_um=60.0),
+        focal_depth_in_tissue_um=5.0,
+        optics=Optics(magnification=8.0, na=0.45, depth_of_field_um=60.0),
         image_sensor=ImageSensor(n_px_height=128, n_px_width=128, pixel_pitch_um=8.0, bit_depth=8),
     )
     spec = Spec(

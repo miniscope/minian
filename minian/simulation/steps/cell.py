@@ -19,16 +19,12 @@ Step 5b); until it lands, ``render`` composites the planted footprint directly.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
 from minian.simulation.scene import Cell, Scene
 from minian.simulation.steps.base import Step
-
-if TYPE_CHECKING:
-    from minian.simulation.spec import Optics
 
 # Guards the noise normalization for a degenerate (flat) low-pass field; far
 # below any physically meaningful intensity.
@@ -412,18 +408,17 @@ class CellActivityStep(Step):
 # ---------------------------------------------------------------------------
 
 
-def resolve_focal_plane(cells: list[Cell], optics: Optics) -> float:
-    """Resolve ``Optics.focal_plane_um`` to a concrete depth, µm.
+def resolve_focal_plane(cells: list[Cell], focal_depth_in_tissue_um: float | str) -> float:
+    """Resolve ``Acquisition.focal_depth_in_tissue_um`` to a concrete focal depth, µm.
 
-    A numeric focal plane is used as-is. ``"auto"`` resolves to the **median
-    realized cell depth**, so the focal plane sits in the middle of the placed
-    population (the most cells in focus). An empty scene falls back to the
-    surface (``0.0``). This is the one place ``"auto"`` becomes concrete; every
-    downstream read sees a number.
+    A numeric value is the focal depth below the surface as-is. ``"auto"``
+    resolves to the **median realized cell depth**, so the focal plane sits in the
+    middle of the placed population (the most cells in focus). An empty scene falls
+    back to the surface (``0.0``). This is the one place ``"auto"`` becomes
+    concrete; every downstream read sees a number.
     """
-    focal = optics.focal_plane_um
-    if focal != "auto":
-        return float(focal)
+    if focal_depth_in_tissue_um != "auto":
+        return float(focal_depth_in_tissue_um)
     if not cells:
         return 0.0
     return float(np.median([cell.center_um[0] for cell in cells]))
@@ -480,7 +475,8 @@ class CellOpticsStep(Step):
     * writes ``footprint_observed = gain · (planted ⊛ Gaussian(σ_total))`` where
       ``gain = attenuation(z) · collection_efficiency`` — the blurred, dimmed
       footprint CNMF could actually recover;
-    * sets ``in_focus`` geometrically (``|z − focal| ≤ depth_of_field_um``);
+    * sets ``in_focus`` geometrically (``|z − focal_eff| ≤`` the NA-derived depth
+      of field), where ``focal_eff`` includes the field-curvature shift;
     * stores ``optical_brightness`` — the per-cell *peak* scalar from
       ``cell_optics`` (defocus drops the peak as ``σ₀²/σ_total²``; scatter
       ``attenuation(z)`` and ``collection_efficiency ∝ NA²`` dim it). Footprint
@@ -490,8 +486,9 @@ class CellOpticsStep(Step):
       (Step 6), where this peak combines with the illumination field and the
       sensor noise floor.
 
-    The *central* focal plane is resolved once for the whole scene (``"auto"`` →
-    median cell depth). When ``Optics.field_curvature_radius_um`` is set, each
+    The *central* focal plane is resolved once for the whole scene from
+    ``Acquisition.focal_depth_in_tissue_um`` (``"auto"`` → median cell depth). When
+    ``Optics.field_curvature_radius_um`` is set, each
     cell's effective focal depth is that plane minus the field-curvature sagitta at
     its distance from the optical axis (canvas center), so off-axis cells focus
     shallower and blur out toward the edges — the sharp-center/soft-edge look of an
@@ -503,8 +500,8 @@ class CellOpticsStep(Step):
 
     def __call__(self, scene: Scene) -> None:
         acq = self.acq
-        focal = resolve_focal_plane(scene.cells, acq.optics)
-        dof = acq.optics.depth_of_field_um
+        focal = resolve_focal_plane(scene.cells, acq.focal_depth_in_tissue_um)
+        dof = acq.optics.resolved_depth_of_field_um
         # Optical axis = canvas center (the sensor FOV is a centered crop of the
         # canvas). Off-axis cells focus shallower by the field-curvature sagitta,
         # so each cell sees its own focal depth (no footprint warping: the

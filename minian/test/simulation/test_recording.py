@@ -86,7 +86,7 @@ def test_finalize_produces_typed_recording():
 
 
 def test_observed_footprint_differs_from_planted_under_optics():
-    acq = _acq(n_px=40, optics=Optics(magnification=8.0, focal_plane_um=0.0))
+    acq = _acq(n_px=40, optics=Optics(magnification=8.0), focal_depth_in_tissue_um=0.0)
     steps = [
         PlaceSomata(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(80.0, 120.0)),
         CellActivity(active_rate_hz=5.0),
