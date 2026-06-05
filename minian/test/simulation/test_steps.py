@@ -444,6 +444,26 @@ def test_resolve_focal_plane_auto_is_median_and_numeric_passes_through():
     assert resolve_focal_plane(cells, numeric.focal_depth_in_tissue_um) == 42.0
 
 
+def test_resolve_focal_plane_auto_accounts_for_field_curvature():
+    # All cells at the same depth but spread laterally. Defocus is linear in the
+    # effective depth z + shift(r), so the min-total-defocus focus is the MEDIAN
+    # effective depth. With curvature, off-axis cells read deeper, so auto sits
+    # deeper than the plain median z -- and falls back to median z without optics.
+    acq = _acq(n_px=200, optics=Optics(magnification=8.0, field_curvature_radius_um=600.0))
+    px = acq.pixel_size_um
+    axis = (100 * px, 100 * px)  # canvas center (n_px=200) in µm
+    radii = (0.0, 20.0, 40.0, 60.0, 80.0)
+    cells = [Cell(center_um=(100.0, axis[0], axis[1] + r), snr=4.0) for r in radii]
+    expected = float(np.median([100.0 + acq.optics.focal_curvature_shift_um(r) for r in radii]))
+
+    assert resolve_focal_plane(cells, "auto") == 100.0  # no optics -> plain median z
+    curv = resolve_focal_plane(cells, "auto", acq.optics, axis)
+    assert curv == pytest.approx(expected)
+    assert curv > 100.0  # curvature pulls the focus deeper to recover off-axis cells
+    flat = Optics(magnification=8.0)  # field_curvature_radius_um=None
+    assert resolve_focal_plane(cells, "auto", flat, axis) == 100.0  # flat field -> median z
+
+
 def test_optics_in_focus_surface_cell_is_barely_degraded():
     # z=0, focal auto -> 0: no scatter, no defocus, atten=1 -> only diffraction
     # blur and the flat NA² collection efficiency dim the footprint.

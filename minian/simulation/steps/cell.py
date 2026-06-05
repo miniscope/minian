@@ -442,20 +442,49 @@ class CellActivityStep(Step):
 # ---------------------------------------------------------------------------
 
 
-def resolve_focal_plane(cells: list[Cell], focal_depth_in_tissue_um: float | str) -> float:
+def resolve_focal_plane(
+    cells: list[Cell],
+    focal_depth_in_tissue_um: float | str,
+    optics: "Optics | None" = None,
+    axis_yx: tuple[float, float] | None = None,
+) -> float:
     """Resolve ``Acquisition.focal_depth_in_tissue_um`` to a concrete focal depth, µm.
 
-    A numeric value is the focal depth below the surface as-is. ``"auto"``
-    resolves to the **median realized cell depth**, so the focal plane sits in the
-    middle of the placed population (the most cells in focus). An empty scene falls
-    back to the surface (``0.0``). This is the one place ``"auto"`` becomes
-    concrete; every downstream read sees a number.
+    A numeric value is the focal depth below the surface as-is. ``"auto"`` puts the
+    focal plane where it **minimizes the total defocus blur** over the population.
+    Defocus is ``σ = NA·|z − focal_eff|`` with ``focal_eff = focal − shift(r)`` the
+    field-curvature-corrected focal depth a cell at field radius ``r`` actually sees
+    (off-axis cells focus shallower). That is ``NA·|(z + shift(r)) − focal|`` —
+    linear in each cell's **effective depth** ``e = z + shift(r)`` — so the focal
+    that minimizes ``Σ σ`` is exactly the **median of the effective depths**. This
+    automatically accounts for field curvature: with an un-flattened field the
+    off-axis cells read deeper, pulling the plane down so more of them come into
+    focus than a naive median-of-``z`` would manage.
+
+    Field curvature is only included when both ``optics`` (with a non-``None``
+    ``field_curvature_radius_um``) and ``axis_yx`` (the optical axis in canvas µm)
+    are supplied; otherwise ``"auto"`` falls back to the plain median cell depth.
+    An empty scene falls back to the surface (``0.0``). This is the one place
+    ``"auto"`` becomes concrete; every downstream read sees a number.
     """
     if focal_depth_in_tissue_um != "auto":
         return float(focal_depth_in_tissue_um)
     if not cells:
         return 0.0
-    return float(np.median([cell.center_um[0] for cell in cells]))
+    depths = np.array([cell.center_um[0] for cell in cells], dtype=float)
+    if optics is not None and axis_yx is not None and optics.field_curvature_radius_um is not None:
+        axis_y, axis_x = axis_yx
+        shifts = np.array(
+            [
+                optics.focal_curvature_shift_um(
+                    math.hypot(cell.center_um[1] - axis_y, cell.center_um[2] - axis_x)
+                )
+                for cell in cells
+            ],
+            dtype=float,
+        )
+        return float(np.median(depths + shifts))  # median effective depth = min total defocus
+    return float(np.median(depths))
 
 
 _GAUSS_TRUNCATE = 4.0  # scipy gaussian_filter default; the PSF is exactly 0 beyond
@@ -521,12 +550,13 @@ class CellOpticsStep(Step):
       sensor noise floor.
 
     The *central* focal plane is resolved once for the whole scene from
-    ``Acquisition.focal_depth_in_tissue_um`` (``"auto"`` → median cell depth). When
-    ``Optics.field_curvature_radius_um`` is set, each
-    cell's effective focal depth is that plane minus the field-curvature sagitta at
-    its distance from the optical axis (canvas center), so off-axis cells focus
-    shallower and blur out toward the edges — the sharp-center/soft-edge look of an
-    un-flattened miniscope. Cells without a planted footprint are skipped.
+    ``Acquisition.focal_depth_in_tissue_um`` (``"auto"`` → the focus that minimizes
+    total defocus, i.e. the median curvature-corrected effective depth; see
+    :func:`resolve_focal_plane`). When ``Optics.field_curvature_radius_um`` is set,
+    each cell's effective focal depth is that plane minus the field-curvature
+    sagitta at its distance from the optical axis (canvas center), so off-axis cells
+    focus shallower and blur out toward the edges — the sharp-center/soft-edge look
+    of an un-flattened miniscope. Cells without a planted footprint are skipped.
     """
 
     name = "optics"
@@ -534,8 +564,6 @@ class CellOpticsStep(Step):
 
     def __call__(self, scene: Scene) -> None:
         acq = self.acq
-        focal = resolve_focal_plane(scene.cells, acq.focal_depth_in_tissue_um)
-        dof = acq.optics.resolved_depth_of_field_um
         # Optical axis = canvas center (the sensor FOV is a centered crop of the
         # canvas). Off-axis cells focus shallower by the field-curvature sagitta,
         # so each cell sees its own focal depth (no footprint warping: the
@@ -543,6 +571,12 @@ class CellOpticsStep(Step):
         h, w = scene.movie.values.shape[1:]
         axis_y = h * acq.pixel_size_um / 2.0
         axis_x = w * acq.pixel_size_um / 2.0
+        # "auto" focus minimizes total defocus over the population; pass the optics
+        # + axis so it folds in field curvature (off-axis cells read deeper).
+        focal = resolve_focal_plane(
+            scene.cells, acq.focal_depth_in_tissue_um, acq.optics, (axis_y, axis_x)
+        )
+        dof = acq.optics.resolved_depth_of_field_um
         for cell in scene.cells:
             if cell.footprint_planted is None:
                 continue
