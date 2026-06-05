@@ -47,7 +47,7 @@ _EPS = 1e-12
 _DENDRITE_BASE_INTENSITY = 0.6  # planted weight where a dendrite leaves the soma
 _DENDRITE_TIP_INTENSITY = 0.15  # ...tapering to this at the distal tip
 _DENDRITE_TIP_WIDTH_PX = 0.75  # minimum stamp radius, keeps the thread continuous
-_DENDRITE_WANDER_RAD = 0.3  # per-step heading random walk, radians (gentle curves)
+_DENDRITE_WANDER_RAD = 0.15  # per-step heading random walk, radians (gently wavy, not curly)
 _DENDRITE_ANGLE_JITTER_RAD = 0.4  # jitter on the evenly spaced launch angles
 
 
@@ -429,6 +429,9 @@ def resolve_focal_plane(cells: list[Cell], optics: Optics) -> float:
     return float(np.median([cell.center_um[0] for cell in cells]))
 
 
+_GAUSS_TRUNCATE = 4.0  # scipy gaussian_filter default; the PSF is exactly 0 beyond
+
+
 def degrade_footprint(
     planted: np.ndarray, sigma_px: float, gain: float
 ) -> np.ndarray:
@@ -444,8 +447,27 @@ def degrade_footprint(
     independent, so the observed footprint's integral is too. ``mode="constant"``
     means light blurred past the FOV edge is lost — physically honest for a cell
     near the boundary.
+
+    A footprint is local (one cell) on a canvas that may be far larger, so the
+    blur is computed only within the cell's bounding box, grown by the PSF's
+    truncation radius (``4·sigma_px``). Beyond that the Gaussian is exactly zero,
+    so the result is **bit-identical** to filtering the whole canvas — just much
+    cheaper when the cell is small relative to the frame.
     """
-    return gain * gaussian_filter(planted, sigma=sigma_px, mode="constant")
+    rows = np.any(planted > 0, axis=1)
+    if not rows.any():
+        return np.zeros(planted.shape, dtype=float)  # empty footprint → nothing to blur
+    cols = np.any(planted > 0, axis=0)
+    y0, y1 = int(np.argmax(rows)), len(rows) - int(np.argmax(rows[::-1]))
+    x0, x1 = int(np.argmax(cols)), len(cols) - int(np.argmax(cols[::-1]))
+    pad = int(np.ceil(_GAUSS_TRUNCATE * sigma_px)) + 1
+    y0, x0 = max(y0 - pad, 0), max(x0 - pad, 0)
+    y1, x1 = min(y1 + pad, planted.shape[0]), min(x1 + pad, planted.shape[1])
+    observed = np.zeros(planted.shape, dtype=float)
+    observed[y0:y1, x0:x1] = gain * gaussian_filter(
+        planted[y0:y1, x0:x1], sigma=sigma_px, mode="constant"
+    )
+    return observed
 
 
 class CellOpticsStep(Step):
@@ -468,8 +490,12 @@ class CellOpticsStep(Step):
       (Step 6), where this peak combines with the illumination field and the
       sensor noise floor.
 
-    The focal plane is resolved once for the whole scene (``"auto"`` → median
-    cell depth). Cells without a planted footprint are skipped.
+    The *central* focal plane is resolved once for the whole scene (``"auto"`` →
+    median cell depth). When ``Optics.field_curvature_radius_um`` is set, each
+    cell's effective focal depth is that plane minus the field-curvature sagitta at
+    its distance from the optical axis (canvas center), so off-axis cells focus
+    shallower and blur out toward the edges — the sharp-center/soft-edge look of an
+    un-flattened miniscope. Cells without a planted footprint are skipped.
     """
 
     name = "optics"
@@ -479,15 +505,24 @@ class CellOpticsStep(Step):
         acq = self.acq
         focal = resolve_focal_plane(scene.cells, acq.optics)
         dof = acq.optics.depth_of_field_um
+        # Optical axis = canvas center (the sensor FOV is a centered crop of the
+        # canvas). Off-axis cells focus shallower by the field-curvature sagitta,
+        # so each cell sees its own focal depth (no footprint warping: the
+        # curvature over one soma is negligible vs the ~mm curvature radius).
+        h, w = scene.movie.values.shape[1:]
+        axis_y = h * acq.pixel_size_um / 2.0
+        axis_x = w * acq.pixel_size_um / 2.0
         for cell in scene.cells:
             if cell.footprint_planted is None:
                 continue
             z = cell.center_um[0]
-            sigma_px, brightness = acq.cell_optics(z, focal)
+            r = math.hypot(cell.center_um[1] - axis_y, cell.center_um[2] - axis_x)
+            focal_eff = focal - acq.optics.focal_curvature_shift_um(r)
+            sigma_px, brightness = acq.cell_optics(z, focal_eff)
             cell.footprint_observed = degrade_footprint(
                 cell.footprint_planted,
                 sigma_px,
                 acq.tissue.attenuation(z) * acq.optics.collection_efficiency,
             )
-            cell.in_focus = abs(z - focal) <= dof
+            cell.in_focus = abs(z - focal_eff) <= dof
             cell.optical_brightness = brightness

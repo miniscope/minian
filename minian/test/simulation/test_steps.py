@@ -471,6 +471,52 @@ def test_optics_in_focus_flag_respects_depth_of_field():
     assert [c.in_focus for c in scene.cells] == [True, True, False]
 
 
+def test_focal_curvature_shift_um():
+    flat = Optics(magnification=8.0)  # field_curvature_radius_um defaults to None
+    assert flat.focal_curvature_shift_um(250.0) == 0.0  # flat field: no shift
+    curved = Optics(magnification=8.0, field_curvature_radius_um=2500.0)
+    assert curved.focal_curvature_shift_um(0.0) == 0.0  # on-axis: no shift
+    s250 = curved.focal_curvature_shift_um(250.0)
+    assert s250 == pytest.approx(250.0**2 / (2 * 2500.0), rel=1e-2)  # ~ r²/2R ≈ 12.5
+    assert curved.focal_curvature_shift_um(500.0) > s250  # grows with field radius
+    with pytest.raises(ValidationError, match="field_curvature_radius_um"):
+        Optics(field_curvature_radius_um=0.0)  # must be > 0 or None
+
+
+def test_field_curvature_blurs_off_axis_cells():
+    # Two cells at the same depth (the central focal plane): on-axis vs near the
+    # FOV corner. With curvature the corner cell focuses shallower, so it falls
+    # out of focus and its peak drops, while the on-axis cell stays sharp.
+    npx = 200
+    acq = _acq(
+        n_px=npx,
+        optics=Optics(
+            magnification=8.0,
+            focal_plane_um=100.0,
+            depth_of_field_um=5.0,
+            field_curvature_radius_um=600.0,
+        ),
+    )
+    px = acq.pixel_size_um
+    z = 100.0
+
+    def cell_at(y_um, x_um):
+        fp = neuron_footprint(
+            (npx, npx), (y_um / px, x_um / px), acq.um_to_px(4.0), 0.0,
+            np.random.default_rng(0),
+        )
+        return Cell(center_um=(z, y_um, x_um), snr=4.0, footprint_planted=fp)
+
+    center = cell_at(npx * px / 2, npx * px / 2)  # on axis (r = 0)
+    corner = cell_at(10.0, 10.0)                  # near a corner (large r)
+    scene = Scene.zeros(acq)
+    scene.cells += [center, corner]
+    CellOpticsStep(CellOptics(), acq, np.random.default_rng(0))(scene)
+    assert center.in_focus is True
+    assert corner.in_focus is False  # off-axis sagitta pushes it past the DOF
+    assert corner.footprint_observed.max() < center.footprint_observed.max()
+
+
 def test_optics_makes_render_use_the_degraded_footprint():
     # Render a deep cell from its planted footprint, then again after optics:
     # the optically degraded render is dimmer (blurred + attenuated).

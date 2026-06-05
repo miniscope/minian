@@ -101,6 +101,21 @@ class Optics(_Base):
         default=15.0,
         description="±range around the focal plane treated as 'in focus' for detectability.",
     )
+    field_curvature_radius_um: float | None = Field(
+        default=None,
+        description="Petzval field-curvature radius, µm (typical miniscope ≈ 2000–3000). "
+        "Off-axis cells focus *shallower* by the spherical sagitta; None = ideal flat "
+        "field. A miniscope has no room for a field flattener, so this is usually finite.",
+    )
+
+    @field_validator("field_curvature_radius_um")
+    @classmethod
+    def _check_curvature(cls, v: float | None) -> float | None:
+        if v is not None and v <= 0:
+            raise ValueError(
+                f"field_curvature_radius_um ({v}) must be > 0, or None for a flat field."
+            )
+        return v
 
     # ---- Layer-2 helpers: small, documented, individually-testable approximations ----
 
@@ -157,6 +172,26 @@ class Optics(_Base):
         ``photons_per_unit`` exposure scale, so what matters here is the ``NA²``
         scaling. At NA 0.18 vs 0.45 this is a ~6× brightness difference."""
         return self.na**2
+
+    def focal_curvature_shift_um(self, r_um: float) -> float:
+        """Field-curvature focal shift at field radius ``r_um`` from the axis, µm.
+
+        Without a field flattener — which a miniscope has no room for — off-axis
+        points focus on a curved (≈spherical) surface, not a plane. A point at
+        radius ``r`` from the optical axis comes into best focus *shallower*
+        (nearer the objective) than the on-axis focal plane, by the spherical
+        sagitta ``R − √(R² − r²) ≈ r²/(2R)``. Returns a **non-negative** shift to
+        be *subtracted* from the central focal depth (the in-focus surface bows
+        toward the objective at the edges, always, for miniscope/standard optics).
+        Zero when :attr:`field_curvature_radius_um` is ``None`` (an ideal flat
+        field). Typical radii are 2–3 mm — large vs a soma, so a cell can be
+        evaluated at its center rather than warping the footprint across the field.
+        """
+        radius = self.field_curvature_radius_um
+        if radius is None:
+            return 0.0
+        r = min(abs(r_um), radius)  # clamp keeps the sqrt real for pathological r > R
+        return radius - math.sqrt(radius * radius - r * r)
 
 
 class ImageSensor(_Base):
