@@ -108,20 +108,34 @@ def neuron_footprint(
     """
     h, w = shape
     cy, cx = center_px
-    yy, xx = np.ogrid[:h, :w]
-    dist = np.hypot(yy - cy, xx - cx)
-    if irregularity > 0:
-        # Low-pass noise on the soma's own scale → a smoothly lumpy boundary,
-        # normalized to ~[-1, 1] so `irregularity` is the fractional radius wobble.
-        noise = gaussian_filter(
-            rng.standard_normal((h, w)), sigma=max(radius_px / 2.0, 1.0)
-        )
-        noise /= max(noise.max(), -noise.min()) + _EPS  # scale to ~[-1, 1]
-        r_eff = radius_px * (1.0 + irregularity * noise)
-    else:
-        r_eff = radius_px
-    # A 0/1 membership mask is already peak-normalized (max == 1) by construction.
-    footprint = (dist <= r_eff).astype(float)
+    footprint = np.zeros((h, w), dtype=float)
+    # The soma is local: it reaches at most radius_px·(1 + irregularity) from the
+    # center (the +irregularity headroom covers the lumpy-boundary wobble). Compute
+    # the hypot/threshold/noise only inside that bounding box and write it into the
+    # full canvas — bit-for-bit the same as filling the whole grid wherever the soma
+    # is, just far cheaper than touching every pixel for a cell that occupies a tiny
+    # patch. Dendrites are stamped afterwards and self-window (see :func:`_stamp_disk`).
+    reach = radius_px * (1.0 + max(irregularity, 0.0)) + 1.0
+    y0 = max(int(math.floor(cy - reach)), 0)
+    y1 = min(int(math.ceil(cy + reach)) + 1, h)
+    x0 = max(int(math.floor(cx - reach)), 0)
+    x1 = min(int(math.ceil(cx + reach)) + 1, w)
+    if y0 < y1 and x0 < x1:
+        yy, xx = np.ogrid[y0:y1, x0:x1]
+        dist = np.hypot(yy - cy, xx - cx)
+        if irregularity > 0:
+            # Low-pass noise on the soma's own scale → a smoothly lumpy boundary,
+            # normalized to ~[-1, 1] so `irregularity` is the fractional radius wobble.
+            noise = gaussian_filter(
+                rng.standard_normal((y1 - y0, x1 - x0)),
+                sigma=max(radius_px / 2.0, 1.0),
+            )
+            noise /= max(noise.max(), -noise.min()) + _EPS  # scale to ~[-1, 1]
+            r_eff = radius_px * (1.0 + irregularity * noise)
+        else:
+            r_eff = radius_px
+        # A 0/1 membership mask is already peak-normalized (max == 1) by construction.
+        footprint[y0:y1, x0:x1] = (dist <= r_eff).astype(float)
     # Cytosolic GCaMP fills the proximal dendrites too. Stamp them *after* the
     # soma so the soma's RNG draw above is untouched — "soma" stays bit-identical.
     if morphology == "cytosolic" and n_dendrites > 0 and dendrite_length_px > 0:

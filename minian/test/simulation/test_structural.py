@@ -101,7 +101,9 @@ def test_strong_vignette_concentrates_detection_centrally():
             CellOptics(),
             Render(),
             Vignette(falloff=0.3, exponent=2.0),  # edge at 30% brightness
-            Sensor(photons_per_unit=110.0),
+            # Bright enough that a non-trivial in-focus population clears the noise
+            # floor; the steep vignette then keeps the survivors near the center.
+            Sensor(photons_per_unit=1000.0),
         ],
     )
     rec = simulate(spec)
