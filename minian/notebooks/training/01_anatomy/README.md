@@ -13,7 +13,7 @@ planned) then runs real minian on a recording like this and scores it against th
 truth.
 
 > **Work in progress.** Stages built so far: **the scope** (optics + sensor),
-> **placing somata**, and **calcium activity**. The remaining stages — optics
+> **placing neurons**, and **calcium activity**. The remaining stages — optics
 > degradation, render (the first movie), background fields, motion, and the sensor
 > — are being added next.
 

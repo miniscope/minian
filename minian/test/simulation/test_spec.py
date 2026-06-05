@@ -23,7 +23,7 @@ from minian.simulation import (
     Neuropil,
     Optics,
     Output,
-    PlaceSomata,
+    PlaceNeurons,
     Render,
     Sensor,
     SNRDistribution,
@@ -39,7 +39,7 @@ from minian.simulation.steps import Step
 def _minimal_steps():
     """A short, in-order, individually-valid step list for a tiny FOV."""
     return [
-        PlaceSomata(soma_radius_um=3.0, depth_range_um=(0.0, 0.0)),
+        PlaceNeurons(soma_radius_um=3.0, depth_range_um=(0.0, 0.0)),
         CellActivity(tau_decay_s=0.4),
         CellOptics(),
         Render(),
@@ -128,7 +128,7 @@ def test_json_round_trip_preserves_step_types():
     spec = _valid_spec()
     restored = Spec.model_validate_json(spec.model_dump_json())
     assert restored == spec
-    assert isinstance(restored.steps[0], PlaceSomata)
+    assert isinstance(restored.steps[0], PlaceNeurons)
     assert isinstance(restored.steps[-1], Sensor)
 
 
@@ -164,12 +164,12 @@ def test_duplicate_kind_fails():
 def test_soma_larger_than_fov_fails():
     # 20 µm radius → 40 µm diameter, far larger than the 12 µm FOV.
     with pytest.raises(ValidationError, match="FOV"):
-        _valid_spec(steps=[PlaceSomata(soma_radius_um=20.0)] + _minimal_steps()[1:])
+        _valid_spec(steps=[PlaceNeurons(soma_radius_um=20.0)] + _minimal_steps()[1:])
 
 
 def test_unresolvable_decay_fails():
     acq = _tiny_acquisition(fps=1.0)
-    steps = [PlaceSomata(soma_radius_um=3.0), CellActivity(tau_decay_s=0.5), Render()]
+    steps = [PlaceNeurons(soma_radius_um=3.0), CellActivity(tau_decay_s=0.5), Render()]
     with pytest.raises(ValidationError, match="unresolvable"):
         Spec(acquisition=acq, steps=steps)
 
@@ -184,14 +184,14 @@ def test_snr_order_fails():
 
 def test_out_of_order_domains_warn():
     # sensor before render → sensor(rank3) precedes tissue(rank1)
-    steps = [PlaceSomata(soma_radius_um=3.0), Sensor(), Render()]
+    steps = [PlaceNeurons(soma_radius_um=3.0), Sensor(), Render()]
     with pytest.warns(SpecWarning, match="natural"):
         _valid_spec(steps=steps)
 
 
 def test_focal_plane_out_of_range_warns():
     acq = _tiny_acquisition(focal_depth_in_tissue_um=500.0)
-    steps = [PlaceSomata(soma_radius_um=3.0, depth_range_um=(0.0, 200.0)), Render()]
+    steps = [PlaceNeurons(soma_radius_um=3.0, depth_range_um=(0.0, 200.0)), Render()]
     with pytest.warns(SpecWarning, match="focal"):
         Spec(acquisition=acq, steps=steps)
 
@@ -203,7 +203,7 @@ def test_auto_focal_plane_does_not_warn(recwarn):
 
 def test_large_motion_warns():
     steps = [
-        PlaceSomata(soma_radius_um=3.0, depth_range_um=(0.0, 0.0)),
+        PlaceNeurons(soma_radius_um=3.0, depth_range_um=(0.0, 0.0)),
         CellActivity(tau_decay_s=0.4),
         CellOptics(),
         Render(),
@@ -224,7 +224,7 @@ def test_every_step_kind_builds():
     acq = _tiny_acquisition()
     rng = np.random.default_rng(0)
     specs = [
-        PlaceSomata(),
+        PlaceNeurons(),
         CellActivity(),
         CellOptics(),
         Render(),

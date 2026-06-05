@@ -23,7 +23,7 @@ from minian.simulation import (
     Neuropil,
     Optics,
     Output,
-    PlaceSomata,
+    PlaceNeurons,
     Recording,
     Render,
     Sensor,
@@ -52,7 +52,7 @@ def _minimal_spec(seed=7, **output_kw):
         acquisition=_acq(),
         seed=seed,
         steps=[
-            PlaceSomata(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)),
+            PlaceNeurons(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Render(),
@@ -68,7 +68,7 @@ def _full_spec(seed=11, **output_kw):
         acquisition=_acq(),
         seed=seed,
         steps=[
-            PlaceSomata(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)),
+            PlaceNeurons(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Render(),

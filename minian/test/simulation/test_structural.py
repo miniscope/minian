@@ -28,7 +28,7 @@ from minian.simulation import (
     Leakage,
     Neuropil,
     Optics,
-    PlaceSomata,
+    PlaceNeurons,
     Render,
     Sensor,
     Spec,
@@ -62,7 +62,7 @@ def test_detectability_falls_with_depth():
         acquisition=_acq(focal_depth_in_tissue_um=0.0, depth_of_field_um=40.0, duration_s=3.0),
         seed=10,
         steps=[
-            PlaceSomata(density_per_mm2=6000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
+            PlaceNeurons(density_per_mm2=6000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
             CellActivity(active_rate_hz=8.0, tau_decay_s=0.4),  # ~all cells fire
             CellOptics(),
             Render(),
@@ -75,7 +75,7 @@ def test_detectability_falls_with_depth():
     )
     bands = [(0.0, 10.0), (40.0, 50.0), (80.0, 90.0), (120.0, 130.0)]
     in_focus, detectable = [], []
-    for spec in sweep(base, {"steps.place_somata.depth_range_um": bands}):
+    for spec in sweep(base, {"steps.place_neurons.depth_range_um": bands}):
         gt = simulate(spec).ground_truth
         in_focus.append(gt.in_focus.mean())
         detectable.append(gt.detectable.sum() / gt.n_units)
@@ -96,7 +96,7 @@ def test_strong_vignette_concentrates_detection_centrally():
         acquisition=_acq(focal_depth_in_tissue_um=5.0, depth_of_field_um=40.0),
         seed=11,
         steps=[
-            PlaceSomata(density_per_mm2=6000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
+            PlaceNeurons(density_per_mm2=6000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Render(),
@@ -119,7 +119,7 @@ def test_bleaching_dims_later_frames():
         acquisition=_acq(focal_depth_in_tissue_um=5.0, duration_s=2.0),
         seed=12,
         steps=[
-            PlaceSomata(density_per_mm2=4000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
+            PlaceNeurons(density_per_mm2=4000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Render(),
@@ -142,7 +142,7 @@ def test_static_fields_are_invariant_to_motion():
             acquisition=_acq(focal_depth_in_tissue_um=5.0),
             seed=13,
             steps=[
-                PlaceSomata(density_per_mm2=4000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
+                PlaceNeurons(density_per_mm2=4000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
                 CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
                 CellOptics(),
                 Render(),

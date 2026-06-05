@@ -19,7 +19,7 @@ from minian.simulation import (
     Neuropil,
     Optics,
     Output,
-    PlaceSomata,
+    PlaceNeurons,
     Render,
     Sensor,
     Spec,
@@ -46,7 +46,7 @@ def _minimal_spec(**output_kw):
         acquisition=acq,
         seed=7,
         steps=[
-            PlaceSomata(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)),
+            PlaceNeurons(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Render(),
@@ -62,7 +62,7 @@ def _full_spec(**output_kw):
         acquisition=acq,
         seed=11,
         steps=[
-            PlaceSomata(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)),
+            PlaceNeurons(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Render(),
@@ -119,7 +119,7 @@ def test_simulate_save_intermediates_records_movie_stage_names():
         "cells_only", "neuropil", "bleaching", "brain_motion", "vignette", "leakage", "sensor",
     }
     # cell-domain steps are not snapshotted (they don't touch the movie)
-    assert "place_somata" not in rec.snapshots
+    assert "place_neurons" not in rec.snapshots
     assert "optics" not in rec.snapshots
     # the sensor-stage snapshot is the observed movie
     np.testing.assert_array_equal(rec.stage("sensor").values, rec.observed)

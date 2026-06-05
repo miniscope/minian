@@ -1,10 +1,12 @@
-"""Cell-domain steps: place somata, then give them calcium activity.
+"""Cell-domain steps: place neurons, then give them calcium activity.
 
 These are the first two steps of the forward pipeline — pure biology, before any
 optics or sensor effect:
 
-* :class:`PlaceSomataStep` positions neuron somata in a 3-D µm volume and stamps
-  a sharp, pre-optics footprint for each.
+* :class:`PlaceNeuronsStep` positions neurons in a 3-D µm volume and stamps
+  a sharp, pre-optics footprint for each. The *distribution* half (sampling
+  centers + per-cell SNR, no footprints) is factored into :func:`sample_neurons`
+  so it can be reused cheaply for teaching/visualization at full FOV.
 * :class:`CellActivityStep` gives every soma a calcium trace built from a
   2-state Markov spike model convolved with a double-exponential indicator
   kernel.
@@ -19,6 +21,7 @@ Step 5b); until it lands, ``render`` composites the planted footprint directly.
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
@@ -26,13 +29,16 @@ from scipy.ndimage import gaussian_filter
 from minian.simulation.scene import Cell, Scene
 from minian.simulation.steps.base import Step
 
+if TYPE_CHECKING:
+    from minian.simulation.spec import PlaceNeurons, SNRDistribution
+
 # Guards the noise normalization for a degenerate (flat) low-pass field; far
 # below any physically meaningful intensity.
 _EPS = 1e-12
 
 
 # ---------------------------------------------------------------------------
-# place_somata
+# place_neurons
 # ---------------------------------------------------------------------------
 
 
@@ -201,23 +207,101 @@ def _stamp_dendrites(
             x += np.cos(heading)
 
 
-class PlaceSomataStep(Step):
-    """Position somata in a 3-D µm volume and stamp a planted footprint each.
+def sample_neurons(
+    spec: PlaceNeurons,
+    fov_h_um: float,
+    fov_w_um: float,
+    rng: np.random.Generator,
+) -> tuple[list[tuple[float, float, float]], np.ndarray]:
+    """Sample the soma *distribution* for a ``PlaceNeurons`` spec over a FOV.
+
+    This is the half of ``place_neurons`` that decides **where cells go and how
+    bright they are** — with no footprint stamping, so it is cheap even at a full
+    sensor FOV (the per-cell :func:`neuron_footprint` paints are the expensive
+    part). :class:`PlaceNeuronsStep` calls this and then stamps a footprint per
+    returned center; teaching code (the anatomy notebook's placement widget) can
+    call it directly to show the population layout without paying for footprints.
+
+    The count is derived from the areal density and the FOV area,
+    ``round(density_per_mm2 · area_mm2)``. Centers are drawn uniformly in
+    ``(y, x)`` across the FOV and in ``z`` across ``depth_range_um``; if
+    ``min_distance_um > 0`` they are rejection-sampled (Poisson-disk style) to a
+    3-D center-to-center minimum. SNRs are drawn from the configured distribution.
+
+    Returns ``(centers, snrs)``: ``centers`` is a list of ``(z, y, x)`` µm tuples
+    and ``snrs`` a 1-D array aligned to it. The draw order (centers, then SNRs)
+    matches the original fused step, so seeded results are unchanged.
+    """
+    area_mm2 = (fov_h_um / 1000.0) * (fov_w_um / 1000.0)
+    count = round(spec.density_per_mm2 * area_mm2)
+    centers = _sample_centers(
+        count, fov_h_um, fov_w_um, spec.depth_range_um, spec.min_distance_um, rng
+    )
+    snrs = _sample_snr(spec.snr, len(centers), rng)
+    return centers, snrs
+
+
+def _sample_centers(
+    count: int,
+    fov_h_um: float,
+    fov_w_um: float,
+    depth_range_um: tuple[float, float],
+    min_distance_um: float,
+    rng: np.random.Generator,
+) -> list[tuple[float, float, float]]:
+    z_lo, z_hi = depth_range_um
+
+    def draw() -> tuple[float, float, float]:
+        return (
+            rng.uniform(z_lo, z_hi),
+            rng.uniform(0.0, fov_h_um),
+            rng.uniform(0.0, fov_w_um),
+        )
+
+    if min_distance_um <= 0:
+        return [draw() for _ in range(count)]
+
+    # Poisson-disk-style rejection sampling. Capped so an over-dense request
+    # ends with fewer cells rather than looping forever (an honest outcome:
+    # you cannot pack more than the minimum spacing allows).
+    centers: list[tuple[float, float, float]] = []
+    attempts, max_attempts = 0, max(1000, 100 * count)
+    while len(centers) < count and attempts < max_attempts:
+        attempts += 1
+        cand = draw()
+        if all(math.dist(cand, c) >= min_distance_um for c in centers):
+            centers.append(cand)
+    return centers
+
+
+def _sample_snr(snr_spec: SNRDistribution, n: int, rng: np.random.Generator) -> np.ndarray:
+    if n == 0:
+        return np.empty(0)
+    if snr_spec.distribution == "uniform":
+        return rng.uniform(snr_spec.low, snr_spec.high, size=n)
+    # Lognormal: treat (low, high) as ~±2σ anchors in log space, so the bulk
+    # of the distribution falls within the configured range.
+    mu = (np.log(snr_spec.low) + np.log(snr_spec.high)) / 2.0
+    sigma = (np.log(snr_spec.high) - np.log(snr_spec.low)) / 4.0
+    return np.exp(rng.normal(mu, sigma, size=n))
+
+
+class PlaceNeuronsStep(Step):
+    """Position neurons in a 3-D µm volume and stamp a planted footprint each.
+
+    Placement and brightness (*where cells go, how bright*) are delegated to
+    :func:`sample_neurons`; this step adds the part that function omits — stamping
+    a peak-normalized planted footprint (:func:`neuron_footprint`, soma-only or
+    soma + proximal dendrites per ``spec.morphology``) at each sampled center.
 
     The cell count is derived from the areal density and the **canvas** area
     (``round(density_per_mm2 · canvas_area_mm2)``) — the scene movie's grid,
-    which a motion margin may enlarge beyond the sensor FOV. Centers are drawn
-    uniformly in ``(y, x)`` across the canvas and in ``z`` across
-    ``depth_range_um``; if
-    ``min_distance_um > 0`` they are rejection-sampled (Poisson-disk style) to a
-    3-D center-to-center minimum. Each cell gets a peak-normalized planted
-    footprint (:func:`neuron_footprint`, soma-only or soma + proximal dendrites
-    per ``spec.morphology``) and an SNR drawn from the configured distribution.
-    The SNR and depth are stored now and consumed later by the ``optics`` step
-    (5b) for the ``in_focus`` / ``detectable`` flags.
+    which a motion margin may enlarge beyond the sensor FOV. The SNR and depth
+    are stored now and consumed later by the ``optics`` step (5b) for the
+    ``in_focus`` / ``detectable`` flags.
     """
 
-    name = "place_somata"
+    name = "place_neurons"
     domain = "cell"
 
     def __call__(self, scene: Scene) -> None:
@@ -232,16 +316,11 @@ class PlaceSomataStep(Step):
         shape = scene.movie.values.shape[1:]  # (height, width) of the canvas
         fov_h_um = shape[0] * acq.pixel_size_um
         fov_w_um = shape[1] * acq.pixel_size_um
-        area_mm2 = (fov_h_um / 1000.0) * (fov_w_um / 1000.0)
-        count = round(spec.density_per_mm2 * area_mm2)
         radius_px = acq.um_to_px(spec.soma_radius_um)
         dendrite_length_px = acq.um_to_px(spec.dendrite_length_um)
         dendrite_width_px = acq.um_to_px(spec.dendrite_width_um)
 
-        centers = self._sample_centers(
-            count, fov_h_um, fov_w_um, spec.depth_range_um, spec.min_distance_um, rng
-        )
-        snrs = self._sample_snr(spec.snr, len(centers), rng)
+        centers, snrs = sample_neurons(spec, fov_h_um, fov_w_um, rng)
         for (z, y, x), snr in zip(centers, snrs):
             footprint = neuron_footprint(
                 shape,
@@ -257,51 +336,6 @@ class PlaceSomataStep(Step):
             scene.cells.append(
                 Cell(center_um=(z, y, x), snr=float(snr), footprint_planted=footprint)
             )
-
-    @staticmethod
-    def _sample_centers(
-        count: int,
-        fov_h_um: float,
-        fov_w_um: float,
-        depth_range_um: tuple[float, float],
-        min_distance_um: float,
-        rng: np.random.Generator,
-    ) -> list[tuple[float, float, float]]:
-        z_lo, z_hi = depth_range_um
-
-        def draw() -> tuple[float, float, float]:
-            return (
-                rng.uniform(z_lo, z_hi),
-                rng.uniform(0.0, fov_h_um),
-                rng.uniform(0.0, fov_w_um),
-            )
-
-        if min_distance_um <= 0:
-            return [draw() for _ in range(count)]
-
-        # Poisson-disk-style rejection sampling. Capped so an over-dense request
-        # ends with fewer cells rather than looping forever (an honest outcome:
-        # you cannot pack more than the minimum spacing allows).
-        centers: list[tuple[float, float, float]] = []
-        attempts, max_attempts = 0, max(1000, 100 * count)
-        while len(centers) < count and attempts < max_attempts:
-            attempts += 1
-            cand = draw()
-            if all(math.dist(cand, c) >= min_distance_um for c in centers):
-                centers.append(cand)
-        return centers
-
-    @staticmethod
-    def _sample_snr(snr_spec, n: int, rng: np.random.Generator) -> np.ndarray:
-        if n == 0:
-            return np.empty(0)
-        if snr_spec.distribution == "uniform":
-            return rng.uniform(snr_spec.low, snr_spec.high, size=n)
-        # Lognormal: treat (low, high) as ~±2σ anchors in log space, so the bulk
-        # of the distribution falls within the configured range.
-        mu = (np.log(snr_spec.low) + np.log(snr_spec.high)) / 2.0
-        sigma = (np.log(snr_spec.high) - np.log(snr_spec.low)) / 4.0
-        return np.exp(rng.normal(mu, sigma, size=n))
 
 
 # ---------------------------------------------------------------------------

@@ -497,21 +497,21 @@ class SNRDistribution(_Base):
         return self
 
 
-class PlaceSomata(StepSpec):
-    """Place generic neuron somata in a 3-D µm volume, soma-only or with dendrites.
+class PlaceNeurons(StepSpec):
+    """Place generic neurons in a 3-D µm volume, soma-only or with dendrites.
 
-    'Place' is the verb — this *positions cell bodies in space*; it is unrelated
-    to hippocampal *place cells*. v1 models one generic excitable cell type (an
-    irregular soma blob) with two GCaMP targeting variants via ``morphology``:
-    ``"soma"`` (soma-targeted, body only) or ``"cytosolic"`` (standard GCaMP, the
-    soma plus a few tapering proximal dendrites). There is no further cell-type
-    distinction and no spatial/behavioral tuning. Footprints are 2-D masks
-    carrying a scalar depth ``z``; out-of-focus somata that become background
-    emerge for free downstream from ``z`` + ``optics``.
+    'Place' is the verb — this *positions neurons in space* (anchored at the cell
+    body); it is unrelated to hippocampal *place cells*. v1 models one generic
+    excitable cell type (an irregular soma blob) with two GCaMP targeting variants
+    via ``morphology``: ``"soma"`` (soma-targeted, body only) or ``"cytosolic"``
+    (standard GCaMP, the soma plus a few tapering proximal dendrites). There is no
+    further cell-type distinction and no spatial/behavioral tuning. Footprints are
+    2-D masks carrying a scalar depth ``z``; out-of-focus neurons that become
+    background emerge for free downstream from ``z`` + ``optics``.
     """
 
     domain: ClassVar[str] = "cell"
-    kind: Literal["place_somata"] = "place_somata"
+    kind: Literal["place_neurons"] = "place_neurons"
     density_per_mm2: float = Field(gt=0, default=150.0, description="Cell areal density; count derived from FOV.")
     soma_radius_um: float = Field(gt=0, default=7.0, description="Soma radius, µm (typical cortical neuron ≈ 5–10).")
     irregularity: float = Field(
@@ -561,9 +561,9 @@ class PlaceSomata(StepSpec):
         return v
 
     def build(self, acq: Acquisition, rng) -> Step:
-        from minian.simulation.steps.cell import PlaceSomataStep
+        from minian.simulation.steps.cell import PlaceNeuronsStep
 
-        return PlaceSomataStep(self, acq, rng)
+        return PlaceNeuronsStep(self, acq, rng)
 
 
 class CellActivity(StepSpec):
@@ -790,7 +790,7 @@ class Sensor(StepSpec):
 # handles kind→class dispatch for deserialization, so no separate registry is
 # needed; if later tooling wants an explicit map, derive it from this union.
 AnyStep = Annotated[
-    PlaceSomata
+    PlaceNeurons
     | CellActivity
     | CellOptics
     | Render
@@ -849,7 +849,7 @@ class Spec(_Base):
 
     def _check_footprint_vs_fov(self, by_kind: dict[str, StepSpec]) -> None:
         """Rule 2: a soma larger than the entire FOV is a misconfiguration."""
-        pc = by_kind.get("place_somata")
+        pc = by_kind.get("place_neurons")
         if pc is None:
             return
         min_fov = min(self.acquisition.fov_um)
@@ -888,7 +888,7 @@ class Spec(_Base):
     def _warn_focal_plane(self, by_kind: dict[str, StepSpec]) -> None:
         """Rule 6: a numeric focal depth outside the cell depth range is unusual."""
         focal = self.acquisition.focal_depth_in_tissue_um
-        pc = by_kind.get("place_somata")
+        pc = by_kind.get("place_neurons")
         if focal == "auto" or pc is None:
             return
         lo, hi = pc.depth_range_um

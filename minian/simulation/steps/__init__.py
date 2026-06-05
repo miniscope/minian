@@ -6,7 +6,7 @@ place, returned by the spec's ``build()`` method. They are organized by pipeline
 domain — ``cell`` → ``tissue`` → ``motion`` → ``sensor`` — mirroring the forward
 order biology → optics → motion → sensor.
 
-Migration Step 5a lands the minimal runnable chain (``place_somata`` →
+Migration Step 5a lands the minimal runnable chain (``place_neurons`` →
 ``cell_activity`` → ``render`` → ``sensor``); optics is 5b, the field effects
 (``neuropil``/``bleaching``/``vignette``/``leakage``, plus the ``vasculature``
 no-op placeholder) are 5c, and ``brain_motion`` is 5d — the full forward
@@ -20,11 +20,12 @@ from minian.simulation.steps.base import Step
 from minian.simulation.steps.cell import (
     CellActivityStep,
     CellOpticsStep,
-    PlaceSomataStep,
+    PlaceNeuronsStep,
     calcium_kernel,
     degrade_footprint,
     neuron_footprint,
     resolve_focal_plane,
+    sample_neurons,
 )
 from minian.simulation.steps.motion import (
     BrainMotionStep,
@@ -55,7 +56,7 @@ __all__ = [
     "CellOpticsStep",
     "LeakageStep",
     "NeuropilStep",
-    "PlaceSomataStep",
+    "PlaceNeuronsStep",
     "RenderStep",
     "SensorStep",
     "Step",
@@ -70,6 +71,7 @@ __all__ = [
     "ou_process",
     "radius_grid",
     "resolve_focal_plane",
+    "sample_neurons",
     "shift_and_crop",
     "smooth_spatial_field",
 ]

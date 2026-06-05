@@ -43,10 +43,10 @@ class Cell:
     stack them with no remapping. Each is populated by the step that owns it and
     is ``None`` until then:
 
-    * ``center_um`` / ``snr`` — set by ``place_somata`` (the cell exists once it
+    * ``center_um`` / ``snr`` — set by ``place_neurons`` (the cell exists once it
       has a location and a signal level).
     * ``footprint_planted`` — the sharp, peak-normalized soma mask, also from
-      ``place_somata``; the ideal CNMF target.
+      ``place_neurons``; the ideal CNMF target.
     * ``trace`` / ``spikes`` — the noise-free calcium trace ``C`` and spike
       train ``S`` from ``cell_activity``.
     * ``footprint_observed`` / ``in_focus`` / ``optical_brightness`` — the

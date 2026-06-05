@@ -53,7 +53,7 @@ def sweep(base: Spec, axes: dict[str, list]) -> Iterator[SweptSpec]:
 
         * ``"acquisition.optics.na"`` — walk nested models;
         * ``"steps.<kind>.<field>"`` — address the step with that (unique) ``kind``,
-          e.g. ``"steps.place_somata.density_per_mm2"``;
+          e.g. ``"steps.place_neurons.density_per_mm2"``;
         * ``"seed"`` — a top-level field.
 
     Yields

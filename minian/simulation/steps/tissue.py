@@ -150,8 +150,8 @@ class NeuropilStep(Step):
     components are averaged and scaled by ``amplitude`` (the background level
     relative to the ``f0 = 1`` cell baseline), so the contribution is
     non-negative by construction and added onto the movie. This is the modeled
-    diffuse mesh only — out-of-focus somata are a *separate* background that
-    emerges for free from ``place_somata`` + ``optics``.
+    diffuse mesh only — out-of-focus neurons are a *separate* background that
+    emerges for free from ``place_neurons`` + ``optics``.
 
     Records the spatial fields ``(component, height, width)`` and temporal
     envelopes ``(component, frame)`` to ground truth, so a background-removal

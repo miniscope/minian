@@ -21,7 +21,7 @@ from minian.simulation import (
     Leakage,
     Neuropil,
     Optics,
-    PlaceSomata,
+    PlaceNeurons,
     Render,
     Scene,
     Sensor,
@@ -63,7 +63,7 @@ def _dot(shape, iy, ix, value=1.0):
 def test_finalize_produces_typed_recording():
     acq = _acq(n_px=24, duration_s=1.0)
     steps = [
-        PlaceSomata(density_per_mm2=2000.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)),
+        PlaceNeurons(density_per_mm2=2000.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
         CellOptics(),
         Render(),
@@ -88,7 +88,7 @@ def test_finalize_produces_typed_recording():
 def test_observed_footprint_differs_from_planted_under_optics():
     acq = _acq(n_px=40, optics=Optics(magnification=8.0), focal_depth_in_tissue_um=0.0)
     steps = [
-        PlaceSomata(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(80.0, 120.0)),
+        PlaceNeurons(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(80.0, 120.0)),
         CellActivity(active_rate_hz=5.0),
         CellOptics(),
         Render(),
@@ -106,7 +106,7 @@ def test_observed_footprint_differs_from_planted_under_optics():
 def test_per_effect_fields_are_none_when_steps_absent():
     acq = _acq()
     steps = [
-        PlaceSomata(density_per_mm2=2000.0, depth_range_um=(0.0, 0.0)),
+        PlaceNeurons(density_per_mm2=2000.0, depth_range_um=(0.0, 0.0)),
         CellActivity(tau_decay_s=0.4),
         Render(),
         Sensor(),
@@ -124,7 +124,7 @@ def test_per_effect_fields_present_for_full_pipeline():
     max_shift_um = 3.0
     margin = int(np.ceil(acq.um_to_px(max_shift_um))) + 1
     steps = [
-        PlaceSomata(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)),
+        PlaceNeurons(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
         CellOptics(),
         Render(),
@@ -170,7 +170,7 @@ def test_finalize_drops_pure_margin_cells():
             trace=np.ones(nf),
         ),
     ]
-    minimal = [PlaceSomata(soma_radius_um=3.0, depth_range_um=(0.0, 0.0)), Render()]
+    minimal = [PlaceNeurons(soma_radius_um=3.0, depth_range_um=(0.0, 0.0)), Render()]
     gt = finalize(scene, Spec(acquisition=acq, steps=minimal)).ground_truth
     assert gt.n_units == 1  # the margin-only cell was dropped
     assert gt.A_planted.shape == (1, 20, 20)
@@ -185,7 +185,7 @@ def _detect_spec(acq):
     return Spec(
         acquisition=acq,
         steps=[
-            PlaceSomata(soma_radius_um=3.0, depth_range_um=(0.0, 0.0)),
+            PlaceNeurons(soma_radius_um=3.0, depth_range_um=(0.0, 0.0)),
             CellActivity(tau_decay_s=0.4),
             Render(),
             Sensor(photons_per_unit=100.0),
@@ -240,7 +240,7 @@ def test_detectable_subset_keeps_only_detectable_units():
 
 def test_stage_raises_for_absent_snapshot():
     acq = _acq()
-    steps = [PlaceSomata(depth_range_um=(0.0, 0.0)), Render(), Sensor()]
+    steps = [PlaceNeurons(depth_range_um=(0.0, 0.0)), Render(), Sensor()]
     rec = finalize(_run(acq, steps), Spec(acquisition=acq, steps=steps))
     assert rec.snapshots == {}  # save_intermediates defaulted off
     with pytest.raises(KeyError, match="save_intermediates"):

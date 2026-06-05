@@ -45,7 +45,7 @@ from minian.simulation import (
     CellOptics,
     ImageSensor,
     Optics,
-    PlaceSomata,
+    PlaceNeurons,
     Render,
     Sensor,
     Spec,
@@ -92,7 +92,7 @@ def _recording():
         acquisition=acq,
         seed=7,
         steps=[
-            PlaceSomata(density_per_mm2=3000.0, soma_radius_um=5.0, depth_range_um=(0.0, 15.0)),
+            PlaceNeurons(density_per_mm2=3000.0, soma_radius_um=5.0, depth_range_um=(0.0, 15.0)),
             CellActivity(active_rate_hz=4.0, tau_decay_s=0.5),
             CellOptics(),
             Render(),
