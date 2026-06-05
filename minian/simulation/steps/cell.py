@@ -40,27 +40,69 @@ _EPS = 1e-12
 # ---------------------------------------------------------------------------
 
 
-def soma_footprint(
+# Proximal-dendrite rendering constants (cytosolic morphology only). Dendrites
+# are graded dimmer than the soma and taper to a thread, so blur, defocus, and
+# the sensor noise floor erase them first — the "we lose thin features fast"
+# lesson falls out of the physics for free.
+_DENDRITE_BASE_INTENSITY = 0.6  # planted weight where a dendrite leaves the soma
+_DENDRITE_TIP_INTENSITY = 0.15  # ...tapering to this at the distal tip
+_DENDRITE_TIP_WIDTH_PX = 0.75  # minimum stamp radius, keeps the thread continuous
+_DENDRITE_WANDER_RAD = 0.3  # per-step heading random walk, radians (gentle curves)
+_DENDRITE_ANGLE_JITTER_RAD = 0.4  # jitter on the evenly spaced launch angles
+
+
+def neuron_footprint(
     shape: tuple[int, int],
     center_px: tuple[float, float],
     radius_px: float,
     irregularity: float,
     rng: np.random.Generator,
+    *,
+    morphology: str = "soma",
+    n_dendrites: int = 0,
+    dendrite_length_px: float = 0.0,
+    dendrite_width_px: float = 0.0,
 ) -> np.ndarray:
-    """A sharp, peak-normalized soma mask — a (possibly lumpy) filled disk.
+    """A sharp, peak-normalized neuron footprint — the *planted* spatial weight A.
 
-    Models the soma as a filled disk of radius ``radius_px`` centered at
-    ``center_px`` (both in pixels). This is the *planted* footprint: the true
-    spatial extent of the fluorophore-filled cytoplasm, with **no optical blur**
-    — diffraction/defocus/scatter are applied later by the ``optics`` step. It
-    is peak-normalized (``max == 1``) so a cell's brightness is carried entirely
-    by its calcium trace, not baked into the footprint.
+    Models the cell's true (pre-optics) fluorophore support, with **no optical
+    blur** — diffraction/defocus/scatter are applied later by the ``optics`` step.
+    It is peak-normalized (``max == 1`` at the soma) so a cell's brightness is
+    carried entirely by its calcium trace, not baked into the footprint.
 
-    ``irregularity`` ∈ [0, 1] warps the boundary: at ``0`` it is a clean disk;
-    above ``0`` the per-pixel radius is modulated by a low-pass-filtered noise
-    field (smoothed on the soma's own length scale), giving a lumpy outline that
-    is more soma-like than a perfect circle while staying coarser than the
+    Two GCaMP targeting variants are supported via ``morphology``:
+
+    * ``"soma"`` — soma-targeted GCaMP (e.g. SomaGCaMP / riboGCaMP): a single
+      filled, possibly lumpy disk, the soma body only.
+    * ``"cytosolic"`` — standard cytosolic GCaMP (GCaMP6/7/8…): the same soma
+      disk plus ``n_dendrites`` tapering proximal dendrites. The dendrites are
+      *graded* (dimmer than the soma) and *thin*, so they are exactly what
+      diffraction, defocus, scatter, and the sensor noise floor erase first — a
+      faithful demonstration of how quickly fine neurites become unresolvable.
+
+    The soma is **identical** in both variants; ``"cytosolic"`` only *adds*
+    dendrites after the soma is drawn, so ``"soma"`` (the default) reproduces the
+    soma-only footprint bit-for-bit.
+
+    ``irregularity`` ∈ [0, 1] warps the soma boundary: at ``0`` it is a clean
+    disk; above ``0`` the per-pixel radius is modulated by a low-pass-filtered
+    noise field (smoothed on the soma's own length scale), giving a lumpy outline
+    that is more soma-like than a perfect circle while staying coarser than the
     optics will later blur away. Typical cortical somata are ~5–10 µm radius.
+
+    Note — the shape is *physical*, the grid is *sampling*. This routine
+    rasterizes a continuous µm-space shape onto whatever pixel grid the caller
+    passes (via ``shape`` and the ``*_px`` arguments). The cell's true geometry is
+    intrinsic and independent of pixel size; only how finely it is sampled depends
+    on the sensor. In the normal pipeline the planted footprint is rasterized once
+    at the sensor's own scale, which is fine because the result is then blurred by
+    the (coarser) optics. But a caller that needs the *same* cell across multiple
+    pixel sizes should generate it once on a fixed fine grid and resample, rather
+    than re-rasterizing per grid — re-rasterizing re-draws the ``rng`` noise field
+    at the new size and so changes the lumpy outline. This costs nothing in
+    fidelity: a 1-photon miniscope is pixel-limited, never diffraction-limited
+    (see :meth:`Optics.diffraction_sigma_um`), so a sub-pixel reference grid holds
+    more detail than the optics can ever resolve.
     """
     h, w = shape
     cy, cx = center_px
@@ -78,6 +120,19 @@ def soma_footprint(
         r_eff = radius_px
     # A 0/1 membership mask is already peak-normalized (max == 1) by construction.
     footprint = (dist <= r_eff).astype(float)
+    # Cytosolic GCaMP fills the proximal dendrites too. Stamp them *after* the
+    # soma so the soma's RNG draw above is untouched — "soma" stays bit-identical.
+    if morphology == "cytosolic" and n_dendrites > 0 and dendrite_length_px > 0:
+        _stamp_dendrites(
+            footprint,
+            cy,
+            cx,
+            radius_px,
+            n_dendrites,
+            dendrite_length_px,
+            dendrite_width_px,
+            rng,
+        )
     if not footprint.any():
         # Sub-pixel soma: keep at least the nearest pixel lit so the cell is
         # never silently empty.
@@ -85,6 +140,69 @@ def soma_footprint(
         ix = int(np.clip(round(cx), 0, w - 1))
         footprint[iy, ix] = 1.0
     return footprint
+
+
+def _stamp_disk(
+    footprint: np.ndarray, y: float, x: float, radius_px: float, intensity: float
+) -> None:
+    """Paint one filled disk into ``footprint`` via ``maximum`` (overlaps never sum).
+
+    Works only on the disk's local bounding box, so laying down a dendrite is
+    cheap regardless of canvas size. ``maximum`` keeps the soma's peak at 1 where
+    a dendrite overlaps it, preserving peak-normalization.
+    """
+    h, w = footprint.shape
+    y0 = max(int(np.floor(y - radius_px)), 0)
+    y1 = min(int(np.ceil(y + radius_px)) + 1, h)
+    x0 = max(int(np.floor(x - radius_px)), 0)
+    x1 = min(int(np.ceil(x + radius_px)) + 1, w)
+    if y0 >= y1 or x0 >= x1:
+        return  # disk fell entirely off the canvas
+    yy, xx = np.ogrid[y0:y1, x0:x1]
+    disk = ((yy - y) ** 2 + (xx - x) ** 2 <= radius_px**2) * intensity
+    sub = footprint[y0:y1, x0:x1]
+    np.maximum(sub, disk, out=sub)
+
+
+def _stamp_dendrites(
+    footprint: np.ndarray,
+    cy: float,
+    cx: float,
+    radius_px: float,
+    n_dendrites: int,
+    length_px: float,
+    width_px: float,
+    rng: np.random.Generator,
+) -> None:
+    """Grow ``n_dendrites`` tapering proximal dendrites out of the soma.
+
+    Each dendrite launches from just inside the soma edge at a roughly evenly
+    spaced (then jittered) angle and walks outward in ~1 px steps with a small
+    per-step heading wobble, so it curves gently rather than spiking out straight.
+    Both its width and its intensity taper from base to tip; it is laid down as a
+    chain of overlapping disks (:func:`_stamp_disk`), so it stays continuous.
+    """
+    # Roughly even angular spread, then jittered, so dendrites don't all clump.
+    base = rng.uniform(0.0, 2.0 * np.pi)
+    angles = base + np.arange(n_dendrites) * (2.0 * np.pi / n_dendrites)
+    angles = angles + rng.normal(0.0, _DENDRITE_ANGLE_JITTER_RAD, size=n_dendrites)
+    n_steps = max(int(round(length_px)), 2)
+    for theta in angles:
+        # Start just inside the soma so the dendrite connects without a gap.
+        y = cy + 0.8 * radius_px * np.sin(theta)
+        x = cx + 0.8 * radius_px * np.cos(theta)
+        heading = theta
+        for i in range(n_steps):
+            frac = i / (n_steps - 1)  # 0 at the soma .. 1 at the tip
+            # width_px is a diameter; stamp radius is half of it, tapering to a thread
+            rad = max(0.5 * width_px * (1.0 - frac), _DENDRITE_TIP_WIDTH_PX)
+            intensity = _DENDRITE_BASE_INTENSITY + frac * (
+                _DENDRITE_TIP_INTENSITY - _DENDRITE_BASE_INTENSITY
+            )
+            _stamp_disk(footprint, y, x, rad, intensity)
+            heading += rng.normal(0.0, _DENDRITE_WANDER_RAD)
+            y += np.sin(heading)
+            x += np.cos(heading)
 
 
 class PlaceSomataStep(Step):
@@ -97,16 +215,17 @@ class PlaceSomataStep(Step):
     ``depth_range_um``; if
     ``min_distance_um > 0`` they are rejection-sampled (Poisson-disk style) to a
     3-D center-to-center minimum. Each cell gets a peak-normalized planted
-    footprint (:func:`soma_footprint`) and an SNR drawn from the configured
-    distribution. The SNR and depth are stored now and consumed later by the
-    ``optics`` step (5b) for the ``in_focus`` / ``detectable`` flags.
+    footprint (:func:`neuron_footprint`, soma-only or soma + proximal dendrites
+    per ``spec.morphology``) and an SNR drawn from the configured distribution.
+    The SNR and depth are stored now and consumed later by the ``optics`` step
+    (5b) for the ``in_focus`` / ``detectable`` flags.
     """
 
     name = "place_somata"
     domain = "cell"
 
     def __call__(self, scene: Scene) -> None:
-        spec = self.spec  # n_neurite_stubs > 0 is rejected at spec construction (v1)
+        spec = self.spec
         acq, rng = self.acq, self.rng
         # Fill whatever canvas the scene movie defines, not the bare sensor: a
         # motion margin (Step 5d) enlarges the canvas beyond the sensor FOV so
@@ -120,18 +239,24 @@ class PlaceSomataStep(Step):
         area_mm2 = (fov_h_um / 1000.0) * (fov_w_um / 1000.0)
         count = round(spec.density_per_mm2 * area_mm2)
         radius_px = acq.um_to_px(spec.soma_radius_um)
+        dendrite_length_px = acq.um_to_px(spec.dendrite_length_um)
+        dendrite_width_px = acq.um_to_px(spec.dendrite_width_um)
 
         centers = self._sample_centers(
             count, fov_h_um, fov_w_um, spec.depth_range_um, spec.min_distance_um, rng
         )
         snrs = self._sample_snr(spec.snr, len(centers), rng)
         for (z, y, x), snr in zip(centers, snrs):
-            footprint = soma_footprint(
+            footprint = neuron_footprint(
                 shape,
                 (acq.um_to_px(y), acq.um_to_px(x)),
                 radius_px,
                 spec.irregularity,
                 rng,
+                morphology=spec.morphology,
+                n_dendrites=spec.n_dendrites,
+                dendrite_length_px=dendrite_length_px,
+                dendrite_width_px=dendrite_width_px,
             )
             scene.cells.append(
                 Cell(center_um=(z, y, x), snr=float(snr), footprint_planted=footprint)

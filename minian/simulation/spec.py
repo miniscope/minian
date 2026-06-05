@@ -113,6 +113,19 @@ class Optics(_Base):
         aberrations and the finite Airy tails — adequate for showing how NA and
         emission wavelength set the resolution floor. Smaller NA ⇒ larger σ
         (blurrier). At NA 0.45, λ ≈ 525 nm this is σ ≈ 0.24 µm.
+
+        Note — pixel-limited, not diffraction-limited. Across realistic 1-photon
+        miniscope NAs (~0.1–0.6) and green emission this σ is only ~0.2–1.1 µm,
+        i.e. at or below the *object-space pixel size* (sensor pitch ÷
+        magnification, typically 1–2 µm). So lateral resolution is set by the
+        pixel sampling, not by diffraction — the diffraction PSF is real but
+        rarely the limiting blur (defocus and scatter usually dominate it too).
+        A practical consequence: a cell's intrinsic shape can be generated on a
+        fine, sub-pixel grid *independent of the sensor*, then resampled to
+        whatever pixel size the sensor implies, because the optics never resolve
+        anything finer than the pixel grid anyway. (The teaching notebook relies
+        on exactly this so that changing magnification/pitch only rescales a cell
+        rather than re-rasterizing — and re-randomizing — its shape.)
         """
         return 0.21 * (self.emission_nm / 1000.0) / self.na
 
@@ -401,14 +414,16 @@ class SNRDistribution(_Base):
 
 
 class PlaceSomata(StepSpec):
-    """Place generic neuron somata (+ optional neurite stubs) in a 3-D µm volume.
+    """Place generic neuron somata in a 3-D µm volume, soma-only or with dendrites.
 
     'Place' is the verb — this *positions cell bodies in space*; it is unrelated
-    to hippocampal *place cells*. v1 models one generic excitable soma type (an
-    irregular blob + optional proximal stubs): there is no cell-type distinction
-    and no spatial/behavioral tuning. Footprints are 2-D masks carrying a scalar
-    depth ``z``; out-of-focus somata that become background emerge for free
-    downstream from ``z`` + ``optics``.
+    to hippocampal *place cells*. v1 models one generic excitable cell type (an
+    irregular soma blob) with two GCaMP targeting variants via ``morphology``:
+    ``"soma"`` (soma-targeted, body only) or ``"cytosolic"`` (standard GCaMP, the
+    soma plus a few tapering proximal dendrites). There is no further cell-type
+    distinction and no spatial/behavioral tuning. Footprints are 2-D masks
+    carrying a scalar depth ``z``; out-of-focus somata that become background
+    emerge for free downstream from ``z`` + ``optics``.
     """
 
     domain: ClassVar[str] = "cell"
@@ -421,11 +436,27 @@ class PlaceSomata(StepSpec):
         default=0.3,
         description="0 = smooth disk; higher = lumpier soma (low-pass-noise threshold).",
     )
-    n_neurite_stubs: int = Field(
+    morphology: Literal["soma", "cytosolic"] = Field(
+        default="soma",
+        description="GCaMP targeting variant: 'soma' = soma-targeted (lumpy disk "
+        "only); 'cytosolic' = standard GCaMP (soma + tapering proximal dendrites).",
+    )
+    n_dendrites: int = Field(
         ge=0,
-        default=0,
-        description="Short proximal dendrite lobes (offset, dimmer). Not implemented "
-        "in v1 (soma body only) — must be 0 until the feature lands.",
+        default=4,
+        description="Proximal dendrites grown per cell when morphology='cytosolic' "
+        "(ignored for 'soma').",
+    )
+    dendrite_length_um: float = Field(
+        gt=0,
+        default=45.0,
+        description="Proximal-dendrite length, µm (cytosolic only).",
+    )
+    dendrite_width_um: float = Field(
+        gt=0,
+        default=3.0,
+        description="Proximal-dendrite base width (diameter), µm; tapers to a "
+        "~1 px thread at the tip (cytosolic only).",
     )
     depth_range_um: tuple[float, float] = Field(
         default=(0.0, 200.0), description="(min, max) depth into tissue, µm."
@@ -443,17 +474,6 @@ class PlaceSomata(StepSpec):
             raise ValueError(f"depth_range_um min ({lo}) must be ≥ 0.")
         if hi < lo:
             raise ValueError(f"depth_range_um max ({hi}) must be ≥ min ({lo}).")
-        return v
-
-    @field_validator("n_neurite_stubs")
-    @classmethod
-    def _stubs_unimplemented(cls, v: int) -> int:
-        # Fail fast at construction rather than deferring a NotImplementedError to
-        # the step body deep inside a run; the soma body is all v1 models.
-        if v > 0:
-            raise ValueError(
-                f"n_neurite_stubs={v} is not implemented in v1 (soma body only); leave at 0."
-            )
         return v
 
     def build(self, acq: Acquisition, rng) -> Step:

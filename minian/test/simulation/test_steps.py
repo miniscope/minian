@@ -48,10 +48,10 @@ from minian.simulation.steps import (
     bounded_random_walk,
     calcium_kernel,
     degrade_footprint,
+    neuron_footprint,
     ou_process,
     resolve_focal_plane,
     shift_and_crop,
-    soma_footprint,
 )
 from minian.simulation.scene import Cell
 
@@ -117,7 +117,7 @@ def test_place_somata_footprint_is_peak_normalized():
 
 
 def test_irregularity_zero_is_a_clean_binary_disk():
-    fp = soma_footprint(
+    fp = neuron_footprint(
         (40, 40),
         (20.0, 20.0),
         radius_px=8.0,
@@ -166,10 +166,53 @@ def test_place_somata_is_reproducible():
     assert scenes[0] == scenes[1]
 
 
-def test_neurite_stubs_rejected_at_construction():
-    # Unimplemented in v1: rejected when the spec is built, not deep in the run.
-    with pytest.raises(ValidationError, match="n_neurite_stubs"):
-        PlaceSomata(density_per_mm2=2000.0, n_neurite_stubs=1)
+def test_cytosolic_morphology_adds_dendrites_beyond_soma():
+    # Same seed, same soma: cytosolic lights strictly more pixels (the dendrites)
+    # and reaches farther from the center than the soma-only variant, while the
+    # peak stays at the soma (1.0) and the dendrites are graded dimmer.
+    shape, center, radius = (80, 80), (40.0, 40.0), 6.0
+    soma = neuron_footprint(
+        shape, center, radius, irregularity=0.0, rng=np.random.default_rng(0)
+    )
+    cyto = neuron_footprint(
+        shape,
+        center,
+        radius,
+        irregularity=0.0,
+        rng=np.random.default_rng(0),
+        morphology="cytosolic",
+        n_dendrites=4,
+        dendrite_length_px=18.0,
+        dendrite_width_px=2.5,
+    )
+    assert cyto.max() == pytest.approx(1.0)  # still peak-normalized at the soma
+    assert (cyto > 0).sum() > (soma > 0).sum()  # dendrites light extra pixels
+    yy, xx = np.indices(shape)
+    rr = np.hypot(yy - center[0], xx - center[1])
+    assert rr[cyto > 0].max() > rr[soma > 0].max() + 2.0  # reach beyond the soma
+    assert 0.0 < cyto[cyto > 0].min() < 1.0  # dendrites graded dimmer than soma
+
+
+def test_soma_morphology_is_unchanged_by_dendrite_params():
+    # The default "soma" variant ignores the dendrite params and matches a
+    # soma-only footprint bit-for-bit (cytosolic only *adds* after the soma, so
+    # the soma's RNG draw is never perturbed).
+    shape, center, radius = (60, 60), (30.0, 30.0), 5.0
+    a = neuron_footprint(
+        shape, center, radius, irregularity=0.3, rng=np.random.default_rng(11)
+    )
+    b = neuron_footprint(
+        shape,
+        center,
+        radius,
+        irregularity=0.3,
+        rng=np.random.default_rng(11),
+        morphology="soma",
+        n_dendrites=4,
+        dendrite_length_px=18.0,
+        dendrite_width_px=2.5,
+    )
+    np.testing.assert_array_equal(a, b)
 
 
 # --- cell_activity ---------------------------------------------------------
@@ -322,7 +365,7 @@ def test_sensor_is_reproducible():
 def _cell_with_footprint(acq, z, radius_um=4.0):
     """A single centered cell carrying a clean planted disk at depth ``z``."""
     h, w = acq.image_sensor.n_px_height, acq.image_sensor.n_px_width
-    fp = soma_footprint(
+    fp = neuron_footprint(
         (h, w), (h / 2, w / 2), acq.um_to_px(radius_um), 0.0, np.random.default_rng(0)
     )
     y_um, x_um = (h / 2) * acq.pixel_size_um, (w / 2) * acq.pixel_size_um
@@ -330,7 +373,7 @@ def _cell_with_footprint(acq, z, radius_um=4.0):
 
 
 def test_degrade_footprint_blur_conserves_sum_and_drops_peak():
-    fp = soma_footprint(
+    fp = neuron_footprint(
         (64, 64),
         (32.0, 32.0),
         radius_px=6.0,
@@ -345,7 +388,7 @@ def test_degrade_footprint_blur_conserves_sum_and_drops_peak():
 
 
 def test_degrade_footprint_gain_scales_integral():
-    fp = soma_footprint(
+    fp = neuron_footprint(
         (64, 64),
         (32.0, 32.0),
         radius_px=6.0,
