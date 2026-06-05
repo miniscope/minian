@@ -96,7 +96,7 @@ def test_save_load_roundtrips_required_ground_truth(tmp_path):
     rec.save(tmp_path / "r.zarr")
     gt, back = rec.ground_truth, Recording.load(tmp_path / "r.zarr").ground_truth
     assert back.n_units == gt.n_units
-    for name in ("A_planted", "A_observed", "C", "S", "centers_um", "snr_per_cell"):
+    for name in ("A_planted", "A_observed", "C", "S", "centers_um", "amplitude_per_cell"):
         np.testing.assert_array_equal(getattr(back, name), getattr(gt, name))
     # bool masks survive as bool, not upcast to int/float
     for name in ("in_focus", "detectable"):
@@ -148,7 +148,7 @@ def test_empty_ground_truth_roundtrips(tmp_path):
         C=np.zeros((0, nf)),
         S=np.zeros((0, nf)),
         centers_um=np.zeros((0, 3)),
-        snr_per_cell=np.zeros((0,)),
+        amplitude_per_cell=np.zeros((0,)),
         in_focus=np.zeros((0,), dtype=bool),
         detectable=np.zeros((0,), dtype=bool),
     )

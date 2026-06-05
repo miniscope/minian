@@ -5,11 +5,11 @@ optics or sensor effect:
 
 * :class:`PlaceNeuronsStep` positions neurons in a 3-D µm volume and stamps
   a sharp, pre-optics footprint for each. The *distribution* half (sampling
-  centers + per-cell SNR, no footprints) is factored into :func:`sample_neurons`
-  so it can be reused cheaply for teaching/visualization at full FOV.
+  centers only, no footprints) is factored into :func:`sample_neurons` so it can
+  be reused cheaply for teaching/visualization at full FOV.
 * :class:`CellActivityStep` gives every soma a calcium trace built from a
   2-state Markov spike model convolved with a double-exponential indicator
-  kernel.
+  kernel, plus a per-cell brightness gain that scales the trace.
 
 Both only fill per-cell records on the scene (``scene.cells``); nothing is drawn
 into the movie until ``render`` (:mod:`minian.simulation.steps.tissue`). The
@@ -30,7 +30,7 @@ from minian.simulation.scene import Cell, Scene
 from minian.simulation.steps.base import Step
 
 if TYPE_CHECKING:
-    from minian.simulation.spec import PlaceNeurons, SNRDistribution
+    from minian.simulation.spec import PlaceNeurons
 
 # Guards the noise normalization for a degenerate (flat) low-pass field; far
 # below any physically meaningful intensity.
@@ -226,15 +226,20 @@ def sample_neurons(
     fov_h_um: float,
     fov_w_um: float,
     rng: np.random.Generator,
-) -> tuple[list[tuple[float, float, float]], np.ndarray]:
+) -> list[tuple[float, float, float]]:
     """Sample the soma *distribution* for a ``PlaceNeurons`` spec over a FOV.
 
-    This is the half of ``place_neurons`` that decides **where cells go and how
-    bright they are** — with no footprint stamping, so it is cheap even at a full
-    sensor FOV (the per-cell :func:`neuron_footprint` paints are the expensive
-    part). :class:`PlaceNeuronsStep` calls this and then stamps a footprint per
-    returned center; teaching code (the anatomy notebook's placement widget) can
-    call it directly to show the population layout without paying for footprints.
+    This is the half of ``place_neurons`` that decides **where cells go** — with no
+    footprint stamping, so it is cheap even at a full sensor FOV (the per-cell
+    :func:`neuron_footprint` paints are the expensive part). :class:`PlaceNeuronsStep`
+    calls this and then stamps a footprint per returned center; teaching code (the
+    anatomy notebook's placement widget) can call it directly to show the population
+    layout without paying for footprints.
+
+    Placement is **purely spatial**: brightness is no longer drawn here. Per-cell
+    response gain (how bright a cell is) is biology that belongs to the calcium
+    response, so it is drawn in :class:`CellActivityStep` (``brightness_cv``); SNR is
+    an emergent measurement property and is not an input anywhere.
 
     The count is **volumetric**: ``round(density_per_mm3 · area_mm2 · thickness)``,
     where the slab thickness is ``depth_range_um`` width **floored at one soma
@@ -243,22 +248,17 @@ def sample_neurons(
     therefore holds proportionally more cells, the physical behavior. Centers are
     drawn uniformly in ``(y, x)`` across the FOV and in ``z`` across
     ``depth_range_um``; if ``min_distance_um > 0`` they are rejection-sampled
-    (Poisson-disk style) to a 3-D center-to-center minimum. SNRs are drawn from the
-    configured distribution.
+    (Poisson-disk style) to a 3-D center-to-center minimum.
 
-    Returns ``(centers, snrs)``: ``centers`` is a list of ``(z, y, x)`` µm tuples
-    and ``snrs`` a 1-D array aligned to it. The draw order (centers, then SNRs)
-    matches the original fused step, so seeded results are unchanged.
+    Returns ``centers``: a list of ``(z, y, x)`` µm tuples.
     """
     area_mm2 = (fov_h_um / 1000.0) * (fov_w_um / 1000.0)
     lo, hi = spec.depth_range_um
     thickness_um = max(hi - lo, 2.0 * spec.soma_radius_um)  # floor: one soma diameter
     count = round(spec.density_per_mm3 * area_mm2 * (thickness_um / 1000.0))
-    centers = _sample_centers(
+    return _sample_centers(
         count, fov_h_um, fov_w_um, spec.depth_range_um, spec.min_distance_um, rng
     )
-    snrs = _sample_snr(spec.snr, len(centers), rng)
-    return centers, snrs
 
 
 def _sample_centers(
@@ -294,32 +294,39 @@ def _sample_centers(
     return centers
 
 
-def _sample_snr(snr_spec: SNRDistribution, n: int, rng: np.random.Generator) -> np.ndarray:
+def _sample_brightness(cv: float, n: int, rng: np.random.Generator) -> np.ndarray:
+    """Per-cell expression/response gain: lognormal, **mean 1**, given CV.
+
+    ``cv == 0`` makes every cell equally bright (gain 1). Otherwise the gain is
+    lognormal with mean exactly 1 (so changing the spread does not change the
+    population's total light budget) and a right tail, the familiar "a few bright
+    cells over a dimmer majority". Same construction as the per-spike amplitude
+    weighting in :meth:`CellActivityStep._apply_amplitudes`, one level up.
+    """
     if n == 0:
         return np.empty(0)
-    if snr_spec.distribution == "uniform":
-        return rng.uniform(snr_spec.low, snr_spec.high, size=n)
-    # Lognormal: treat (low, high) as ~±2σ anchors in log space, so the bulk
-    # of the distribution falls within the configured range.
-    mu = (np.log(snr_spec.low) + np.log(snr_spec.high)) / 2.0
-    sigma = (np.log(snr_spec.high) - np.log(snr_spec.low)) / 4.0
+    if cv <= 0:
+        return np.ones(n)
+    sigma = np.sqrt(np.log(1.0 + cv * cv))
+    mu = -0.5 * sigma * sigma  # makes E[gain] == 1
     return np.exp(rng.normal(mu, sigma, size=n))
 
 
 class PlaceNeuronsStep(Step):
     """Position neurons in a 3-D µm volume and stamp a planted footprint each.
 
-    Placement and brightness (*where cells go, how bright*) are delegated to
-    :func:`sample_neurons`; this step adds the part that function omits — stamping
-    a peak-normalized planted footprint (:func:`neuron_footprint`, soma-only or
-    soma + proximal dendrites per ``spec.morphology``) at each sampled center.
+    Placement (*where cells go*) is delegated to :func:`sample_neurons`; this step
+    adds the part that function omits — stamping a peak-normalized planted footprint
+    (:func:`neuron_footprint`, soma-only or soma + proximal dendrites per
+    ``spec.morphology``) at each sampled center. Placement is purely spatial now:
+    per-cell brightness is drawn later in ``cell_activity``, not here.
 
     The cell count is volumetric — ``round(density_per_mm3 · canvas_area_mm2 ·
     thickness)`` over the **canvas** area (the scene movie's grid, which a motion
     margin may enlarge beyond the sensor FOV) and the ``depth_range_um`` thickness
-    (floored at one soma diameter); see :func:`sample_neurons`. The SNR and depth
-    are stored now and consumed later by the ``optics`` step (5b) for the
-    ``in_focus`` / ``detectable`` flags.
+    (floored at one soma diameter); see :func:`sample_neurons`. The per-cell depth
+    is consumed later by the ``optics`` step (5b) for the ``in_focus`` /
+    ``detectable`` flags.
     """
 
     name = "place_neurons"
@@ -341,8 +348,8 @@ class PlaceNeuronsStep(Step):
         dendrite_length_px = acq.um_to_px(spec.dendrite_length_um)
         dendrite_width_px = acq.um_to_px(spec.dendrite_width_um)
 
-        centers, snrs = sample_neurons(spec, fov_h_um, fov_w_um, rng)
-        for (z, y, x), snr in zip(centers, snrs):
+        centers = sample_neurons(spec, fov_h_um, fov_w_um, rng)
+        for (z, y, x) in centers:
             footprint = neuron_footprint(
                 shape,
                 (acq.um_to_px(y), acq.um_to_px(x)),
@@ -355,7 +362,7 @@ class PlaceNeuronsStep(Step):
                 dendrite_width_px=dendrite_width_px,
             )
             scene.cells.append(
-                Cell(center_um=(z, y, x), snr=float(snr), footprint_planted=footprint)
+                Cell(center_um=(z, y, x), footprint_planted=footprint)
             )
 
 
@@ -395,9 +402,19 @@ class CellActivityStep(Step):
     ``quiescent_rate_hz`` and ``active_rate_hz``. Spikes get lognormal amplitudes
     (coefficient of variation ``spike_amp_cv``, mean 1) and convolve with the
     double-exponential :func:`calcium_kernel` to form the noise-free trace,
-    offset by the baseline ``f0``. Writes ``cell.trace`` (the calcium trace
-    ``C``) and ``cell.spikes`` (the spike-count train ``S``); these are the ideal
-    deconvolution targets in ground truth.
+    offset by the baseline ``f0``.
+
+    Amplitude enters at two levels, both biology: a **per-cell** expression/response
+    gain (lognormal spread ``brightness_cv``, mean 1) scales each cell's *whole*
+    trace — baseline and transients together, so a bright cell is brighter
+    everywhere — and the **per-spike** ``spike_amp_cv`` jitters individual
+    transients around that gain. No measurement noise is added here: the trace is
+    the clean ground-truth ``C``; shot/read noise enter at the ``sensor`` and
+    background at ``neuropil``, so SNR is emergent, never set here.
+
+    Writes ``cell.trace`` (the calcium trace ``C``), ``cell.spikes`` (the
+    spike-count train ``S``), and ``cell.amplitude`` (the per-cell gain); these are
+    the ideal deconvolution targets in ground truth.
     """
 
     name = "cell_activity"
@@ -407,14 +424,19 @@ class CellActivityStep(Step):
         spec = self.spec
         n_frames, fps = self.acq.n_frames, self.acq.fps
         kernel = calcium_kernel(spec.tau_rise_s, spec.tau_decay_s, fps)
-        for cell in scene.cells:
+        gains = _sample_brightness(spec.brightness_cv, len(scene.cells), self.rng)
+        for cell, gain in zip(scene.cells, gains):
             spikes = self._spike_train(spec, n_frames, fps, self.rng)
             weighted = self._apply_amplitudes(spikes, spec.spike_amp_cv, self.rng)
-            trace = spec.f0 + np.convolve(weighted, kernel)[:n_frames]
+            # The per-cell gain scales the whole trace (baseline + transients), so a
+            # bright cell emits more light everywhere -- that is what later turns into
+            # a higher emergent SNR at the sensor.
+            trace = gain * (spec.f0 + np.convolve(weighted, kernel)[:n_frames])
             if spec.trace_noise > 0:
                 trace = trace + self.rng.normal(0.0, spec.trace_noise, size=n_frames)
             cell.trace = trace
             cell.spikes = spikes
+            cell.amplitude = float(gain)
 
     @staticmethod
     def _spike_train(

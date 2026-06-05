@@ -52,7 +52,7 @@ _FORMAT_VERSION = 1
 # (None when their producing step is absent). Order is the construction order.
 _GT_REQUIRED = (
     "A_planted", "A_observed", "C", "S",
-    "centers_um", "snr_per_cell", "in_focus", "detectable",
+    "centers_um", "amplitude_per_cell", "in_focus", "detectable",
 )
 _GT_OPTIONAL = (
     "shifts", "vignette", "leakage", "bleaching",
@@ -81,7 +81,10 @@ class GroundTruth(BaseModel):
 
     # per-cell physical attributes -----------------------------------------
     centers_um: NDArray[Shape["* unit, 3"], float]
-    snr_per_cell: NDArray[Shape["* unit"], float]
+    # Per-cell brightness/expression gain (the clean input). NaN for a cell whose
+    # ``cell_activity`` step has not run. SNR is deliberately absent: noise is a
+    # downstream physical effect, so any SNR is computed later, not stored here.
+    amplitude_per_cell: NDArray[Shape["* unit"], float]
     in_focus: NDArray[Shape["* unit"], bool]
     detectable: NDArray[Shape["* unit"], bool]
 
@@ -121,7 +124,7 @@ class GroundTruth(BaseModel):
             C=self.C[m],
             S=self.S[m],
             centers_um=self.centers_um[m],
-            snr_per_cell=self.snr_per_cell[m],
+            amplitude_per_cell=self.amplitude_per_cell[m],
             in_focus=self.in_focus[m],
             detectable=self.detectable[m],
             shifts=self.shifts,
@@ -275,7 +278,7 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
     vignette = scene.truth.vignette  # FOV-sized field, or None
 
     planted, observed, traces, spikes = [], [], [], []
-    centers, snrs, in_focus, detectable = [], [], [], []
+    centers, amplitudes, in_focus, detectable = [], [], [], []
     for cell in scene.cells:
         if cell.footprint_planted is None:
             continue
@@ -302,7 +305,7 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         traces.append(trace)
         spikes.append(spike)
         centers.append((z, y_fov_um, x_fov_um))
-        snrs.append(cell.snr)
+        amplitudes.append(cell.amplitude if cell.amplitude is not None else float("nan"))
         in_focus.append(ifocus)
         detectable.append(
             _is_detectable(cell, ifocus, y_fov_um, x_fov_um, vignette, sensor_spec, acq)
@@ -314,7 +317,7 @@ def finalize(scene: Scene, spec: Spec) -> Recording:
         C=_stack(traces, (0, n_frames)),
         S=_stack(spikes, (0, n_frames)),
         centers_um=np.array(centers, dtype=float).reshape(-1, 3),
-        snr_per_cell=np.array(snrs, dtype=float),
+        amplitude_per_cell=np.array(amplitudes, dtype=float),
         in_focus=np.array(in_focus, dtype=bool),
         detectable=np.array(detectable, dtype=bool),
         shifts=scene.truth.shifts,

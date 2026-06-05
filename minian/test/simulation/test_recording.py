@@ -159,13 +159,11 @@ def test_finalize_drops_pure_margin_cells():
     scene.cells += [
         Cell(
             center_um=(0.0, margin + 10.0, margin + 10.0),
-            snr=4.0,
             footprint_planted=_dot((canvas, canvas), margin + 10, margin + 10),
             trace=np.ones(nf),
         ),
         Cell(
             center_um=(0.0, 2.0, 10.0),
-            snr=4.0,
             footprint_planted=_dot((canvas, canvas), 2, 10),
             trace=np.ones(nf),
         ),
@@ -201,13 +199,13 @@ def test_detectable_reflects_brightness_and_focus():
     scene = Scene.zeros(acq)
     scene.cells += [
         # bright, in focus -> well above the sensor floor
-        Cell(center_um=(0.0, 8.0, 8.0), snr=5.0, footprint_planted=_dot((16, 16), 8, 8),
+        Cell(center_um=(0.0, 8.0, 8.0), footprint_planted=_dot((16, 16), 8, 8),
              trace=trace, in_focus=True, optical_brightness=1.0),
         # in focus but optically ~dark -> below the floor
-        Cell(center_um=(0.0, 4.0, 4.0), snr=5.0, footprint_planted=_dot((16, 16), 4, 4),
+        Cell(center_um=(0.0, 4.0, 4.0), footprint_planted=_dot((16, 16), 4, 4),
              trace=trace, in_focus=True, optical_brightness=1e-3),
         # bright but out of focus -> gated out by in_focus
-        Cell(center_um=(0.0, 12.0, 12.0), snr=5.0, footprint_planted=_dot((16, 16), 12, 12),
+        Cell(center_um=(0.0, 12.0, 12.0), footprint_planted=_dot((16, 16), 12, 12),
              trace=trace, in_focus=False, optical_brightness=1.0),
     ]
     gt = finalize(scene, _detect_spec(acq)).ground_truth
@@ -223,9 +221,9 @@ def test_detectable_subset_keeps_only_detectable_units():
     trace[nf // 2] = 5.0
     scene = Scene.zeros(acq)
     scene.cells += [
-        Cell(center_um=(0.0, 8.0, 8.0), snr=5.0, footprint_planted=_dot((16, 16), 8, 8),
+        Cell(center_um=(0.0, 8.0, 8.0), footprint_planted=_dot((16, 16), 8, 8),
              trace=trace, in_focus=True, optical_brightness=1.0),
-        Cell(center_um=(0.0, 4.0, 4.0), snr=5.0, footprint_planted=_dot((16, 16), 4, 4),
+        Cell(center_um=(0.0, 4.0, 4.0), footprint_planted=_dot((16, 16), 4, 4),
              trace=trace, in_focus=True, optical_brightness=1e-3),
     ]
     gt = finalize(scene, _detect_spec(acq)).ground_truth

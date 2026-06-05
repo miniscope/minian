@@ -26,7 +26,6 @@ from minian.simulation import (
     PlaceNeurons,
     Render,
     Sensor,
-    SNRDistribution,
     Spec,
     SpecWarning,
     Tissue,
@@ -172,11 +171,6 @@ def test_unresolvable_decay_fails():
     steps = [PlaceNeurons(soma_radius_um=3.0), CellActivity(tau_decay_s=0.5), Render()]
     with pytest.raises(ValidationError, match="unresolvable"):
         Spec(acquisition=acq, steps=steps)
-
-
-def test_snr_order_fails():
-    with pytest.raises(ValidationError):
-        SNRDistribution(low=5.0, high=2.0)
 
 
 # --- validators: advisory warnings -----------------------------------------

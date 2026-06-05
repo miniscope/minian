@@ -43,12 +43,15 @@ class Cell:
     stack them with no remapping. Each is populated by the step that owns it and
     is ``None`` until then:
 
-    * ``center_um`` / ``snr`` — set by ``place_neurons`` (the cell exists once it
-      has a location and a signal level).
+    * ``center_um`` — set by ``place_neurons`` (the cell exists once it has a
+      location). Placement is now purely spatial; brightness is not set here.
     * ``footprint_planted`` — the sharp, peak-normalized soma mask, also from
       ``place_neurons``; the ideal CNMF target.
-    * ``trace`` / ``spikes`` — the noise-free calcium trace ``C`` and spike
-      train ``S`` from ``cell_activity``.
+    * ``trace`` / ``spikes`` / ``amplitude`` — the noise-free calcium trace
+      ``C``, spike train ``S``, and the per-cell brightness/expression gain that
+      scales the whole trace, all from ``cell_activity``. The gain is biology
+      (how much fluorescence this cell emits per spike); measurement noise, and
+      hence any SNR, emerges later from ``optics`` and ``sensor``, not here.
     * ``footprint_observed`` / ``in_focus`` / ``optical_brightness`` — the
       optically degraded footprint, the geometric in-focus flag, and the
       depth-driven peak-brightness scalar, all from the ``optics`` step (5b).
@@ -62,11 +65,11 @@ class Cell:
     """
 
     center_um: tuple[float, float, float]
-    snr: float
     footprint_planted: np.ndarray | None = None
     footprint_observed: np.ndarray | None = None
     trace: np.ndarray | None = None
     spikes: np.ndarray | None = None
+    amplitude: float | None = None
     in_focus: bool | None = None
     optical_brightness: float | None = None
     detectable: bool | None = None

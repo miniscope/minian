@@ -483,20 +483,6 @@ class StepSpec(_Base):
 # ---------------------------------------------------------------------------
 
 
-class SNRDistribution(_Base):
-    """Per-cell signal-to-noise sampling distribution."""
-
-    distribution: Literal["uniform", "lognormal"] = "lognormal"
-    low: float = Field(gt=0, default=1.5, description="Lower SNR bound / lognormal low anchor.")
-    high: float = Field(gt=0, default=8.0, description="Upper SNR bound / lognormal high anchor.")
-
-    @model_validator(mode="after")
-    def _check_order(self) -> SNRDistribution:
-        if self.high <= self.low:
-            raise ValueError(f"SNR high ({self.high}) must exceed low ({self.low}).")
-        return self
-
-
 class PlaceNeurons(StepSpec):
     """Place generic neurons in a 3-D µm volume, soma-only or with dendrites.
 
@@ -554,7 +540,6 @@ class PlaceNeurons(StepSpec):
     min_distance_um: float = Field(
         ge=0, default=0.0, description="3-D center-to-center minimum (Poisson-disk if > 0)."
     )
-    snr: SNRDistribution = Field(default_factory=SNRDistribution)
 
     @field_validator("depth_range_um")
     @classmethod
@@ -578,6 +563,15 @@ class CellActivity(StepSpec):
     Modeled on CaLab so synthetic traces are deconvolvable by it; we reimplement
     only the forward kernel ``k(t) = exp(-t/τ_d) − exp(-t/τ_r)``. Indicator
     saturation and per-cell τ jitter are deferred to v1.1.
+
+    Amplitude lives here, at two levels: ``brightness_cv`` is the cell-to-cell
+    spread of an overall expression/response gain that scales each cell's *whole*
+    trace (baseline and transients together), and ``spike_amp_cv`` is the
+    finer spike-to-spike variability around that per-cell gain. Both are biology.
+    The emitted trace is the **clean ground truth** ``C``; measurement noise is
+    deliberately *not* added here. Photon shot noise and read noise enter at the
+    ``sensor``, background fluctuations at ``neuropil`` — so any SNR is an emergent
+    property of the physical chain, computable downstream, never an input.
     """
 
     domain: ClassVar[str] = "cell"
@@ -588,12 +582,20 @@ class CellActivity(StepSpec):
     quiescent_rate_hz: float = Field(ge=0, default=0.05, description="Poisson firing rate while quiescent, Hz.")
     tau_rise_s: float = Field(gt=0, default=0.05, description="Calcium rise time constant, s.")
     tau_decay_s: float = Field(gt=0, default=0.5, description="Calcium decay time constant, s.")
-    spike_amp_cv: float = Field(ge=0, default=0.3, description="Lognormal per-spike amplitude variability.")
+    brightness_cv: float = Field(
+        ge=0,
+        default=0.3,
+        description="Cell-to-cell brightness spread: lognormal CV (mean 1) of the "
+        "per-cell expression/response gain that scales the whole trace. 0 = every "
+        "cell equally bright.",
+    )
+    spike_amp_cv: float = Field(ge=0, default=0.3, description="Lognormal per-spike amplitude variability (within a cell).")
     f0: float = Field(ge=0, default=1.0, description="Baseline fluorescence.")
     trace_noise: float = Field(
         ge=0,
         default=0.0,
-        description="Optional additive per-cell trace noise (independent of sensor noise).",
+        description="Non-physical additive trace noise (default 0). An advanced "
+        "override only; real noise enters at sensor/neuropil, not here.",
     )
 
     def build(self, acq: Acquisition, rng) -> Step:

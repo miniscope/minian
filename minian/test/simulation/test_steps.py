@@ -28,7 +28,6 @@ from minian.simulation import (
     Render,
     Scene,
     Sensor,
-    SNRDistribution,
     Vasculature,
     Vignette,
 )
@@ -131,17 +130,34 @@ def test_irregularity_zero_is_a_clean_binary_disk():
     assert fp.sum() == pytest.approx(np.pi * 8.0**2, rel=0.1)
 
 
-def test_snr_uniform_within_range():
-    acq = _acq()
-    step = PlaceNeurons(
-        density_per_mm3=142857.0,
-        depth_range_um=(0.0, 0.0),
-        snr=SNRDistribution(distribution="uniform", low=2.0, high=6.0),
-    ).build(acq, np.random.default_rng(4))
+def _placed_scene(acq, seed=4):
     scene = Scene.zeros(acq)
-    step(scene)
-    snrs = np.array([c.snr for c in scene.cells])
-    assert ((snrs >= 2.0) & (snrs <= 6.0)).all()
+    PlaceNeurons(density_per_mm3=142857.0, depth_range_um=(0.0, 0.0)).build(
+        acq, np.random.default_rng(seed)
+    )(scene)
+    return scene
+
+
+def test_brightness_gain_is_per_cell_and_scales_the_whole_trace():
+    # cell_activity draws a per-cell expression gain (mean 1, spread brightness_cv)
+    # and scales each cell's *whole* trace by it -- baseline included -- so a bright
+    # cell is brighter everywhere. With noise off, a quiet frame sits at gain * f0.
+    acq = _acq()
+    scene = _placed_scene(acq)
+    spec = CellActivity(brightness_cv=0.5)
+    spec.build(acq, np.random.default_rng(4))(scene)
+    amps = np.array([c.amplitude for c in scene.cells])
+    assert (amps > 0).all() and amps.std() > 0  # a real cell-to-cell spread
+    baseline = np.array([c.trace.min() for c in scene.cells])
+    np.testing.assert_allclose(baseline, amps * spec.f0)
+
+
+def test_brightness_cv_zero_makes_every_cell_equally_bright():
+    acq = _acq()
+    scene = _placed_scene(acq)
+    CellActivity(brightness_cv=0.0).build(acq, np.random.default_rng(4))(scene)
+    amps = np.array([c.amplitude for c in scene.cells])
+    np.testing.assert_array_equal(amps, np.ones_like(amps))
 
 
 def test_min_distance_is_respected():
@@ -170,36 +186,29 @@ def test_place_neurons_is_reproducible():
 
 def test_sample_neurons_matches_the_full_step():
     # The extracted distribution sampler must reproduce, draw-for-draw, the
-    # centers and SNRs the fused PlaceNeuronsStep would have placed — same spec,
-    # same FOV, same seeded rng. (This is the contract the notebook relies on:
-    # visualizing sample_neurons() shows the *real* placement, not an approximation.)
+    # centers the fused PlaceNeuronsStep would have placed — same spec, same FOV,
+    # same seeded rng. (This is the contract the notebook relies on: visualizing
+    # sample_neurons() shows the *real* placement, not an approximation.)
     acq = _acq()
     fov_h, fov_w = acq.fov_um
-    spec = PlaceNeurons(
-        density_per_mm3=40000.0,
-        depth_range_um=(0.0, 50.0),
-        snr=SNRDistribution(distribution="uniform", low=2.0, high=6.0),
-    )
-    centers, snrs = sample_neurons(spec, fov_h, fov_w, np.random.default_rng(7))
+    spec = PlaceNeurons(density_per_mm3=40000.0, depth_range_um=(0.0, 50.0))
+    centers = sample_neurons(spec, fov_h, fov_w, np.random.default_rng(7))
 
     scene = Scene.zeros(acq)
     spec.build(acq, np.random.default_rng(7))(scene)
     step_centers = [c.center_um for c in scene.cells]
-    step_snrs = np.array([c.snr for c in scene.cells])
 
     assert centers == step_centers
-    np.testing.assert_array_equal(snrs, step_snrs)
 
 
 def test_sample_neurons_count_from_density_and_fov():
     # No footprints stamped, but the volumetric count rule still gives a clean 5:
-    # 2.5e-3 mm² × floor(2·7 = 14 µm) = 3.5e-5 mm³, × 142857/mm³ = 5, aligned SNRs.
+    # 2.5e-3 mm² × floor(2·7 = 14 µm) = 3.5e-5 mm³, × 142857/mm³ = 5.
     acq = _acq()
     fov_h, fov_w = acq.fov_um
     spec = PlaceNeurons(density_per_mm3=142857.0, depth_range_um=(0.0, 0.0))
-    centers, snrs = sample_neurons(spec, fov_h, fov_w, np.random.default_rng(0))
+    centers = sample_neurons(spec, fov_h, fov_w, np.random.default_rng(0))
     assert len(centers) == 5
-    assert snrs.shape == (5,)
 
 
 def test_cytosolic_morphology_adds_dendrites_beyond_soma():
@@ -290,8 +299,10 @@ def test_noise_free_trace_never_dips_below_baseline():
     # so it can never fall below f0.
     acq = _acq(duration_s=5.0)
     scene = Scene.zeros(acq)
-    scene.cells.append(Cell(center_um=(0.0, 25.0, 25.0), snr=4.0))
-    CellActivity(f0=1.0, trace_noise=0.0, active_rate_hz=5.0).build(
+    scene.cells.append(Cell(center_um=(0.0, 25.0, 25.0)))
+    # brightness_cv=0 keeps the per-cell gain at 1, so the baseline stays exactly f0
+    # and this isolates the kernel/amplitude non-negativity invariant.
+    CellActivity(f0=1.0, trace_noise=0.0, active_rate_hz=5.0, brightness_cv=0.0).build(
         acq, np.random.default_rng(10)
     )(scene)
     assert scene.cells[0].trace.min() >= 1.0 - 1e-9
@@ -302,7 +313,7 @@ def test_cell_activity_is_reproducible():
     traces = []
     for _ in range(2):
         scene = Scene.zeros(acq)
-        scene.cells.append(Cell(center_um=(0.0, 25.0, 25.0), snr=4.0))
+        scene.cells.append(Cell(center_um=(0.0, 25.0, 25.0)))
         CellActivity().build(acq, np.random.default_rng(11))(scene)
         traces.append(scene.cells[0].trace)
     np.testing.assert_array_equal(traces[0], traces[1])
@@ -321,8 +332,8 @@ def test_render_is_the_footprint_trace_outer_sum():
     tr1 = np.array([1.0, 2.0, 3.0])
     tr2 = np.array([4.0, 5.0, 6.0])
     scene.cells += [
-        Cell(center_um=(0.0, 0.0, 0.0), snr=1.0, footprint_planted=fp1, trace=tr1),
-        Cell(center_um=(0.0, 0.0, 0.0), snr=1.0, footprint_planted=fp2, trace=tr2),
+        Cell(center_um=(0.0, 0.0, 0.0), footprint_planted=fp1, trace=tr1),
+        Cell(center_um=(0.0, 0.0, 0.0), footprint_planted=fp2, trace=tr2),
     ]
     RenderStep(Render(), acq, np.random.default_rng(0))(scene)
     np.testing.assert_allclose(scene.movie.values[:, 2, 3], tr1)
@@ -341,7 +352,6 @@ def test_render_prefers_observed_footprint_when_present():
     scene.cells.append(
         Cell(
             center_um=(0.0, 0.0, 0.0),
-            snr=1.0,
             footprint_planted=planted,
             footprint_observed=observed,
             trace=np.array([2.0]),
@@ -405,7 +415,7 @@ def _cell_with_footprint(acq, z, radius_um=4.0):
         (h, w), (h / 2, w / 2), acq.um_to_px(radius_um), 0.0, np.random.default_rng(0)
     )
     y_um, x_um = (h / 2) * acq.pixel_size_um, (w / 2) * acq.pixel_size_um
-    return Cell(center_um=(z, y_um, x_um), snr=4.0, footprint_planted=fp)
+    return Cell(center_um=(z, y_um, x_um), footprint_planted=fp)
 
 
 def test_degrade_footprint_blur_conserves_sum_and_drops_peak():
@@ -454,7 +464,7 @@ def test_resolve_focal_plane_auto_accounts_for_field_curvature():
     px = acq.pixel_size_um
     axis = (100 * px, 100 * px)  # canvas center (n_px=200) in µm
     radii = (0.0, 20.0, 40.0, 60.0, 80.0)
-    cells = [Cell(center_um=(100.0, axis[0], axis[1] + r), snr=4.0) for r in radii]
+    cells = [Cell(center_um=(100.0, axis[0], axis[1] + r)) for r in radii]
     expected = float(np.median([100.0 + acq.optics.focal_curvature_shift_um(r) for r in radii]))
 
     assert resolve_focal_plane(cells, "auto") == 100.0  # no optics -> plain median z
@@ -573,7 +583,7 @@ def test_field_curvature_blurs_off_axis_cells():
             (npx, npx), (y_um / px, x_um / px), acq.um_to_px(4.0), 0.0,
             np.random.default_rng(0),
         )
-        return Cell(center_um=(z, y_um, x_um), snr=4.0, footprint_planted=fp)
+        return Cell(center_um=(z, y_um, x_um), footprint_planted=fp)
 
     center = cell_at(npx * px / 2, npx * px / 2)  # on axis (r = 0)
     corner = cell_at(10.0, 10.0)                  # near a corner (large r)
