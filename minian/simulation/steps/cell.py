@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
+from scipy.signal import fftconvolve
 
 from minian.simulation.scene import Cell, Scene
 from minian.simulation.steps.base import Step
@@ -300,8 +301,7 @@ def _sample_brightness(cv: float, n: int, rng: np.random.Generator) -> np.ndarra
     ``cv == 0`` makes every cell equally bright (gain 1). Otherwise the gain is
     lognormal with mean exactly 1 (so changing the spread does not change the
     population's total light budget) and a right tail, the familiar "a few bright
-    cells over a dimmer majority". Same construction as the per-spike amplitude
-    weighting in :meth:`CellActivityStep._apply_amplitudes`, one level up.
+    cells over a dimmer majority".
     """
     if n == 0:
         return np.empty(0)
@@ -477,52 +477,71 @@ def tau_from_kernel_timing(t_peak_s: float, fwhm_s: float) -> tuple[float, float
     return r * tau_decay, tau_decay
 
 
-def markov_from_burstiness(
-    burstiness: float,
-    fps: float,
-    active_fraction: float = 0.3,
-    min_bout_s: float = 0.5,
-    max_bout_s: float = 8.0,
-) -> tuple[float, float]:
-    """Map a single ``burstiness`` ∈ [0, 1] to the 2-state gate transition probs.
+# CaLab's SPIKE_ACTIVITY_LEVELS (sparse, moderate, dense), expressed in our units:
+# (p_quiescent_to_active /frame, p_active_to_quiescent /frame, active_rate_hz,
+# quiescent_rate_hz). The Hz values are CaLab's per-bin spike probs x its 300 Hz sim
+# rate (0.3/0.5/0.7 -> 90/150/210; 0.001/0.002/0.005 -> 0.3/0.6/1.5). Going denser
+# couples three things: bursts start more often (p_q2a up), last longer (p_a2q down),
+# and fire harder (active_rate up) -- the path that keeps the look realistic.
+# Attribution: CaLab web simulator (simulation-quality-presets.ts).
+_ACTIVITY_SPARSE = (0.002, 0.4, 90.0, 0.3)
+_ACTIVITY_MODERATE = (0.005, 0.3, 150.0, 0.6)
+_ACTIVITY_DENSE = (0.01, 0.2, 210.0, 1.5)
 
-    Returns ``(p_quiescent_to_active, p_active_to_quiescent)`` for
-    :class:`~minian.simulation.spec.CellActivity`. Burstiness sets the **mean active
-    bout length** (``min_bout_s`` at 0, ``max_bout_s`` at 1): low burstiness gives
-    short, frequent bouts that look close to uniform firing, high burstiness gives
-    long active runs separated by long quiet. The active *fraction* of time is held
-    fixed at ``active_fraction`` (so ``p_q→a = p_a→q · f/(1-f)``), which keeps the
-    overall amount of activity roughly constant while only its *clumpiness* changes;
-    the firing rate is then set independently by ``active_rate_hz``.
+
+def spike_activity_params(activity: float) -> tuple[float, float, float, float]:
+    """Map a single ``activity`` ∈ [0, 1] onto CaLab's sparse→moderate→dense path.
+
+    Returns ``(p_quiescent_to_active, p_active_to_quiescent, active_rate_hz,
+    quiescent_rate_hz)`` for :class:`~minian.simulation.spec.CellActivity`. ``0`` is
+    sparse, ``0.5`` is moderate (CaLab's default, the screenshot regime), ``1`` is
+    dense; values interpolate piecewise-linearly through CaLab's three
+    ``SPIKE_ACTIVITY_LEVELS`` and are clamped to ``[0, 1]``.
+
+    This is the whole spike-activity control: CaLab moves all four Markov parameters
+    together along this single density axis (it has no separate rate/burstiness
+    knobs), and that coupling is what keeps firing realistic, dense bursts plus a
+    little background, with no dead stretches, across the entire range.
     """
-    b = min(max(burstiness, 0.0), 1.0)
-    bout_s = min_bout_s + b * (max_bout_s - min_bout_s)
-    p_a2q = 1.0 / (bout_s * fps)
-    p_q2a = p_a2q * active_fraction / (1.0 - active_fraction)
-    return p_q2a, p_a2q
+    a = min(max(activity, 0.0), 1.0)
+    if a <= 0.5:
+        t, lo, hi = a / 0.5, _ACTIVITY_SPARSE, _ACTIVITY_MODERATE
+    else:
+        t, lo, hi = (a - 0.5) / 0.5, _ACTIVITY_MODERATE, _ACTIVITY_DENSE
+    return tuple(l + t * (h - l) for l, h in zip(lo, hi))
 
 
 class CellActivityStep(Step):
-    """Give each soma a calcium trace: Markov gate → Poisson spikes → kernel.
+    """Give each soma a calcium trace, the CaLab way: 300 Hz spikes → kernel → bin.
 
-    Per cell, a 2-state Markov chain (quiescent ↔ active, per-frame transition
-    probabilities) gates a Poisson spike count whose rate switches between
-    ``quiescent_rate_hz`` and ``active_rate_hz``. Spikes get lognormal amplitudes
-    (coefficient of variation ``spike_amp_cv``, mean 1) and convolve with the
-    double-exponential :func:`calcium_kernel` to form the noise-free trace,
-    offset by the baseline ``f0``.
+    Spikes are generated on a **high-resolution grid** (``spike_sim_hz``, ~300 Hz)
+    rather than at the camera frame rate, then convolved with the calcium kernel at
+    that fine rate and **bin-averaged down** to the imaging rate (which is what the
+    camera's exposure integration physically does). Two payoffs: one spike per fine
+    bin is at most ~3 ms apart, so the **refractory period** is respected and bursts
+    cannot pack unphysically tight; and sub-frame spike timing survives the kernel,
+    which matters for fast indicators. (Attribution: this matches the CaLab web
+    simulator's spike model.)
 
-    Amplitude enters at two levels, both biology: a **per-cell** expression/response
-    gain (lognormal spread ``brightness_cv``, mean 1) scales each cell's *whole*
-    trace — baseline and transients together, so a bright cell is brighter
-    everywhere — and the **per-spike** ``spike_amp_cv`` jitters individual
-    transients around that gain. No measurement noise is added here: the trace is
-    the clean ground-truth ``C``; shot/read noise enter at the ``sensor`` and
-    background at ``neuropil``, so SNR is emergent, never set here.
+    Per cell, a 2-state Markov gate (quiescent ↔ active) modulates the per-bin spike
+    probability between ``quiescent_rate_hz`` and ``active_rate_hz`` (each ÷
+    ``spike_sim_hz``). Bursting comes from a **high in-active rate** concentrated into
+    short active bouts, not from a high mean rate; :func:`bursty_spike_params` maps a
+    target mean rate + burstiness onto the gate. The gate itself is stepped at the
+    frame rate (bouts are ~seconds, so sub-frame onset timing is irrelevant once we
+    bin); the spikes it gates are the part that runs at ``spike_sim_hz``.
 
-    Writes ``cell.trace`` (the calcium trace ``C``), ``cell.spikes`` (the
-    spike-count train ``S``), and ``cell.amplitude`` (the per-cell gain); these are
-    the ideal deconvolution targets in ground truth.
+    Amplitude is biology and enters as a single **per-cell** expression/response gain
+    (lognormal spread ``brightness_cv``, mean 1) that scales each cell's *whole* trace
+    — baseline and transients together, so a bright cell is brighter everywhere. No
+    measurement noise is added here: the trace is the clean ground-truth ``C``;
+    shot/read noise enter at the ``sensor`` and background at ``neuropil``, so SNR is
+    emergent, never set here.
+
+    Writes ``cell.trace`` (the calcium trace ``C``), ``cell.spikes`` (the per-frame
+    spike *count* train ``S`` — the fine 300 Hz train is binned away, since nothing
+    downstream recovers spikes faster than the frame rate), and ``cell.amplitude``
+    (the per-cell gain); these are the ideal deconvolution targets in ground truth.
     """
 
     name = "cell_activity"
@@ -531,61 +550,51 @@ class CellActivityStep(Step):
     def __call__(self, scene: Scene) -> None:
         spec = self.spec
         n_frames, fps = self.acq.n_frames, self.acq.fps
-        kernel = calcium_kernel(spec.tau_rise_s, spec.tau_decay_s, fps)
+        bins = max(int(round(spec.spike_sim_hz / fps)), 1)  # fine bins per frame
+        hr_fps = bins * fps  # realized high-res rate (integer multiple of fps)
+        kernel = calcium_kernel(spec.tau_rise_s, spec.tau_decay_s, hr_fps)
         gains = _sample_brightness(spec.brightness_cv, len(scene.cells), self.rng)
         for cell, gain in zip(scene.cells, gains):
-            spikes = self._spike_train(spec, n_frames, fps, self.rng)
-            weighted = self._apply_amplitudes(spikes, spec.spike_amp_cv, self.rng)
-            # The per-cell gain scales the whole trace (baseline + transients), so a
-            # bright cell emits more light everywhere -- that is what later turns into
-            # a higher emergent SNR at the sensor.
-            trace = gain * (spec.f0 + np.convolve(weighted, kernel)[:n_frames])
+            fine = self._fine_spikes(spec, n_frames, fps, bins, self.rng)
+            calcium = fftconvolve(fine, kernel)[: fine.size]
+            # Bin-average to the imaging rate (camera exposure integration); the
+            # per-cell gain scales the whole trace (baseline + transients), so a
+            # bright cell emits more light everywhere -- a higher emergent SNR later.
+            clean = calcium.reshape(n_frames, bins).mean(axis=1)
+            trace = gain * (spec.f0 + clean)
             if spec.trace_noise > 0:
                 trace = trace + self.rng.normal(0.0, spec.trace_noise, size=n_frames)
             cell.trace = trace
-            cell.spikes = spikes
+            cell.spikes = fine.reshape(n_frames, bins).sum(axis=1)  # per-frame counts
             cell.amplitude = float(gain)
 
     @staticmethod
-    def _spike_train(
-        spec, n_frames: int, fps: float, rng: np.random.Generator
+    def _fine_spikes(
+        spec, n_frames: int, fps: float, bins: int, rng: np.random.Generator
     ) -> np.ndarray:
-        """Per-frame spike counts from the 2-state Markov rate model.
+        """Binary spike train on the high-res grid (length ``n_frames * bins``).
 
-        Sequential by construction (the state at frame ``f`` depends on ``f-1``),
-        so this is an explicit O(n_frames) loop — clear over clever, and cheap at
-        the recording sizes the simulator targets.
+        The 2-state gate is stepped once per frame (sequential, O(n_frames)); spikes
+        are then drawn per fine bin as a Bernoulli at ``rate / hr_fps``. One spike
+        per ~3 ms bin enforces the refractory period for free. The gate starts in its
+        **stationary** state (active with prob = the long-run active fraction), so a
+        recording does not always open with a quiet stretch.
         """
-        spikes = np.zeros(n_frames)
-        rates = (spec.quiescent_rate_hz, spec.active_rate_hz)
-        state = 0  # 0 = quiescent, 1 = active
+        state = np.empty(n_frames, dtype=bool)
+        p_q2a, p_a2q = spec.p_quiescent_to_active, spec.p_active_to_quiescent
+        f_stationary = p_q2a / (p_q2a + p_a2q)
+        active = bool(rng.random() < f_stationary)
         for f in range(n_frames):
-            spikes[f] = rng.poisson(rates[state] / fps)
-            if state == 0 and rng.random() < spec.p_quiescent_to_active:
-                state = 1
-            elif state == 1 and rng.random() < spec.p_active_to_quiescent:
-                state = 0
-        return spikes
-
-    @staticmethod
-    def _apply_amplitudes(
-        spikes: np.ndarray, cv: float, rng: np.random.Generator
-    ) -> np.ndarray:
-        """Weight each spike by a lognormal amplitude (mean 1, given CV).
-
-        Returns a per-frame summed amplitude. ``cv == 0`` is the noise-free case
-        (every spike has unit amplitude), so the result is just the spike counts.
-        """
-        if cv <= 0:
-            return spikes.astype(float)
-        sigma = np.sqrt(np.log(1.0 + cv * cv))
-        mu = -0.5 * sigma * sigma  # makes E[amplitude] == 1
-        weighted = np.zeros_like(spikes, dtype=float)
-        for f, c in enumerate(spikes):
-            n = int(c)
-            if n > 0:
-                weighted[f] = np.exp(rng.normal(mu, sigma, size=n)).sum()
-        return weighted
+            if not active:
+                if rng.random() < p_q2a:
+                    active = True
+            elif rng.random() < p_a2q:
+                active = False
+            state[f] = active
+        hr_fps = bins * fps
+        rate = np.where(np.repeat(state, bins), spec.active_rate_hz, spec.quiescent_rate_hz)
+        p_spike = np.minimum(rate / hr_fps, 1.0)
+        return (rng.random(n_frames * bins) < p_spike).astype(float)
 
 
 # ---------------------------------------------------------------------------

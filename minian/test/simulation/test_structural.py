@@ -63,7 +63,12 @@ def test_detectability_falls_with_depth():
         seed=10,
         steps=[
             PlaceNeurons(density_per_mm3=600000.0, soma_radius_um=4.0, depth_range_um=(0.0, 10.0)),
-            CellActivity(active_rate_hz=8.0, tau_decay_s=0.4),  # ~all cells fire
+            # The default gate (CaLab "moderate") fires sparsely, so over a short 3 s
+            # clip most cells never burst; raise the onset prob so ~all cells fire and
+            # this measures the depth effect, not whether a cell happened to spike.
+            # brightness_cv=0 keeps detectability driven by depth/optics, not gain.
+            CellActivity(active_rate_hz=80.0, tau_decay_s=0.4,
+                         p_quiescent_to_active=0.08, brightness_cv=0.0),
             CellOptics(),
             Render(),
             # photons ~ 200 / NA² (NA 0.45): the NA²-collection factor moved into

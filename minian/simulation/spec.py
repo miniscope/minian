@@ -560,26 +560,31 @@ class PlaceNeurons(StepSpec):
 class CellActivity(StepSpec):
     """Calcium activity: 2-state Markov gate → Poisson spikes → double-exp kernel.
 
-    Modeled on CaLab so synthetic traces are deconvolvable by it; we reimplement
-    only the forward kernel ``k(t) = exp(-t/τ_d) − exp(-t/τ_r)``. Indicator
-    saturation and per-cell τ jitter are deferred to v1.1.
+    Modeled on the CaLab web simulator: spikes are generated on a high-resolution
+    grid (``spike_sim_hz``, ~300 Hz), convolved with the double-exponential kernel
+    ``k(t) = exp(-t/τ_d) − exp(-t/τ_r)`` at that rate, then bin-averaged down to the
+    camera frame rate (exposure integration). One spike per fine bin respects the
+    ~3 ms refractory period. The ground-truth ``S`` is the per-frame spike *count*
+    (the fine train is binned away — nothing recovers spikes faster than the frame
+    rate). Indicator saturation and per-cell τ jitter are deferred to v1.1.
 
-    Amplitude lives here, at two levels: ``brightness_cv`` is the cell-to-cell
-    spread of an overall expression/response gain that scales each cell's *whole*
-    trace (baseline and transients together), and ``spike_amp_cv`` is the
-    finer spike-to-spike variability around that per-cell gain. Both are biology.
-    The emitted trace is the **clean ground truth** ``C``; measurement noise is
-    deliberately *not* added here. Photon shot noise and read noise enter at the
-    ``sensor``, background fluctuations at ``neuropil`` — so any SNR is an emergent
-    property of the physical chain, computable downstream, never an input.
+    Amplitude is biology and lives here as a single per-cell gain: ``brightness_cv``
+    is the cell-to-cell spread of an overall expression/response gain that scales
+    each cell's *whole* trace (baseline and transients together). The emitted trace
+    is the **clean ground truth** ``C``; measurement noise is deliberately *not*
+    added here. Photon shot noise and read noise enter at the ``sensor``, background
+    fluctuations at ``neuropil`` — so any SNR is an emergent property of the physical
+    chain, computable downstream, never an input.
     """
 
     domain: ClassVar[str] = "cell"
     kind: Literal["cell_activity"] = "cell_activity"
-    p_quiescent_to_active: float = Field(gt=0, default=0.1, description="Per-frame quiescent→active transition prob.")
-    p_active_to_quiescent: float = Field(gt=0, default=0.5, description="Per-frame active→quiescent transition prob.")
-    active_rate_hz: float = Field(gt=0, default=3.0, description="Poisson firing rate while active, Hz.")
-    quiescent_rate_hz: float = Field(ge=0, default=0.05, description="Poisson firing rate while quiescent, Hz.")
+    spike_sim_hz: float = Field(gt=0, default=300.0, description="High-res spike-simulation rate, Hz (~300 = a ~3 ms refractory); binned to the frame rate.")
+    # Defaults = CaLab's "moderate" SPIKE_ACTIVITY level; see spike_activity_params.
+    p_quiescent_to_active: float = Field(gt=0, default=0.005, description="Per-frame quiescent→active transition prob.")
+    p_active_to_quiescent: float = Field(gt=0, default=0.3, description="Per-frame active→quiescent transition prob.")
+    active_rate_hz: float = Field(gt=0, default=150.0, description="Instantaneous firing rate while active, Hz (the in-burst rate).")
+    quiescent_rate_hz: float = Field(ge=0, default=0.6, description="Instantaneous firing rate while quiescent, Hz (the intrinsic background).")
     tau_rise_s: float = Field(gt=0, default=0.05, description="Calcium rise time constant, s.")
     tau_decay_s: float = Field(gt=0, default=0.5, description="Calcium decay time constant, s.")
     brightness_cv: float = Field(
@@ -589,7 +594,6 @@ class CellActivity(StepSpec):
         "per-cell expression/response gain that scales the whole trace. 0 = every "
         "cell equally bright.",
     )
-    spike_amp_cv: float = Field(ge=0, default=0.3, description="Lognormal per-spike amplitude variability (within a cell).")
     f0: float = Field(ge=0, default=1.0, description="Baseline fluorescence.")
     trace_noise: float = Field(
         ge=0,

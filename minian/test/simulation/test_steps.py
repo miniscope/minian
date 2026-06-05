@@ -48,7 +48,7 @@ from minian.simulation.steps import (
     calcium_kernel,
     degrade_footprint,
     kernel_timing,
-    markov_from_burstiness,
+    spike_activity_params,
     neuron_footprint,
     ou_process,
     resolve_focal_plane,
@@ -144,15 +144,17 @@ def _placed_scene(acq, seed=4):
 def test_brightness_gain_is_per_cell_and_scales_the_whole_trace():
     # cell_activity draws a per-cell expression gain (mean 1, spread brightness_cv)
     # and scales each cell's *whole* trace by it -- baseline included -- so a bright
-    # cell is brighter everywhere. With noise off, a quiet frame sits at gain * f0.
+    # cell is brighter everywhere.
     acq = _acq()
     scene = _placed_scene(acq)
     spec = CellActivity(brightness_cv=0.5)
     spec.build(acq, np.random.default_rng(4))(scene)
     amps = np.array([c.amplitude for c in scene.cells])
     assert (amps > 0).all() and amps.std() > 0  # a real cell-to-cell spread
-    baseline = np.array([c.trace.min() for c in scene.cells])
-    np.testing.assert_allclose(baseline, amps * spec.f0)
+    # the convolved calcium is non-negative, so the trace never dips below the
+    # cell's scaled baseline gain*f0 -- the gain is applied to the whole trace.
+    for cell in scene.cells:
+        assert cell.trace.min() >= cell.amplitude * spec.f0 - 1e-6
 
 
 def test_brightness_cv_zero_makes_every_cell_equally_bright():
@@ -306,19 +308,22 @@ def test_tau_from_kernel_timing_clamps_impossible_ratio():
     assert tr == pytest.approx(td, rel=1e-3)
 
 
-@pytest.mark.parametrize("b", [0.0, 0.5, 1.0])
-def test_markov_from_burstiness_holds_active_fraction(b):
-    # Burstiness changes bout length, not the active fraction.
-    p_q2a, p_a2q = markov_from_burstiness(b, fps=20.0, active_fraction=0.3)
-    assert p_q2a > 0 and p_a2q > 0
-    assert p_q2a / (p_q2a + p_a2q) == pytest.approx(0.3)
+def test_spike_activity_params_hit_calab_levels():
+    # activity 0/0.5/1 reproduce CaLab's sparse/moderate/dense SPIKE_ACTIVITY_LEVELS.
+    assert spike_activity_params(0.0) == pytest.approx((0.002, 0.4, 90.0, 0.3))
+    assert spike_activity_params(0.5) == pytest.approx((0.005, 0.3, 150.0, 0.6))
+    assert spike_activity_params(1.0) == pytest.approx((0.01, 0.2, 210.0, 1.5))
 
 
-def test_markov_from_burstiness_lengthens_bouts():
-    # Higher burstiness -> longer mean active bout -> smaller p_active_to_quiescent.
-    _, low = markov_from_burstiness(0.0, fps=20.0)
-    _, high = markov_from_burstiness(1.0, fps=20.0)
-    assert high < low
+def test_spike_activity_params_are_monotonic_in_density():
+    # Denser activity: bursts start more often (p_q2a up), last longer (p_a2q down),
+    # fire harder (active_rate up), and the background rate rises.
+    sparse, dense = spike_activity_params(0.2), spike_activity_params(0.8)
+    assert dense[0] > sparse[0]   # p_quiescent_to_active
+    assert dense[1] < sparse[1]   # p_active_to_quiescent
+    assert dense[2] > sparse[2]   # active_rate_hz
+    assert dense[3] > sparse[3]   # quiescent_rate_hz
+    assert spike_activity_params(2.0) == spike_activity_params(1.0)  # clamps
 
 
 def test_cell_activity_sets_trace_and_spikes():
