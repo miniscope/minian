@@ -512,7 +512,13 @@ class PlaceNeurons(StepSpec):
 
     domain: ClassVar[str] = "cell"
     kind: Literal["place_neurons"] = "place_neurons"
-    density_per_mm2: float = Field(gt=0, default=150.0, description="Cell areal density; count derived from FOV.")
+    density_per_mm3: float = Field(
+        gt=0,
+        default=25000.0,
+        description="Cell volumetric density (cells/mm³); count = density × FOV area "
+        "× depth thickness, the thickness floored at one soma diameter so a thin or "
+        "planar layer still yields cells.",
+    )
     soma_radius_um: float = Field(gt=0, default=7.0, description="Soma radius, µm (typical cortical neuron ≈ 5–10).")
     irregularity: float = Field(
         ge=0,

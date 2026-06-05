@@ -222,18 +222,24 @@ def sample_neurons(
     returned center; teaching code (the anatomy notebook's placement widget) can
     call it directly to show the population layout without paying for footprints.
 
-    The count is derived from the areal density and the FOV area,
-    ``round(density_per_mm2 · area_mm2)``. Centers are drawn uniformly in
-    ``(y, x)`` across the FOV and in ``z`` across ``depth_range_um``; if
-    ``min_distance_um > 0`` they are rejection-sampled (Poisson-disk style) to a
-    3-D center-to-center minimum. SNRs are drawn from the configured distribution.
+    The count is **volumetric**: ``round(density_per_mm3 · area_mm2 · thickness)``,
+    where the slab thickness is ``depth_range_um`` width **floored at one soma
+    diameter** (``2 · soma_radius_um``) so a thin — or strictly planar
+    (``lo == hi``) — layer still yields cells rather than zero. A thicker slab
+    therefore holds proportionally more cells, the physical behavior. Centers are
+    drawn uniformly in ``(y, x)`` across the FOV and in ``z`` across
+    ``depth_range_um``; if ``min_distance_um > 0`` they are rejection-sampled
+    (Poisson-disk style) to a 3-D center-to-center minimum. SNRs are drawn from the
+    configured distribution.
 
     Returns ``(centers, snrs)``: ``centers`` is a list of ``(z, y, x)`` µm tuples
     and ``snrs`` a 1-D array aligned to it. The draw order (centers, then SNRs)
     matches the original fused step, so seeded results are unchanged.
     """
     area_mm2 = (fov_h_um / 1000.0) * (fov_w_um / 1000.0)
-    count = round(spec.density_per_mm2 * area_mm2)
+    lo, hi = spec.depth_range_um
+    thickness_um = max(hi - lo, 2.0 * spec.soma_radius_um)  # floor: one soma diameter
+    count = round(spec.density_per_mm3 * area_mm2 * (thickness_um / 1000.0))
     centers = _sample_centers(
         count, fov_h_um, fov_w_um, spec.depth_range_um, spec.min_distance_um, rng
     )
@@ -294,9 +300,10 @@ class PlaceNeuronsStep(Step):
     a peak-normalized planted footprint (:func:`neuron_footprint`, soma-only or
     soma + proximal dendrites per ``spec.morphology``) at each sampled center.
 
-    The cell count is derived from the areal density and the **canvas** area
-    (``round(density_per_mm2 · canvas_area_mm2)``) — the scene movie's grid,
-    which a motion margin may enlarge beyond the sensor FOV. The SNR and depth
+    The cell count is volumetric — ``round(density_per_mm3 · canvas_area_mm2 ·
+    thickness)`` over the **canvas** area (the scene movie's grid, which a motion
+    margin may enlarge beyond the sensor FOV) and the ``depth_range_um`` thickness
+    (floored at one soma diameter); see :func:`sample_neurons`. The SNR and depth
     are stored now and consumed later by the ``optics`` step (5b) for the
     ``in_focus`` / ``detectable`` flags.
     """

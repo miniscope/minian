@@ -36,7 +36,7 @@ def _base():
         ),
         seed=7,
         steps=[
-            PlaceNeurons(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)),
+            PlaceNeurons(density_per_mm3=312500.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)),
             CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
             CellOptics(),
             Render(),
@@ -52,16 +52,16 @@ def _place(spec):
 def test_cartesian_product_count_and_axes():
     specs = list(sweep(_base(), {
         "acquisition.optics.na": [0.3, 0.6],
-        "steps.place_neurons.density_per_mm2": [50.0, 150.0, 400.0],
+        "steps.place_neurons.density_per_mm3": [50.0, 150.0, 400.0],
     }))
     assert len(specs) == 6
     # every combination is present exactly once
-    seen = {(s.acquisition.optics.na, _place(s).density_per_mm2) for s in specs}
+    seen = {(s.acquisition.optics.na, _place(s).density_per_mm3) for s in specs}
     assert seen == {(na, d) for na in (0.3, 0.6) for d in (50.0, 150.0, 400.0)}
     # .axes mirrors the chosen values for each yielded spec
     for s in specs:
         assert s.axes["acquisition.optics.na"] == s.acquisition.optics.na
-        assert s.axes["steps.place_neurons.density_per_mm2"] == _place(s).density_per_mm2
+        assert s.axes["steps.place_neurons.density_per_mm3"] == _place(s).density_per_mm3
 
 
 def test_nested_model_path_override():
@@ -101,10 +101,10 @@ def test_base_spec_is_not_mutated():
     base = _base()
     list(sweep(base, {
         "acquisition.optics.na": [0.1, 0.2],
-        "steps.place_neurons.density_per_mm2": [1.0],
+        "steps.place_neurons.density_per_mm3": [1.0],
     }))
     assert base.acquisition.optics.na == 0.45
-    assert _place(base).density_per_mm2 == 2500.0
+    assert _place(base).density_per_mm3 == 312500.0
 
 
 def test_cache_key_parity_axes_excluded():
@@ -147,7 +147,7 @@ def test_malformed_steps_path_raises():
 
 
 def test_yielded_spec_simulates_end_to_end():
-    (s,) = list(sweep(_base(), {"steps.place_neurons.density_per_mm2": [2000.0]}))
+    (s,) = list(sweep(_base(), {"steps.place_neurons.density_per_mm3": [300000.0]}))
     rec = simulate(s)
     assert rec.observed.shape == (s.acquisition.n_frames, 64, 64)
     assert rec.ground_truth.n_units > 0

@@ -77,10 +77,11 @@ def _acq(n_px=50, fps=20.0, duration_s=2.0, bit_depth=8, **kw):
 
 
 def test_place_neurons_count_from_density_and_fov():
-    # 50 µm FOV → 2.5e-3 mm²; density 2000/mm² → exactly 5 cells.
+    # 50 µm FOV → 2.5e-3 mm²; depth (0,0) floors to one soma diameter (2·5 = 10 µm
+    # → 1e-2 mm), so volume = 2.5e-5 mm³ and 200000/mm³ → exactly 5 cells.
     acq = _acq()
     step = PlaceNeurons(
-        density_per_mm2=2000.0, soma_radius_um=5.0, depth_range_um=(0.0, 0.0)
+        density_per_mm3=200000.0, soma_radius_um=5.0, depth_range_um=(0.0, 0.0)
     ).build(acq, np.random.default_rng(0))
     scene = Scene.zeros(acq)
     step(scene)
@@ -90,7 +91,7 @@ def test_place_neurons_count_from_density_and_fov():
 def test_place_neurons_centers_in_bounds():
     acq = _acq()
     fov_h, fov_w = acq.fov_um
-    step = PlaceNeurons(density_per_mm2=2000.0, depth_range_um=(10.0, 80.0)).build(
+    step = PlaceNeurons(density_per_mm3=28571.0, depth_range_um=(10.0, 80.0)).build(
         acq, np.random.default_rng(1)
     )
     scene = Scene.zeros(acq)
@@ -105,7 +106,7 @@ def test_place_neurons_centers_in_bounds():
 def test_place_neurons_footprint_is_peak_normalized():
     acq = _acq()
     step = PlaceNeurons(
-        density_per_mm2=2000.0, soma_radius_um=5.0, depth_range_um=(0.0, 0.0)
+        density_per_mm3=200000.0, soma_radius_um=5.0, depth_range_um=(0.0, 0.0)
     ).build(acq, np.random.default_rng(2))
     scene = Scene.zeros(acq)
     step(scene)
@@ -133,7 +134,7 @@ def test_irregularity_zero_is_a_clean_binary_disk():
 def test_snr_uniform_within_range():
     acq = _acq()
     step = PlaceNeurons(
-        density_per_mm2=2000.0,
+        density_per_mm3=142857.0,
         depth_range_um=(0.0, 0.0),
         snr=SNRDistribution(distribution="uniform", low=2.0, high=6.0),
     ).build(acq, np.random.default_rng(4))
@@ -146,7 +147,7 @@ def test_snr_uniform_within_range():
 def test_min_distance_is_respected():
     acq = _acq()
     step = PlaceNeurons(
-        density_per_mm2=2000.0, depth_range_um=(0.0, 0.0), min_distance_um=8.0
+        density_per_mm3=142857.0, depth_range_um=(0.0, 0.0), min_distance_um=8.0
     ).build(acq, np.random.default_rng(5))
     scene = Scene.zeros(acq)
     step(scene)
@@ -158,7 +159,7 @@ def test_min_distance_is_respected():
 
 def test_place_neurons_is_reproducible():
     acq = _acq()
-    spec = PlaceNeurons(density_per_mm2=2000.0, depth_range_um=(0.0, 50.0))
+    spec = PlaceNeurons(density_per_mm3=40000.0, depth_range_um=(0.0, 50.0))
     scenes = []
     for _ in range(2):
         scene = Scene.zeros(acq)
@@ -175,7 +176,7 @@ def test_sample_neurons_matches_the_full_step():
     acq = _acq()
     fov_h, fov_w = acq.fov_um
     spec = PlaceNeurons(
-        density_per_mm2=2000.0,
+        density_per_mm3=40000.0,
         depth_range_um=(0.0, 50.0),
         snr=SNRDistribution(distribution="uniform", low=2.0, high=6.0),
     )
@@ -191,11 +192,11 @@ def test_sample_neurons_matches_the_full_step():
 
 
 def test_sample_neurons_count_from_density_and_fov():
-    # No footprints stamped, but the count rule is identical: 50 µm FOV
-    # (2.5e-3 mm²) × 2000/mm² = exactly 5 cells, with aligned SNRs.
+    # No footprints stamped, but the volumetric count rule still gives a clean 5:
+    # 2.5e-3 mm² × floor(2·7 = 14 µm) = 3.5e-5 mm³, × 142857/mm³ = 5, aligned SNRs.
     acq = _acq()
     fov_h, fov_w = acq.fov_um
-    spec = PlaceNeurons(density_per_mm2=2000.0, depth_range_um=(0.0, 0.0))
+    spec = PlaceNeurons(density_per_mm3=142857.0, depth_range_um=(0.0, 0.0))
     centers, snrs = sample_neurons(spec, fov_h, fov_w, np.random.default_rng(0))
     assert len(centers) == 5
     assert snrs.shape == (5,)
@@ -269,7 +270,7 @@ def test_calcium_kernel_requires_rise_faster_than_decay():
 def test_cell_activity_sets_trace_and_spikes():
     acq = _acq(duration_s=5.0)
     scene = Scene.zeros(acq)
-    PlaceNeurons(density_per_mm2=2000.0, depth_range_um=(0.0, 0.0)).build(
+    PlaceNeurons(density_per_mm3=142857.0, depth_range_um=(0.0, 0.0)).build(
         acq, np.random.default_rng(9)
     )(scene)
     CellActivity(active_rate_hz=5.0, tau_decay_s=0.4).build(
@@ -591,7 +592,7 @@ def test_optics_makes_render_use_the_degraded_footprint():
     rng = np.random.default_rng(1)
     scene = Scene.zeros(acq)
     PlaceNeurons(
-        density_per_mm2=2000.0, soma_radius_um=4.0, depth_range_um=(120.0, 120.0)
+        density_per_mm3=250000.0, soma_radius_um=4.0, depth_range_um=(120.0, 120.0)
     ).build(acq, rng)(scene)
     CellActivity(active_rate_hz=5.0).build(acq, rng)(scene)
 
@@ -613,7 +614,7 @@ def test_optics_chain_with_sensor_runs_end_to_end():
     scene = Scene.zeros(acq)
     steps = [
         PlaceNeurons(
-            density_per_mm2=3000.0, soma_radius_um=4.0, depth_range_um=(0.0, 120.0)
+            density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 120.0)
         ),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
         CellOptics(),
@@ -638,7 +639,7 @@ def test_minimal_chain_place_activity_render_sensor():
     scene = Scene.zeros(acq)
     steps = [
         PlaceNeurons(
-            density_per_mm2=3000.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)
+            density_per_mm3=375000.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)
         ),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
         Render(),
@@ -831,7 +832,7 @@ def test_steps_fill_the_scene_canvas_not_the_sensor_dims():
     scene = _oversized_scene(acq, canvas=30)
 
     PlaceNeurons(
-        density_per_mm2=2000.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)
+        density_per_mm3=250000.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)
     ).build(acq, np.random.default_rng(0))(scene)
     assert scene.cells, "expected cells placed across the larger canvas"
     assert all(c.footprint_planted.shape == (30, 30) for c in scene.cells)
@@ -849,7 +850,7 @@ def test_field_chain_runs_end_to_end_and_records_ground_truth():
     scene = Scene.zeros(acq)
     steps = [
         PlaceNeurons(
-            density_per_mm2=3000.0, soma_radius_um=4.0, depth_range_um=(0.0, 120.0)
+            density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 120.0)
         ),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
         CellOptics(),
@@ -979,7 +980,7 @@ def test_full_pipeline_with_motion_runs_end_to_end():
     scene = Scene.zeros(acq, margin_px=margin)
     steps = [
         PlaceNeurons(
-            density_per_mm2=3000.0, soma_radius_um=4.0, depth_range_um=(0.0, 120.0)
+            density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 120.0)
         ),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
         CellOptics(),

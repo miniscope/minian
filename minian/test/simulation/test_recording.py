@@ -63,7 +63,7 @@ def _dot(shape, iy, ix, value=1.0):
 def test_finalize_produces_typed_recording():
     acq = _acq(n_px=24, duration_s=1.0)
     steps = [
-        PlaceNeurons(density_per_mm2=2000.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)),
+        PlaceNeurons(density_per_mm3=250000.0, soma_radius_um=4.0, depth_range_um=(0.0, 0.0)),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
         CellOptics(),
         Render(),
@@ -88,7 +88,7 @@ def test_finalize_produces_typed_recording():
 def test_observed_footprint_differs_from_planted_under_optics():
     acq = _acq(n_px=40, optics=Optics(magnification=8.0), focal_depth_in_tissue_um=0.0)
     steps = [
-        PlaceNeurons(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(80.0, 120.0)),
+        PlaceNeurons(density_per_mm3=62500.0, soma_radius_um=4.0, depth_range_um=(80.0, 120.0)),
         CellActivity(active_rate_hz=5.0),
         CellOptics(),
         Render(),
@@ -106,7 +106,7 @@ def test_observed_footprint_differs_from_planted_under_optics():
 def test_per_effect_fields_are_none_when_steps_absent():
     acq = _acq()
     steps = [
-        PlaceNeurons(density_per_mm2=2000.0, depth_range_um=(0.0, 0.0)),
+        PlaceNeurons(density_per_mm3=142857.0, depth_range_um=(0.0, 0.0)),
         CellActivity(tau_decay_s=0.4),
         Render(),
         Sensor(),
@@ -124,7 +124,7 @@ def test_per_effect_fields_present_for_full_pipeline():
     max_shift_um = 3.0
     margin = int(np.ceil(acq.um_to_px(max_shift_um))) + 1
     steps = [
-        PlaceNeurons(density_per_mm2=2500.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)),
+        PlaceNeurons(density_per_mm3=25000.0, soma_radius_um=4.0, depth_range_um=(0.0, 100.0)),
         CellActivity(active_rate_hz=5.0, tau_decay_s=0.4),
         CellOptics(),
         Render(),
