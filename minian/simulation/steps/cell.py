@@ -394,6 +394,114 @@ def calcium_kernel(tau_rise_s: float, tau_decay_s: float, fps: float) -> np.ndar
     return k / k.max()
 
 
+# --- kernel timing: (time-to-peak, FWHM) <-> (tau_rise, tau_decay) ----------
+#
+# The double-exp kernel g(t) = e^{-t/τd} - e^{-t/τr} has a useful scale property:
+# write r = τr/τd and t = τd·u, and g(τd·u) = e^{-u} - e^{-u/r} depends on r alone.
+# So both the time-to-peak and the FWHM are τd times a function of r only, and their
+# *ratio* depends only on r. That turns the two-feature inversion into a single
+# robust 1-D root-find on r, then τd = t_peak / peak_u(r) and τr = r·τd. Users think
+# in observable kernel features (how fast it rises, how wide it is); the simulator
+# keeps physical time constants. These two helpers bridge the two.
+
+
+def _peak_u(r: float) -> float:
+    """Location (in u = t/τd units) of the kernel peak, for r = τr/τd ∈ (0, 1)."""
+    return r * math.log(r) / (r - 1.0)
+
+
+def _shape_u(u: float, r: float) -> float:
+    return math.exp(-u) - math.exp(-u / r)
+
+
+def _half_max_u(r: float) -> tuple[float, float]:
+    """The two u where the kernel is half its peak (u_lo < u_peak < u_hi)."""
+    from scipy.optimize import brentq
+
+    up = _peak_u(r)
+    half = _shape_u(up, r) / 2.0
+    u_lo = brentq(lambda u: _shape_u(u, r) - half, 1e-12, up)
+    hi = up
+    while _shape_u(hi, r) > half:  # grow until the decay falls below half max
+        hi *= 2.0
+    u_hi = brentq(lambda u: _shape_u(u, r) - half, up, hi)
+    return u_lo, u_hi
+
+
+def kernel_timing(tau_rise_s: float, tau_decay_s: float) -> tuple[float, float]:
+    """``(time_to_peak_s, fwhm_s)`` of the double-exp kernel for given time constants.
+
+    The forward direction of :func:`tau_from_kernel_timing`. Requires
+    ``tau_rise_s < tau_decay_s``.
+    """
+    if tau_rise_s >= tau_decay_s:
+        raise ValueError(
+            f"tau_rise_s ({tau_rise_s}) must be < tau_decay_s ({tau_decay_s})."
+        )
+    r = tau_rise_s / tau_decay_s
+    u_lo, u_hi = _half_max_u(r)
+    return _peak_u(r) * tau_decay_s, (u_hi - u_lo) * tau_decay_s
+
+
+# Achievable ratio range t_peak/FWHM, over r in (0, 1): -> 0 as r -> 0 (instant rise,
+# FWHM -> ln2·τd), -> ~0.409 as r -> 1 (the alpha-function limit). Targets outside
+# this are physically impossible for this kernel family, so we clamp into it.
+_R_LO, _R_HI = 1e-4, 1.0 - 1e-6
+
+
+def tau_from_kernel_timing(t_peak_s: float, fwhm_s: float) -> tuple[float, float]:
+    """Invert observable kernel features to ``(tau_rise_s, tau_decay_s)``.
+
+    ``t_peak_s`` is the time from a spike to the kernel's peak; ``fwhm_s`` is the
+    kernel's full width at half maximum. Because the peak/FWHM ratio depends only on
+    ``r = tau_rise/tau_decay``, this solves a single 1-D root-find for ``r`` and then
+    recovers ``tau_decay = t_peak / peak_u(r)`` and ``tau_rise = r·tau_decay``. A
+    ratio outside the kernel's achievable range (roughly ``0 < t_peak/fwhm < 0.41``)
+    is clamped to the nearest feasible shape.
+    """
+    from scipy.optimize import brentq
+
+    def ratio(r: float) -> float:
+        u_lo, u_hi = _half_max_u(r)
+        return _peak_u(r) / (u_hi - u_lo)
+
+    rho = t_peak_s / fwhm_s
+    lo, hi = ratio(_R_LO), ratio(_R_HI)
+    if rho <= lo:
+        r = _R_LO
+    elif rho >= hi:
+        r = _R_HI
+    else:
+        r = brentq(lambda rr: ratio(rr) - rho, _R_LO, _R_HI)
+    tau_decay = t_peak_s / _peak_u(r)
+    return r * tau_decay, tau_decay
+
+
+def markov_from_burstiness(
+    burstiness: float,
+    fps: float,
+    active_fraction: float = 0.3,
+    min_bout_s: float = 0.5,
+    max_bout_s: float = 8.0,
+) -> tuple[float, float]:
+    """Map a single ``burstiness`` ∈ [0, 1] to the 2-state gate transition probs.
+
+    Returns ``(p_quiescent_to_active, p_active_to_quiescent)`` for
+    :class:`~minian.simulation.spec.CellActivity`. Burstiness sets the **mean active
+    bout length** (``min_bout_s`` at 0, ``max_bout_s`` at 1): low burstiness gives
+    short, frequent bouts that look close to uniform firing, high burstiness gives
+    long active runs separated by long quiet. The active *fraction* of time is held
+    fixed at ``active_fraction`` (so ``p_q→a = p_a→q · f/(1-f)``), which keeps the
+    overall amount of activity roughly constant while only its *clumpiness* changes;
+    the firing rate is then set independently by ``active_rate_hz``.
+    """
+    b = min(max(burstiness, 0.0), 1.0)
+    bout_s = min_bout_s + b * (max_bout_s - min_bout_s)
+    p_a2q = 1.0 / (bout_s * fps)
+    p_q2a = p_a2q * active_fraction / (1.0 - active_fraction)
+    return p_q2a, p_a2q
+
+
 class CellActivityStep(Step):
     """Give each soma a calcium trace: Markov gate → Poisson spikes → kernel.
 

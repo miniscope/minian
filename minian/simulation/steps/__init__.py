@@ -23,9 +23,12 @@ from minian.simulation.steps.cell import (
     PlaceNeuronsStep,
     calcium_kernel,
     degrade_footprint,
+    kernel_timing,
+    markov_from_burstiness,
     neuron_footprint,
     resolve_focal_plane,
     sample_neurons,
+    tau_from_kernel_timing,
 )
 from minian.simulation.steps.motion import (
     BrainMotionStep,
@@ -66,6 +69,8 @@ __all__ = [
     "bounded_random_walk",
     "calcium_kernel",
     "degrade_footprint",
+    "kernel_timing",
+    "markov_from_burstiness",
     "neuron_footprint",
     "neuropil_envelope",
     "ou_process",
@@ -73,5 +78,6 @@ __all__ = [
     "resolve_focal_plane",
     "sample_neurons",
     "shift_and_crop",
+    "tau_from_kernel_timing",
     "smooth_spatial_field",
 ]

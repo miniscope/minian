@@ -47,11 +47,14 @@ from minian.simulation.steps import (
     bounded_random_walk,
     calcium_kernel,
     degrade_footprint,
+    kernel_timing,
+    markov_from_burstiness,
     neuron_footprint,
     ou_process,
     resolve_focal_plane,
     sample_neurons,
     shift_and_crop,
+    tau_from_kernel_timing,
 )
 from minian.simulation.scene import Cell
 
@@ -274,6 +277,48 @@ def test_calcium_kernel_shape():
 def test_calcium_kernel_requires_rise_faster_than_decay():
     with pytest.raises(ValueError, match="tau_rise_s"):
         calcium_kernel(tau_rise_s=0.5, tau_decay_s=0.5, fps=20.0)
+
+
+@pytest.mark.parametrize("tr,td", [(0.05, 0.5), (0.02, 0.3), (0.1, 0.8), (0.08, 0.4)])
+def test_kernel_timing_round_trips_with_tau(tr, td):
+    # (tau_rise, tau_decay) -> (t_peak, fwhm) -> (tau_rise, tau_decay) is identity.
+    t_peak, fwhm = kernel_timing(tr, td)
+    tr2, td2 = tau_from_kernel_timing(t_peak, fwhm)
+    assert tr2 == pytest.approx(tr, rel=1e-3)
+    assert td2 == pytest.approx(td, rel=1e-3)
+
+
+def test_kernel_timing_matches_a_finely_sampled_kernel():
+    # The analytic peak time and FWHM must match what a densely sampled kernel shows.
+    tr, td, fps = 0.05, 0.5, 2000.0
+    t_peak, fwhm = kernel_timing(tr, td)
+    k = calcium_kernel(tr, td, fps)
+    t = np.arange(len(k)) / fps
+    assert t[k.argmax()] == pytest.approx(t_peak, abs=1.0 / fps)
+    above = t[k >= 0.5]  # kernel is peak-normalized to 1, so half max = 0.5
+    assert (above.max() - above.min()) == pytest.approx(fwhm, abs=2.0 / fps)
+
+
+def test_tau_from_kernel_timing_clamps_impossible_ratio():
+    # t_peak/fwhm above the kernel's achievable range clamps to the alpha-function
+    # limit (tau_rise -> tau_decay) instead of failing.
+    tr, td = tau_from_kernel_timing(t_peak_s=0.3, fwhm_s=0.35)
+    assert tr == pytest.approx(td, rel=1e-3)
+
+
+@pytest.mark.parametrize("b", [0.0, 0.5, 1.0])
+def test_markov_from_burstiness_holds_active_fraction(b):
+    # Burstiness changes bout length, not the active fraction.
+    p_q2a, p_a2q = markov_from_burstiness(b, fps=20.0, active_fraction=0.3)
+    assert p_q2a > 0 and p_a2q > 0
+    assert p_q2a / (p_q2a + p_a2q) == pytest.approx(0.3)
+
+
+def test_markov_from_burstiness_lengthens_bouts():
+    # Higher burstiness -> longer mean active bout -> smaller p_active_to_quiescent.
+    _, low = markov_from_burstiness(0.0, fps=20.0)
+    _, high = markov_from_burstiness(1.0, fps=20.0)
+    assert high < low
 
 
 def test_cell_activity_sets_trace_and_spikes():
