@@ -42,7 +42,7 @@ def datasets() -> dict[str, str]:
     return {name: meta["description"] for name, meta in _registry.DATASETS.items()}
 
 
-def _check_name(name: str) -> dict:
+def _check_name(name: str) -> _registry.ZenodoDataset:
     try:
         return _registry.DATASETS[name]
     except KeyError:

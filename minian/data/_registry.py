@@ -28,13 +28,31 @@ contain subdirectories (e.g. ``session1/minian.nc``). The ``zenodo`` value is
 the (necessarily flat, unique-per-deposit) filename on Zenodo.
 """
 
+from typing import TypedDict
 
-def zenodo_url(record: str, filename: str) -> str:
+
+class ZenodoFile(TypedDict):
+    zenodo: str
+    """filename"""
+    size: int
+    sha256: str
+    """hex-digested sha256 hash"""
+
+
+class ZenodoDataset(TypedDict):
+    title: str
+    description: str
+    zenodo_record: int
+    """The integer identifier like /records/{record}/... in the URL"""
+    files: dict[str, ZenodoFile]
+
+
+def zenodo_url(record: int, filename: str) -> str:
     """Direct-download URL for *filename* within a published Zenodo *record*."""
     return f"https://zenodo.org/records/{record}/files/{filename}?download=1"
 
 
-DATASETS = {
+DATASETS: dict[str, ZenodoDataset] = {
     "pipeline-demo": {
         "title": "Minian demo data: Miniscope V3 Hippocampal CA1",
         "description": (
@@ -42,7 +60,7 @@ DATASETS = {
             "10x msCam .avi, 2000 frames @ 480x752 px (~688 MB). Drives "
             "pipeline.ipynb and the pipeline test."
         ),
-        "zenodo_record": "20484805",
+        "zenodo_record": 20484805,
         "files": {
             "msCam1.avi": {"zenodo": "msCam1.avi", "size": 72203510, "sha256": "01cd69e2ab815ae52a10fbe561e2e5e3ee8376d549ee960f9317c60a4d2ff8d6"},
             "msCam2.avi": {"zenodo": "msCam2.avi", "size": 72203510, "sha256": "d14a272a65fd9d6962583f2f82daa2544ec4d767f1212eb0172e12d590f273e0"},
@@ -62,7 +80,7 @@ DATASETS = {
             "Two saved single-session minian datasets (NetCDF) for "
             "cross-registration.ipynb and the cross-reg test (~10 MB)."
         ),
-        "zenodo_record": "20497476",
+        "zenodo_record": 20497476,
         "files": {
             "session1/minian.nc": {"zenodo": "session1_minian.nc", "size": 5096610, "sha256": "32ae54b20a4a5f6b855d182d1c26eb438f2919af76fa8d9ee2831d7815ef3746"},
             "session2/minian.nc": {"zenodo": "session2_minian.nc", "size": 5470609, "sha256": "b7dab60bb01e579481e6f5ede618b914c55e1edb36f009971895444ac78c1fd3"},
