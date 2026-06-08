@@ -56,6 +56,7 @@ extensions = [
     "ref_alias",
     "normalize_html_id",
     "nbsplit",
+    "sphinxarg.ext",
 ]
 
 napoleon_use_rtype = False

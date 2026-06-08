@@ -21,14 +21,14 @@ MiniAn is an analysis pipeline and visualization tool inspired by both [CaImAn](
 1. Create a new conda env: `conda create -y --name minian`
 1. Activate the environment: `conda activate minian`
 1. Install MiniAn: `conda install -y -c conda-forge minian`
-1. Copy the pipeline notebook into your working directory: `minian-notebooks copy pipeline`
+1. Copy the pipeline notebook into your working directory: `minian notebooks copy pipeline`
 1. Fire up jupyter and open it: `jupyter notebook minian-notebooks/pipeline/pipeline.ipynb`
 
 The notebook downloads its demo recording automatically on first run (cached and
-checksum-verified), so there is no separate data-install step. Browse and manage
-the bundled notebooks with `minian-notebooks list` and the demo datasets with
-`minian-data list`. (The old `minian-install --notebooks` / `--demo` commands
-still work as thin aliases.)
+checksum-verified). Browse and manage the bundled notebooks with
+`minian notebooks list` and the demo datasets with `minian data list`. See the
+[command line interface reference](https://minian.readthedocs.io/en/latest/start_guide/cli.html)
+for all commands and options.
 
 # Documentation
 

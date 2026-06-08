@@ -58,30 +58,37 @@ Note that if you install in this way you will have a local copy of MiniAn script
 Getting notebooks and demos
 ---------------------------
 
-The main features of MiniAn are exposed through the `pipeline.ipynb` and `cross-registration.ipynb` `notebooks <https://jupyter.org/>`_.
-These notebooks ship **inside** the installed package, so once MiniAn is installed you already have them; no separate download is needed.
+The main features of MiniAn are exposed through the `pipeline.ipynb` and `cross-registration.ipynb` `notebooks <https://jupyter.org/>`_, backed by demo datasets hosted on Zenodo.
+Both are managed through the single ``minian`` command line tool, which has two command groups: ``minian notebooks`` for the bundled notebooks and ``minian data`` for the demo datasets.
+See :doc:`cli` for the full command reference.
 
-Copy a notebook bundle (notebook plus its figures and README) into your current folder with the ``minian-notebooks`` command:
+Notebooks
+~~~~~~~~~
 
-.. code-block:: console
-
-    minian-notebooks list              # show the available bundles
-    minian-notebooks copy pipeline     # -> ./minian-notebooks/pipeline/
-
-Each notebook fetches its demo recording automatically on first run (downloaded once, then cached and verified against a checksum), so there is no separate demo-install step.
-You can also fetch demo datasets yourself with the ``minian-data`` command:
+The notebooks ship inside the installed package. Copy one (notebook plus its figures) into your current folder with:
 
 .. code-block:: console
 
-    minian-data list                          # show datasets + sizes
-    minian-data download pipeline-demo --to .  # download into the current folder
+    minian notebooks list              # show the available notebooks
+    minian notebooks copy pipeline     # -> ./minian-notebooks/pipeline/
 
-The demo datasets are hosted on Zenodo (each with its own citable DOI); see :mod:`minian.data` for details.
+Use ``-o/--output DIR`` to copy somewhere other than ``./minian-notebooks/``, or ``--all`` to copy every notebook.
 
-.. note::
-    The older ``minian-install --notebooks`` / ``minian-install --demo`` commands still work as thin aliases for ``minian-notebooks`` and ``minian-data``.
+Data
+~~~~
 
-Note that if you choose to `Install from source`_ you already have a local copy of everything and can check out different versions using `git`.
+Each notebook fetches its demo recording automatically on first run (downloaded once, then cached and checksum-verified).
+You can also manage the demo datasets directly:
+
+.. code-block:: console
+
+    minian data list                      # show datasets + sizes
+    minian data download pipeline-demo    # download and cache the dataset
+    minian data path pipeline-demo        # print the local cached path
+
+The demo datasets are hosted on Zenodo, each with its own citable DOI; see :mod:`minian.data` for details.
+
+If you choose to `Install from source`_ you already have a local copy of everything and can check out different versions using `git`.
 
 Start the pipeline
 ------------------

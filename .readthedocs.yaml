@@ -7,5 +7,6 @@ version: 2
 
 python:
   install:
-    - requirements: requirements/requirements-base.txt
+    - method: pip
+      path: .
     - requirements: requirements/requirements-doc.txt
