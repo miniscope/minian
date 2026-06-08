@@ -9,12 +9,16 @@ verifies it against recorded SHA256 checksums, and returns the local directory::
 
 The cache location follows ``pooch.os_cache`` (e.g. ``~/.cache/minian`` on
 Linux, ``%LOCALAPPDATA%\\minian\\Cache`` on Windows) and can be overridden with
-the ``MINIAN_CACHE_DIR`` environment variable.
+the ``MINIAN_CACHE_DIR`` environment variable (handled natively by pooch's
+``env=`` argument).
 
 Offline escape hatch: set ``MINIAN_DATA_DIR`` to a directory that already
 contains the datasets as ``<MINIAN_DATA_DIR>/<dataset-name>/...`` and
 :func:`fetch` returns from there (verifying checksums) without any network
-access.
+access. This is deliberately *not* delegated to pooch: pooch attempts a
+download whenever a registered file is missing (regardless of its
+``allow_updates`` setting) and conflates the writable cache dir with the
+read-only data dir, neither of which works for an air-gapped node.
 """
 
 import hashlib
@@ -25,7 +29,7 @@ import pooch
 
 from . import _registry
 
-__all__ = ["fetch", "datasets", "dataset_path", "cache_dir"]
+__all__ = ["fetch", "fetch_all", "datasets", "dataset_path", "cache_dir"]
 
 
 def cache_dir() -> Path:
@@ -60,18 +64,24 @@ def _sha256(path: Path) -> str:
 
 
 def _make_pooch() -> pooch.Pooch:
-    """Build the pooch instance from the registry (one key per file)."""
+    """Build the pooch instance from the registry (one key per file).
+
+    The registry is hardcoded, so a dataset missing its ``zenodo_record`` is a
+    bug in :mod:`minian.data._registry`, not a runtime condition: indexing
+    ``meta["zenodo_record"]`` raises ``KeyError`` loudly rather than silently
+    skipping the file.
+    """
     registry, urls = {}, {}
     for name, meta in _registry.DATASETS.items():
-        record = meta.get("zenodo_record")
+        record = meta["zenodo_record"]
         for relpath, info in meta["files"].items():
             key = f"{name}/{relpath}"
             registry[key] = f"sha256:{info['sha256']}"
-            if record is not None:
-                urls[key] = _registry.zenodo_url(record, info["zenodo"])
+            urls[key] = _registry.zenodo_url(record, info["zenodo"])
     return pooch.create(
-        path=os.environ.get("MINIAN_CACHE_DIR", pooch.os_cache("minian")),
+        path=pooch.os_cache("minian"),
         base_url="",  # every file has an explicit per-key URL
+        env="MINIAN_CACHE_DIR",  # pooch reads the cache-dir override itself
         registry=registry,
         urls=urls,
     )
@@ -118,24 +128,19 @@ def fetch(name: str, *, progressbar: bool = True) -> Path:
         in the registry (subdirectories preserved).
     """
     meta = _check_name(name)
-    files = meta["files"]
 
     local = _local_dir(name)
     if local is not None:
         return local
 
-    if meta.get("zenodo_record") is None:
-        raise RuntimeError(
-            f"Demo dataset {name!r} has not been published yet: its "
-            "zenodo_record is None in minian/data/_registry.py. Either set it "
-            "to the published Zenodo record id, or point the MINIAN_DATA_DIR "
-            "environment variable at a local copy "
-            f"(expects <MINIAN_DATA_DIR>/{name}/...)."
-        )
-
-    for relpath in files:
+    for relpath in meta["files"]:
         POOCH.fetch(f"{name}/{relpath}", progressbar=progressbar)
     return cache_dir() / name
+
+
+def fetch_all(*, progressbar: bool = True) -> list[Path]:
+    """Fetch every registered dataset (used by ``minian data download --all``)."""
+    return [fetch(name, progressbar=progressbar) for name in _registry.DATASETS]
 
 
 def dataset_path(name: str) -> Path:

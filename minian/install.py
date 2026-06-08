@@ -3,54 +3,34 @@
 ``minian-install`` used to download notebooks and demo data over HTTP from
 GitHub at install time. That is no longer how MiniAn ships:
 
-* Notebooks live **inside** the installed package; copy them out with the
-  ``minian-notebooks`` command.
-* Demo data is fetched on demand, cached, and checksum-verified by the
-  ``minian-data`` command.
+* Notebooks live **inside** the installed package; copy them out with
+  ``minian notebooks copy``.
+* Demo data is fetched on demand, cached, and checksum-verified by
+  ``minian data download``.
 
-This command is kept as a thin, dependency-free alias for one or two releases
-so existing instructions keep working; please switch to the new CLIs.
+This command is kept as a thin, deprecated alias for one or two releases so
+existing instructions keep working; please switch to the ``minian`` CLI.
 """
 
 import argparse
-from importlib.metadata import version
+import sys
+import warnings
 
-try:
-    VERSION = version("minian")
-except Exception:
-    VERSION = "0.0.0"
-
-# Datasets pulled by the legacy ``--demo`` flag (formerly demo_movies/ + demo_data/).
-_DEMO_DATASETS = ["pipeline-demo", "cross-reg-sessions"]
+from .cli import main as minian_main
 
 
-def notebook():
-    from minian.notebooks.cli import main as nb_main
-
-    print(
-        "Note: `minian-install --notebooks` is deprecated. "
-        "Use `minian-notebooks copy --all` (or `minian-notebooks list`)."
-    )
-    nb_main(["copy", "--all"])
-
-
-def demo():
-    from minian.data.cli import main as data_main
-
-    print(
-        "Note: `minian-install --demo` is deprecated. "
-        "Use `minian-data download <name>` (see `minian-data list`)."
-    )
-    for name in _DEMO_DATASETS:
-        data_main(["download", name])
+def _deprecation(message: str) -> None:
+    """Real DeprecationWarning (visible under ``-W`` / in test suites) + a note."""
+    warnings.warn(message, DeprecationWarning, stacklevel=2)
+    print(f"Note: {message}", file=sys.stderr)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Deprecated alias for `minian-notebooks` and `minian-data`."
+        description="Deprecated alias for the `minian` CLI (`minian notebooks` / `minian data`)."
     )
     parser.add_argument(
-        "--notebooks", action="store_true", help="copy bundled notebooks (all bundles)"
+        "--notebooks", action="store_true", help="copy bundled notebooks (all of them)"
     )
     parser.add_argument(
         "--demo", action="store_true", help="download the demo datasets"
@@ -58,7 +38,7 @@ def main():
     parser.add_argument(
         "-v",
         action="store",
-        default=VERSION,
+        default=None,
         help="ignored; kept for back-compat with the old URL-fetch behavior",
     )
     args = parser.parse_args()
@@ -67,6 +47,12 @@ def main():
         parser.print_help()
         return
     if args.notebooks:
-        notebook()
+        _deprecation(
+            "`minian-install --notebooks` is deprecated; use `minian notebooks copy --all`."
+        )
+        minian_main(["notebooks", "copy", "--all"])
     if args.demo:
-        demo()
+        _deprecation(
+            "`minian-install --demo` is deprecated; use `minian data download --all`."
+        )
+        minian_main(["data", "download", "--all"])

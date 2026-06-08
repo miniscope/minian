@@ -18,9 +18,9 @@ exactly the data it used. To publish or update a dataset:
    appears in the record, and that ``sha256``/``size`` match the uploaded
    bytes. ``scripts/zenodo_manifest.py`` stages files and cross-checks these.
 
-A dataset whose ``zenodo_record`` is ``None`` has not been published yet;
-:func:`minian.data.fetch` raises a clear error for it (unless
-``MINIAN_DATA_DIR`` points at a local copy).
+Every dataset must carry a published ``zenodo_record``; a missing one is a bug
+here, not a runtime state, and :func:`minian.data.fetch` surfaces it as a
+``KeyError`` rather than silently skipping the dataset.
 
 The in-dataset path (the dict key under ``files``) is where the file lands
 relative to the dataset directory returned by :func:`minian.data.fetch`; it may

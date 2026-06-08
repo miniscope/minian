@@ -54,9 +54,11 @@ Homepage = "https://github.com/DeniseCaiLab/minian"
 Documentation = "https://minian.readthedocs.io/"
 
 [project.scripts]
+# `minian` is the canonical CLI; the rest are thin deprecated aliases.
+minian = "minian.cli:main"
 minian-install = "minian.install:main"
-minian-notebooks = "minian.notebooks.cli:main"
-minian-data = "minian.data.cli:main"
+minian-notebooks = "minian.cli:notebooks_main"
+minian-data = "minian.cli:data_main"
 
 [project.optional-dependencies]
 numba = [
@@ -96,12 +98,13 @@ lock.composite = [
     'pdm lock --with :all --python=">=3.12,<3.14" --append',
     'pdm lock --with :all --python=">=3.14" --append'
 ]
-# Local default stays fast: the heavy end-to-end notebook runs are marked
-# `slow` and deselected here. `test-all` runs the full suite (unit + notebook)
-# in a single pass; CI uses it across the whole matrix because the pipeline
-# notebook is currently our main cross-version/cross-OS integration coverage.
-test = "pytest -m 'not slow'"
-test-all = "pytest"
+# The `not slow` default lives in pytest config (addopts) so a bare
+# `python -m pytest` behaves exactly like `pdm run test`. `test-all` clears
+# the marker filter to also run the heavy end-to-end notebook runs; CI uses it
+# across the whole matrix because the pipeline notebook is currently our main
+# cross-version/cross-OS integration coverage.
+test = "pytest"
+test-all = "pytest -m ''"
 
 # Dependency cooldown: exclude packages published in the last 7 days when
 # resolving the lockfile, dodging most supply-chain attacks (usually caught
@@ -117,8 +120,7 @@ version = "1.3.0"
 tag_format = "v$version"
 changelog_incremental = true
 version_files = [
-    "minian/__init__.py:__version__",
-    "minian/install.py:VERSION"
+    "minian/__init__.py:__version__"
 ]
 
 [tool.ruff]
@@ -133,6 +135,10 @@ addopts = [
     '-v',
     '--color=yes',
     '--cov=minian',
+    # Deselect the heavy notebook runs by default; `pdm run test-all` (and CI)
+    # clear this with `-m ''`. Keeps bare `python -m pytest` fast and identical
+    # to `pdm run test`.
+    '-m', 'not slow',
 ]
 testpaths = [
   "minian/test"

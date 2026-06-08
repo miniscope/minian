@@ -34,9 +34,12 @@ jobs:
           key: minian-demo-data-${{ runner.os }}-${{ hashFiles('minian/data/_registry.py') }}
       - name: Download demo datasets (once per OS)
         if: steps.cache.outputs.cache-hit != 'true'
+        # Use the real CLI rather than a bespoke prefetch script, so there is a
+        # single source of truth for how datasets are fetched. This installs
+        # minian (base deps) on a cache miss only.
         run: |
-          python -m pip install pooch
-          python scripts/prefetch_data.py
+          python -m pip install .
+          minian data download --all
 
   test-and-coverage:
     name: Test and Cov py ${{ matrix.python-version }}, ${{ matrix.os }}

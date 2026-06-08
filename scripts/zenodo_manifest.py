@@ -26,7 +26,6 @@ record id.
 """
 
 import argparse
-import hashlib
 import shutil
 import sys
 from pathlib import Path
@@ -36,6 +35,9 @@ sys.path.insert(0, str(REPO))
 
 import os  # noqa: E402
 
+# Reuse minian's checksum helper instead of redefining it, so the bytes this
+# maintainer tool hashes are hashed exactly the way the runtime verifies them.
+from minian.data import _sha256 as sha256  # noqa: E402
 from minian.data._registry import DATASETS  # noqa: E402
 
 # Source bytes are read from a directory laid out by dataset name, the same
@@ -49,14 +51,6 @@ COMMON_METADATA = """\
   Keywords: miniscope, calcium imaging, CA1, hippocampus, MiniAn, demo data
   Version:  v1
   Related:  https://github.com/denisecailab/minian"""
-
-
-def sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def main(argv=None):
