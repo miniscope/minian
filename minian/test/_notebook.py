@@ -13,18 +13,10 @@ from pathlib import Path
 import pytest
 
 from ..data import dataset_path
+from ..notebooks import notebook_root
 
-NOTEBOOKS_DIR = Path(__file__).resolve().parents[1] / "notebooks"
+NOTEBOOKS_DIR = notebook_root()
 ARTIFACT_DIR = Path("artifact").resolve()
-
-
-def discover_notebooks():
-    """All bundled notebooks, as ``bundle/notebook.ipynb`` POSIX relpaths."""
-    return sorted(
-        p.relative_to(NOTEBOOKS_DIR).as_posix()
-        for p in NOTEBOOKS_DIR.rglob("*.ipynb")
-        if ".ipynb_checkpoints" not in p.parts
-    )
 
 
 def require_dataset(name):

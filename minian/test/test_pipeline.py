@@ -1,14 +1,17 @@
 import pytest
 
 from ..utilities import open_minian
-from ._notebook import execute_notebook, require_dataset
+from ._notebook import execute_notebook
 
 
 @pytest.mark.slow
-def test_pipeline_notebook():
+def test_pipeline_notebook(clean_dataset_outputs):
     # Resolve (download/cache) the demo recording up front; the notebook's own
     # fetch("pipeline-demo") call then hits the cache. Skips if unavailable.
-    dpath = require_dataset("pipeline-demo")
+    # Going through clean_dataset_outputs also clears any stale notebook outputs
+    # in the shared cache before the run (so we can't read a prior run's results)
+    # and removes them again on teardown.
+    dpath = clean_dataset_outputs("pipeline-demo")
     execute_notebook("pipeline/pipeline.ipynb", "pipeline")
 
     minian_ds = open_minian(str(dpath / "minian"))

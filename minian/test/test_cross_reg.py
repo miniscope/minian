@@ -1,14 +1,16 @@
 import pandas as pd
 import pytest
 
-from ._notebook import execute_notebook, require_dataset
+from ._notebook import execute_notebook
 
 
 @pytest.mark.slow
-def test_cross_reg_notebook():
+def test_cross_reg_notebook(clean_dataset_outputs):
     # The notebook fetches the two-session demo and writes its outputs back into
-    # that dataset directory, so resolve it here and read the outputs from there.
-    dpath = require_dataset("cross-reg-sessions")
+    # that dataset directory, so resolve it (via clean_dataset_outputs, which
+    # clears stale outputs first and cleans up on teardown) and read the outputs
+    # from there.
+    dpath = clean_dataset_outputs("cross-reg-sessions")
     execute_notebook("cross_registration/cross-registration.ipynb", "cross-registration")
 
     assert (dpath / "shiftds.nc").exists()
