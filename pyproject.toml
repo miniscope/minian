@@ -36,6 +36,7 @@ dependencies = [
     "sparse>=0.11.2",
     "statsmodels>=0.11.1",
     "tifffile",
+    "typing_extensions>=4.0",
     "xarray>=0.17.0",
     "zarr",
 ]

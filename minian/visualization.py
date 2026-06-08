@@ -1,6 +1,7 @@
 import functools as fct
 import itertools as itt
 import os
+import warnings
 from collections import OrderedDict
 from typing import Optional, Union
 from collections.abc import Callable
@@ -10,7 +11,6 @@ import colorcet as cc
 import cv2
 import dask
 import dask.array as da
-import ffmpeg
 import holoviews as hv
 import numpy as np
 import pandas as pd
@@ -18,7 +18,6 @@ import panel as pn
 import param
 import scipy.sparse as scisps
 import sklearn.mixture
-import skvideo.io
 import xarray as xr
 from bokeh.palettes import Category10_10, Viridis256
 from dask.diagnostics import ProgressBar
@@ -42,7 +41,24 @@ from scipy.spatial import cKDTree
 
 from .cnmf import compute_AtC
 from .motion_correction import apply_shifts
-from .utilities import custom_arr_optimize, ensure_ffmpeg, rechunk_like
+from .io import write_video
+from .utilities import custom_arr_optimize, rechunk_like
+
+_VIZ_IO_DEPRECATED_NAMES = frozenset({"concat_video_recursive", "write_vid_blk"})
+
+
+def __getattr__(name: str):
+    if name in _VIZ_IO_DEPRECATED_NAMES:
+        warnings.warn(
+            f"Importing {name!r} from minian.visualization is deprecated and will be "
+            "removed in v2.0.0. Import from minian.io instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from . import io
+
+        return getattr(io, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class VArrayViewer:
@@ -1197,108 +1213,6 @@ class AlignViewer:
         return pn.layout.Row(
             self.plot, pn.layout.Column(self.wgt_meta, self.wgt_rgb, self.wgt_opt)
         )
-
-
-def write_vid_blk(arr, vpath, options):
-    ensure_ffmpeg()
-    uid = uuid4()
-    vname = f"{uid}.mp4"
-    fpath = os.path.join(vpath, vname)
-    if len(arr.shape) == 2:
-        arr = np.expand_dims(arr, axis=0)
-    writer = skvideo.io.FFmpegWriter(
-        fpath, outputdict={"-" + k: v for k, v in options.items()}
-    )
-    for fm in arr:
-        writer.writeFrame(fm)
-    writer.close()
-    return fpath
-
-
-def write_video(
-    arr: xr.DataArray,
-    vname: str | None = None,
-    vpath: str | None = ".",
-    norm=True,
-    options={"crf": "18", "preset": "ultrafast"},
-) -> str:
-    """
-    Write a video from a movie array using `python-ffmpeg`.
-
-    Parameters
-    ----------
-    arr : xr.DataArray
-        Input movie array. Should have dimensions: ("frame", "height", "width")
-        and should only be chunked along the "frame" dimension.
-    vname : str, optional
-        The name of output video. If `None` then a random one will be generated
-        using :func:`uuid4.uuid`. By default `None`.
-    vpath : str, optional
-        The path to the folder containing the video. By default `"."`.
-    norm : bool, optional
-        Whether to normalize the values of the input array such that they span
-        the full pixel depth range (0, 255). By default `True`.
-    options : dict, optional
-        Optional output arguments passed to `ffmpeg`. By default `{"crf": "18",
-        "preset": "ultrafast"}`.
-
-    Returns
-    -------
-    fname : str
-        The absolute path to the video file.
-
-    See Also
-    --------
-    ffmpeg.output
-    """
-    ensure_ffmpeg()
-    if not vname:
-        vname = f"{uuid4()}.mp4"
-    fname = os.path.join(vpath, vname)
-    if norm:
-        arr_opt = fct.partial(
-            custom_arr_optimize, rename_dict={"rechunk": "merge_restricted"}
-        )
-        with dask.config.set(array_optimize=arr_opt):
-            arr = arr.astype(np.float32)
-            arr_max = arr.max().compute().values
-            arr_min = arr.min().compute().values
-        den = arr_max - arr_min
-        arr -= arr_min
-        arr /= den
-        arr *= 255
-    arr = arr.clip(0, 255).astype(np.uint8)
-    w, h = arr.sizes["width"], arr.sizes["height"]
-    process = (
-        ffmpeg.input("pipe:", format="rawvideo", pix_fmt="gray", s=f"{w}x{h}")
-        .filter("pad", int(np.ceil(w / 2) * 2), int(np.ceil(h / 2) * 2))
-        .output(fname, pix_fmt="yuv420p", vcodec="libx264", r=30, **options)
-        .overwrite_output()
-        .run_async(pipe_stdin=True)
-    )
-    for blk in arr.data.blocks:
-        process.stdin.write(np.array(blk).tobytes())
-    process.stdin.close()
-    process.wait()
-    return fname
-
-
-def concat_video_recursive(vlist, vname=None):
-    ensure_ffmpeg()
-    if not len(vlist) > 1:
-        return vlist[0]
-    if len(vlist) > 256:
-        vlist = np.array_split(vlist, 256)
-        vlist = [concat_video_recursive(list(v)) for v in vlist]
-    vpath = os.path.dirname(vlist[0])
-    streams = [ffmpeg.input(p) for p in vlist]
-    if vname is None:
-        vname = f"{uuid4()}.mp4"
-    fpath = os.path.join(vpath, vname)
-    ffmpeg.concat(*streams).output(fpath).run(overwrite_output=True)
-    for vp in vlist:
-        os.remove(vp)
-    return fpath
 
 
 def generate_videos(

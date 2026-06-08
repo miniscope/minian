@@ -15,7 +15,6 @@ import _operator
 import cv2
 import dask as da
 import dask.array as darr
-import ffmpeg
 import numpy as np
 import pandas as pd
 import rechunker
@@ -27,11 +26,9 @@ from dask.optimization import cull, fuse, inline, inline_functions
 from dask.utils import ensure_dict
 from distributed.diagnostics.plugin import SchedulerPlugin
 from distributed.scheduler import SchedulerState, cast
-from natsort import natsorted
 from scipy.ndimage import median_filter
 from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import lsqr
-from tifffile import TiffFile, imread
 
 # dask >=2025 (a hard floor in pyproject) ships the TaskSpec optimizer, which
 # does its own graph optimisation. The legacy `fuse` / `inline_pattern` hooks
@@ -39,258 +36,45 @@ from tifffile import TiffFile, imread
 # `custom_arr_optimize` / `custom_delay_optimize` below.
 from dask.array.optimization import fuse_linear_task_spec
 
+_IO_DEPRECATED_NAMES = frozenset(
+    {
+        "load_avi_lazy_framewise",
+        "load_avi_perframe",
+    }
+)
 
-def ensure_ffmpeg() -> None:
-    """Require ``ffmpeg`` and ``ffprobe`` on ``PATH`` before video I/O."""
-    for name in ("ffmpeg", "ffprobe"):
-        if shutil.which(name) is None:
-            raise RuntimeError(
-                f"{name!r} not found on PATH. MiniAn needs FFmpeg for "
-                "AVI/MKV ingest and MP4 export. Install FFmpeg and ensure it "
-                "is on PATH (https://ffmpeg.org/download.html)."
-            )
+_IO_MOVED_NAMES = frozenset(
+    {
+        "ensure_ffmpeg",
+        "load_avi_ffmpeg",
+        "load_avi_lazy",
+        "load_tif_lazy",
+        "load_tif_perframe",
+        "load_videos",
+    }
+)
 
 
-def load_videos(
-    vpath: str,
-    pattern=r"msCam[0-9]+\.avi$",
-    dtype: str | type = np.float64,
-    downsample: dict | None = None,
-    downsample_strategy="subset",
-    post_process: Callable | None = None,
-) -> xr.DataArray:
-    """
-    Load multiple videos in a folder and return a `xr.DataArray`.
-
-    Load videos from the folder specified in `vpath` and according to the regex
-    `pattern`, then concatenate them together and return a `xr.DataArray`
-    representation of the concatenated videos. The videos are sorted by
-    filenames with :func:`natsort.natsorted` before concatenation. Optionally
-    the data can be downsampled, and the user can pass in a custom callable to
-    post-process the result.
-
-    Parameters
-    ----------
-    vpath : str
-        The path containing the videos to load.
-    pattern : regexp, optional
-        The regexp matching the filenames of the videso. By default
-        `r"msCam[0-9]+\.avi$"`, which can be interpreted as filenames starting
-        with "msCam" followed by at least a number, and then followed by ".avi".
-    dtype : Union[str, type], optional
-        Datatype of the resulting DataArray, by default `np.float64`.
-    downsample : dict, optional
-        A dictionary mapping dimension names to an integer downsampling factor.
-        The dimension names should be one of "height", "width" or "frame". By
-        default `None`.
-    downsample_strategy : str, optional
-        How the downsampling should be done. Only used if `downsample` is not
-        `None`. Either `"subset"` where data points are taken at an interval
-        specified in `downsample`, or `"mean"` where mean will be taken over
-        data within each interval. By default `"subset"`.
-    post_process : Callable, optional
-        An user-supplied custom function to post-process the resulting array.
-        Four arguments will be passed to the function: the resulting DataArray
-        `varr`, the input path `vpath`, the list of matched video filenames
-        `vlist`, and the list of DataArray before concatenation `varr_list`. The
-        function should output another valide DataArray. In other words, the
-        function should have signature `f(varr: xr.DataArray, vpath: str, vlist:
-        list[str], varr_list: list[xr.DataArray]) -> xr.DataArray`. By default
-        `None`
-
-    Returns
-    -------
-    varr : xr.DataArray
-        The resulting array representation of the input movie. Should have
-        dimensions ("frame", "height", "width").
-
-    Raises
-    ------
-    FileNotFoundError
-        if no files under `vpath` match the pattern `pattern`
-    ValueError
-        if the matched files does not have extension ".avi", ".mkv" or ".tif"
-    NotImplementedError
-        if `downsample_strategy` is not "subset" or "mean"
-    """
-    vpath = os.path.normpath(vpath)
-    vlist = natsorted(
-        [vpath + os.sep + v for v in os.listdir(vpath) if re.search(pattern, v)]
-    )
-    if not vlist:
-        raise FileNotFoundError(
-            f"No data with pattern {pattern}"
-            f" found in the specified folder {vpath}"
+def __getattr__(name: str):
+    if name in _IO_MOVED_NAMES | _IO_DEPRECATED_NAMES:
+        warnings.warn(
+            f"Importing {name!r} from minian.utilities is deprecated and will be "
+            "removed in v2.0.0. Import from minian.io instead.",
+            DeprecationWarning,
+            stacklevel=2,
         )
-    print(f"loading {len(vlist)} videos in folder {vpath}")
+        from . import io
 
-    file_extension = os.path.splitext(vlist[0])[1]
-    if file_extension in (".avi", ".mkv"):
-        movie_load_func = load_avi_lazy
-    elif file_extension == ".tif":
-        movie_load_func = load_tif_lazy
-    else:
-        raise ValueError("Extension not supported.")
-
-    varr_list = [movie_load_func(v) for v in vlist]
-    varr = darr.concatenate(varr_list, axis=0)
-    varr = xr.DataArray(
-        varr,
-        dims=["frame", "height", "width"],
-        coords=dict(
-            frame=np.arange(varr.shape[0]),
-            height=np.arange(varr.shape[1]),
-            width=np.arange(varr.shape[2]),
-        ),
-    )
-    if dtype:
-        varr = varr.astype(dtype)
-    if downsample:
-        if downsample_strategy == "mean":
-            varr = varr.coarsen(**downsample, boundary="trim", coord_func="min").mean()
-        elif downsample_strategy == "subset":
-            varr = varr.isel(**{d: slice(None, None, w) for d, w in downsample.items()})
-        else:
-            raise NotImplementedError("unrecognized downsampling strategy")
-    varr = varr.rename("fluorescence")
-    if post_process:
-        varr = post_process(varr, vpath, vlist, varr_list)
-    arr_opt = fct.partial(custom_arr_optimize, keep_patterns=["^load_avi_ffmpeg"])
-    with da.config.set(array_optimize=arr_opt):
-        varr = da.optimize(varr)[0]
-    return varr
-
-
-def load_tif_lazy(fname: str) -> darr.array:
-    """
-    Lazy load a tif stack of images.
-
-    Parameters
-    ----------
-    fname : str
-        The filename of the tif stack to load.
-
-    Returns
-    -------
-    arr : darr.array
-        Resulting dask array representation of the tif stack.
-    """
-    data = TiffFile(fname)
-    f = len(data.pages)
-
-    fmread = da.delayed(load_tif_perframe)
-    flist = [fmread(fname, i) for i in range(f)]
-
-    sample = flist[0].compute()
-    arr = [
-        da.array.from_delayed(fm, dtype=sample.dtype, shape=sample.shape)
-        for fm in flist
-    ]
-    return da.array.stack(arr, axis=0)
-
-
-def load_tif_perframe(fname: str, fid: int) -> np.ndarray:
-    """
-    Load a single image from a tif stack.
-
-    Parameters
-    ----------
-    fname : str
-        The filename of the tif stack.
-    fid : int
-        The index of the image to load.
-
-    Returns
-    -------
-    arr : np.ndarray
-        Array representation of the image.
-    """
-    return imread(fname, key=fid)
-
-
-def load_avi_lazy_framewise(fname: str) -> darr.array:
-    cap = cv2.VideoCapture(fname)
-    f = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fmread = da.delayed(load_avi_perframe)
-    flist = [fmread(fname, i) for i in range(f)]
-    sample = flist[0].compute()
-    arr = [
-        da.array.from_delayed(fm, dtype=sample.dtype, shape=sample.shape)
-        for fm in flist
-    ]
-    return da.array.stack(arr, axis=0)
-
-
-def load_avi_lazy(fname: str) -> darr.array:
-    """
-    Lazy load an avi video.
-
-    This function construct a single delayed task for loading the video as a
-    whole.
-
-    Parameters
-    ----------
-    fname : str
-        The filename of the video to load.
-
-    Returns
-    -------
-    arr : darr.array
-        The array representation of the video.
-    """
-    ensure_ffmpeg()
-    probe = ffmpeg.probe(fname)
-    video_info = next(s for s in probe["streams"] if s["codec_type"] == "video")
-    w = int(video_info["width"])
-    h = int(video_info["height"])
-    f = int(video_info["nb_frames"])
-    return da.array.from_delayed(
-        da.delayed(load_avi_ffmpeg)(fname, h, w, f), dtype=np.uint8, shape=(f, h, w)
-    )
-
-
-def load_avi_ffmpeg(fname: str, h: int, w: int, f: int) -> np.ndarray:
-    """
-    Load an avi video using `ffmpeg`.
-
-    This function directly invoke `ffmpeg` using the `python-ffmpeg` wrapper and
-    retrieve the data from buffer.
-
-    Parameters
-    ----------
-    fname : str
-        The filename of the video to load.
-    h : int
-        The height of the video.
-    w : int
-        The width of the video.
-    f : int
-        The number of frames in the video.
-
-    Returns
-    -------
-    arr : np.ndarray
-        The resulting array. Has shape (`f`, `h`, `w`).
-    """
-    out_bytes, err = (
-        ffmpeg.input(fname)
-        .video.output("pipe:", format="rawvideo", pix_fmt="gray")
-        .run(capture_stdout=True)
-    )
-    return np.frombuffer(out_bytes, np.uint8).reshape(f, h, w)
-
-
-def load_avi_perframe(fname: str, fid: int) -> np.ndarray:
-    cap = cv2.VideoCapture(fname)
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    cap.set(cv2.CAP_PROP_POS_FRAMES, fid)
-    ret, fm = cap.read()
-    if ret:
-        return np.flip(cv2.cvtColor(fm, cv2.COLOR_RGB2GRAY), axis=0)
-    else:
-        print(f"frame read failed for frame {fid}")
-        return np.zeros((h, w))
+        if name == "ensure_ffmpeg":
+            return io._ensure_ffmpeg
+        if name == "load_avi_lazy":
+            return io._load_avi_lazy
+        if name == "load_tif_lazy":
+            return io._load_tif_lazy
+        if name == "load_tif_perframe":
+            return io._load_tif_perframe
+        return getattr(io, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def open_minian(
