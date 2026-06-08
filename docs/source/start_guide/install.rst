@@ -48,7 +48,7 @@ Run the following to obtain a full copy of MiniAn repo and setup necessary depen
 
 .. code-block:: console
 
-    git clone https://github.com/DeniseCaiLab/minian.git
+    git clone https://github.com/miniscope/minian.git
     cd minian/
     conda env create -n minian -f environment.yml
 

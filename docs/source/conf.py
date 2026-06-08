@@ -120,7 +120,7 @@ nbsphinx_prolog = r"""
 rtds_action_github_token = os.getenv("GITHUB_TOKEN")
 if rtds_action_github_token:
     extensions.append("rtds_action")
-    rtds_action_github_repo = "denisecailab/minian"
+    rtds_action_github_repo = "miniscope/minian"
     rtds_action_path = "artifact"
     rtds_action_artifact_prefix = "notebooks-"
     rtds_action_error_if_missing = True
