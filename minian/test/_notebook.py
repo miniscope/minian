@@ -22,15 +22,17 @@ ARTIFACT_DIR = Path("artifact").resolve()
 def require_dataset(name):
     """Ensure a demo dataset is available locally, or skip the test.
 
-    Resolving it here (download + cache, or via ``MINIAN_DATA_DIR``) means the
-    notebook's own ``fetch`` call hits the cache. Skips the test if the dataset
-    is unavailable (unpublished, with no ``MINIAN_DATA_DIR`` copy); a missing or
-    checksum-mismatched ``MINIAN_DATA_DIR`` file fails hard rather than skipping.
+    Resolving it here (download + cache, or from a prepopulated
+    ``MINIAN_CACHE_DIR``) means the notebook's own ``fetch`` call hits the
+    cache. Skips the test if the dataset cannot be resolved.
     """
     try:
         return dataset_path(name)
-    except RuntimeError as exc:
-        pytest.skip(str(exc))
+    except OSError as exc:
+        # pooch raises requests/OS errors (a subclass of OSError) when it can't
+        # download and the file isn't already cached; skip rather than fail.
+        # An unknown dataset name (KeyError) still fails hard.
+        pytest.skip(f"demo dataset {name!r} unavailable: {exc}")
 
 
 def execute_notebook(relpath, output):

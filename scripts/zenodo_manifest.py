@@ -30,20 +30,16 @@ import shutil
 import sys
 from pathlib import Path
 
+import pooch
+
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-import os  # noqa: E402
-
-# Reuse minian's checksum helper instead of redefining it, so the bytes this
-# maintainer tool hashes are hashed exactly the way the runtime verifies them.
-from minian.data import _sha256 as sha256  # noqa: E402
 from minian.data._registry import DATASETS  # noqa: E402
 
 # Source bytes are read from a directory laid out by dataset name, the same
-# layout MINIAN_DATA_DIR uses: ``<source>/<dataset>/<in-dataset relpath>``.
-# Defaults to MINIAN_DATA_DIR if set, else the local ``.minian_data`` copy.
-DEFAULT_SOURCE = os.environ.get("MINIAN_DATA_DIR") or str(REPO / ".minian_data")
+# layout the pooch cache uses: ``<source>/<dataset>/<in-dataset relpath>``.
+DEFAULT_SOURCE = str(REPO / ".minian_data")
 
 COMMON_METADATA = """\
   Authors:  MiniAn Developers
@@ -59,8 +55,7 @@ def main(argv=None):
     parser.add_argument(
         "--source",
         default=DEFAULT_SOURCE,
-        help="dir laid out as <source>/<dataset>/<relpath> (default: "
-        "$MINIAN_DATA_DIR or ./.minian_data)",
+        help="dir laid out as <source>/<dataset>/<relpath> (default: ./.minian_data)",
     )
     args = parser.parse_args(argv)
 
@@ -80,7 +75,8 @@ def main(argv=None):
                 print(f"MISSING  {dataset}: {src}")
                 ok = False
                 continue
-            actual_sha, actual_size = sha256(src), src.stat().st_size
+            actual_sha = pooch.file_hash(str(src), alg="sha256")
+            actual_size = src.stat().st_size
             tag = "ok"
             if actual_sha != info["sha256"]:
                 tag, ok = "SHA MISMATCH", False

@@ -152,7 +152,7 @@ demo_data/shiftds.nc
 # Zenodo upload staging (scripts/zenodo_manifest.py)
 zenodo_upload/
 
-# Local demo-data copy for offline MINIAN_DATA_DIR runs
+# Local demo-data copy staged for Zenodo upload (scripts/zenodo_manifest.py --source)
 .minian_data/
 
 # Zenodo personal access token (scripts/zenodo_upload.py) - never commit

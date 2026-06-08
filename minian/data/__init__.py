@@ -9,20 +9,17 @@ verifies it against recorded SHA256 checksums, and returns the local directory::
 
 The cache location follows ``pooch.os_cache`` (e.g. ``~/.cache/minian`` on
 Linux, ``%LOCALAPPDATA%\\minian\\Cache`` on Windows) and can be overridden with
-the ``MINIAN_CACHE_DIR`` environment variable (handled natively by pooch's
-``env=`` argument).
+the ``MINIAN_CACHE_DIR`` environment variable.
 
-Offline escape hatch: set ``MINIAN_DATA_DIR`` to a directory that already
-contains the datasets as ``<MINIAN_DATA_DIR>/<dataset-name>/...`` and
-:func:`fetch` returns from there (verifying checksums) without any network
-access. This is deliberately *not* delegated to pooch: pooch attempts a
-download whenever a registered file is missing (regardless of its
-``allow_updates`` setting) and conflates the writable cache dir with the
-read-only data dir, neither of which works for an air-gapped node.
+Offline / air-gapped use: pooch verifies every file against its recorded
+SHA256 on fetch and only reaches the network when a file is absent or fails
+that check. So to run without network access, point ``MINIAN_CACHE_DIR`` at a
+directory that already holds the data in the cache layout
+(``<MINIAN_CACHE_DIR>/<dataset-name>/<relpath>``, which is exactly how the
+registry keys are named); :func:`fetch` then verifies and returns those files
+without touching the network.
 """
 
-import hashlib
-import os
 from pathlib import Path
 
 import pooch
@@ -55,14 +52,6 @@ def _check_name(name: str) -> _registry.ZenodoDataset:
         ) from None
 
 
-def _sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def _make_pooch() -> pooch.Pooch:
     """Build the pooch instance from the registry (one key per file).
 
@@ -90,29 +79,11 @@ def _make_pooch() -> pooch.Pooch:
 POOCH = _make_pooch()
 
 
-def _local_dir(name: str) -> Path | None:
-    """Return a verified local dataset dir if ``MINIAN_DATA_DIR`` provides one."""
-    root = os.environ.get("MINIAN_DATA_DIR")
-    if not root:
-        return None
-    ddir = Path(root) / name
-    files = _check_name(name)["files"]
-    for relpath, info in files.items():
-        fpath = ddir / relpath
-        if not fpath.is_file():
-            raise FileNotFoundError(
-                f"MINIAN_DATA_DIR is set but {fpath} is missing for dataset {name!r}."
-            )
-        actual = _sha256(fpath)
-        if actual != info["sha256"]:
-            raise ValueError(
-                f"Checksum mismatch for {fpath}:\n  expected {info['sha256']}\n  got      {actual}"
-            )
-    return ddir
-
-
 def fetch(name: str, *, progressbar: bool = True) -> Path:
     """Download (if needed), verify, and return the local path of a dataset.
+
+    pooch fetches each file once, verifies it against the registry's SHA256,
+    and re-downloads only if it is missing or fails that check.
 
     Parameters
     ----------
@@ -128,11 +99,6 @@ def fetch(name: str, *, progressbar: bool = True) -> Path:
         in the registry (subdirectories preserved).
     """
     meta = _check_name(name)
-
-    local = _local_dir(name)
-    if local is not None:
-        return local
-
     for relpath in meta["files"]:
         POOCH.fetch(f"{name}/{relpath}", progressbar=progressbar)
     return cache_dir() / name
