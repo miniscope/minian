@@ -10,7 +10,6 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import pyfftw.interfaces.numpy_fft as numpy_fft
-import pymetis
 import scipy.sparse
 import sparse
 import xarray as xr
@@ -1379,6 +1378,7 @@ def unit_merge(
     add_list: list[xr.DataArray] | None = None,
     thres_corr=0.9,
     noise_freq: float | None = None,
+    chunk: int = 600,
 ) -> tuple[xr.DataArray, xr.DataArray, list[xr.DataArray] | None]:
     """
     Merge cells given spatial footprints and temporal components
@@ -1407,6 +1407,9 @@ def unit_merge(
         The cut-off frequency used to smooth `C` before calculation of
         correlation. If `None` then no smoothing will be done. By default
         `None`.
+    chunk : int, optional
+        Chunk size for the out-of-core correlation computation, passed through
+        to :func:`adj_corr` / :func:`graph_optimize_corr`. By default `600`.
 
     Returns
     -------
@@ -1432,8 +1435,34 @@ def unit_merge(
             k=-1,
         )
     print("computing temporal correlation")
-    nod_df = pd.DataFrame({"unit_id": A.coords["unit_id"].values})
-    adj = adj_corr(C, A_inter, nod_df, freq=noise_freq)
+    # `C` is indexed by `unit_id` only and carries no spatial coordinates, so
+    # the positions used to partition the correlation graph come from the
+    # footprint centroids. Attach them as `height` / `width` columns on
+    # `nod_df` -- the single, consistent way positions are carried everywhere --
+    # and index the time series by `unit_id`.
+    from .visualization import centroid
+
+    unit_ids = A.coords["unit_id"].values
+    cents = centroid(A, verbose=True)
+    have = set(cents["unit_id"].tolist())
+    missing = [uid for uid in unit_ids if uid not in have]
+    if missing:
+        # `centroid` drops zero-mass (all-NaN) footprints, so a missing unit
+        # here means an empty footprint reached `unit_merge`. `update_spatial`
+        # drops empty footprints via size_thres / mask, so this indicates an
+        # upstream pipeline bug. Cast ids to plain scalars so the message reads
+        # `unit_id=[20]` rather than `unit_id=[np.int64(20)]` on numpy 2.x.
+        missing_py = [v.item() if hasattr(v, "item") else v for v in missing]
+        raise ValueError(
+            f"unit_merge received {len(missing_py)} unit(s) with zero-mass "
+            f"footprints (unit_id={missing_py}). update_spatial drops empty "
+            "footprints via size_thres / mask, so an empty footprint reaching "
+            "unit_merge indicates an upstream pipeline bug."
+        )
+    nod_df = (
+        cents.set_index("unit_id").loc[unit_ids, ["height", "width"]].reset_index()
+    )
+    adj = adj_corr(C, A_inter, nod_df, freq=noise_freq, idx_dims=["unit_id"], chunk=chunk)
     print("labeling units to be merged")
     adj = adj > thres_corr
     adj = adj + adj.T
@@ -1672,7 +1701,7 @@ def graph_optimize_corr(
     G: nx.Graph,
     freq: float,
     idx_dims=None,
-    chunk=600,
+    chunk: int = 600,
     step_size=50,
 ) -> pd.DataFrame:
     """
@@ -1684,9 +1713,10 @@ def graph_optimize_corr(
     timeseries are stored in `varr` and indexed with node attributes. The
     function can carry out smoothing of timeseries before computation of
     correlation. To minimize re-computation of smoothing for each pixel, the
-    graph is first partitioned using a minial-cut algorithm. Then the
-    computation is performed in chunks with size `chunk`, with nodes from the
-    same partition being in the same chunk as much as possible.
+    graph is first partitioned spatially via a k-d tree median split on node
+    positions. Then the computation is performed in chunks with size `chunk`,
+    with nodes from the same partition being in the same chunk as much as
+    possible.
 
     Parameters
     ----------
@@ -1697,7 +1727,11 @@ def graph_optimize_corr(
         Graph representing computation to be carried out. Should be undirected
         and un-weighted. Each node should have unique attributes with keys
         specified in `idx_dims`, which will be used to index the timeseries in
-        `varr`. Each edge represent a desired correlation.
+        `varr`. Each node must additionally carry ``height`` and ``width``
+        attributes; these 2D coordinates are used to spatially partition the
+        graph (via :func:`spatial_partition`) so the chunked computation
+        recomputes as little smoothing as possible. Each edge represent a
+        desired correlation.
     freq : float
         Cut-off frequency for the optional smoothing. If `None` then no
         smoothing will be done.
@@ -1718,13 +1752,25 @@ def graph_optimize_corr(
         representing the node index of the edge (correlation), and column "corr"
         with computed value of correlation.
     """
-    # a heuristic to make number of partitions scale with nodes
     if idx_dims is None:
         idx_dims = ["height", "width"]
-    n_cuts, membership = pymetis.part_graph(
-        max(int(np.ceil(G.number_of_nodes() / chunk)), 1), adjacency=adj_list(G)
+
+    nodes_sorted = sorted(G.nodes)
+    try:
+        positions = np.array(
+            [(G.nodes[n]["height"], G.nodes[n]["width"]) for n in nodes_sorted],
+            dtype=float,
+        )
+    except KeyError as exc:
+        raise ValueError(
+            "graph_optimize_corr: every node must carry 'height' and 'width' "
+            f"attributes for spatial partitioning (missing key {exc})."
+        ) from None
+    membership = spatial_partition(positions, target_chunk=chunk)
+    # Cast np.int64 -> plain int to keep node attributes as plain Python types.
+    nx.set_node_attributes(
+        G, {k: {"part": int(v)} for k, v in zip(nodes_sorted, membership)}
     )
-    nx.set_node_attributes(G, {k: {"part": v} for k, v in zip(sorted(G.nodes), membership)})
     eg_df = nx.to_pandas_edgelist(G)
     part_map = nx.get_node_attributes(G, "part")
     eg_df["part_src"] = eg_df["source"].map(part_map)
@@ -1744,6 +1790,13 @@ def graph_optimize_corr(
             d: xr.DataArray([dd[p] for p in pxs], dims="pixels") for d, dd in idx_dict.items()
         }
         vsub = varr.sel(**idx_arr).data
+        # `idx_corr` wants (N_items, T_frames). xarray's vectorized sel
+        # places the new "pixels" dim at the position of the first replaced
+        # dim, so for the pipeline's `(frame, height, width)` varr the
+        # multi-dim sel returns `(frame, pixels)` and needs a transpose;
+        # single-dim sel returns `(unit_id, frame)` already in the right
+        # orientation but still needs a rechunk so the trace axis is
+        # contiguous for the numba kernel.
         if len(idx_arr) > 1:  # vectorized indexing
             vsub = vsub.T
         else:
@@ -1770,7 +1823,10 @@ def graph_optimize_corr(
             npxs.append(len(pixels))
             pixels = set()
             eg_ls = []
-    print(f"pixel recompute ratio: {sum(npxs) / G.number_of_nodes()}")
+    n_edges = len(eg_df)
+    cross_pct = f"{len(egd_diff) / n_edges:.1%}" if n_edges else "n/a (no edges)"
+    print(f"cross-partition edges: {cross_pct}")
+    print(f"node recompute ratio: {sum(npxs) / G.number_of_nodes()}")
     print("computing correlations")
     corr_ls = da.compute(corr_ls)[0]
     corr = pd.Series(np.concatenate(corr_ls), index=np.concatenate(idx_ls), name="corr")
@@ -1779,7 +1835,12 @@ def graph_optimize_corr(
 
 
 def adj_corr(
-    varr: xr.DataArray, adj: np.ndarray, nod_df: pd.DataFrame, freq: float
+    varr: xr.DataArray,
+    adj: np.ndarray,
+    nod_df: pd.DataFrame,
+    freq: float,
+    idx_dims=["height", "width"],
+    chunk: int = 600,
 ) -> scipy.sparse.csr_matrix:
     """
     Compute correlation in an optimized fashion given an adjacency matrix and
@@ -1797,11 +1858,22 @@ def adj_corr(
     adj : np.ndarray
         Adjacency matrix.
     nod_df : pd.DataFrame
-        Dataframe containing node attributes. Should have length `adj.shape[0]`
-        and only contain columns relevant to index the time series.
+        Dataframe containing node attributes. Should have length `adj.shape[0]`.
+        Must contain ``height`` and ``width`` columns (the 2D positions used to
+        spatially partition the graph) in addition to the columns named in
+        `idx_dims`.
     freq : float
         Cut-off frequency for the optional smoothing. If `None` then no
         smoothing will be done.
+    idx_dims : list, optional
+        Columns of `nod_df` used to index the time series in `varr`. By default
+        `["height", "width"]`. When the time series is indexed by something
+        other than position (e.g. `unit_merge` indexes `C` by ``unit_id``),
+        pass that here; `height` / `width` are still read off `nod_df` for
+        partitioning.
+    chunk : int, optional
+        Chunk size passed through to :func:`graph_optimize_corr`. By default
+        `600`.
 
     Returns
     -------
@@ -1812,28 +1884,210 @@ def adj_corr(
     G = nx.Graph()
     G.add_nodes_from([(i, d) for i, d in enumerate(nod_df.to_dict("records"))])
     G.add_edges_from([(s, t) for s, t in zip(*adj.nonzero())])
-    corr_df = graph_optimize_corr(varr, G, freq, idx_dims=nod_df.columns)
+    corr_df = graph_optimize_corr(varr, G, freq, idx_dims=idx_dims, chunk=chunk)
     return scipy.sparse.csr_matrix(
         (corr_df["corr"], (corr_df["source"], corr_df["target"])), shape=adj.shape
     )
 
 
-def adj_list(G: nx.Graph) -> list[np.ndarray]:
+def spatial_partition(
+    positions: np.ndarray, target_chunk: int
+) -> np.ndarray:
     """
-    Generate adjacency list representation from graph.
+    Partition 2D points into balanced groups via k-d tree median split.
+
+    Used by :func:`graph_optimize_corr` to chunk pixels/units before
+    correlation. The graphs `graph_optimize_corr` sees only connect
+    spatially-adjacent nodes (radius-neighbour seed graph for
+    `seeds_merge`, dilated-footprint overlap graph for `unit_merge`),
+    so any partition that is geometrically compact in 2D is also a
+    near-optimal cut: edge length is bounded, so partitions with
+    short perimeters cross few edges.
 
     Parameters
     ----------
-    G : nx.Graph
-        The input graph.
+    positions : np.ndarray
+        `(N, 2)` array of 2D coordinates, one row per node. Must be
+        finite; non-finite rows raise -- :func:`unit_merge` enforces
+        this by raising on zero-mass footprints upstream.
+    target_chunk : int
+        Maximum allowed partition size. Leaves end up at or below this
+        size, so partition count is between `ceil(N / target_chunk)` and
+        roughly twice that (the median split halves N at each step but
+        cannot split a leaf below `target_chunk`).
 
     Returns
     -------
-    adj_ls : list[np.ndarray]
-        The adjacency list representation of graph.
+    membership : np.ndarray
+        Integer partition label per row, dense in `[0, n_parts)`. Order
+        of labels is the order in which leaves are emitted by the
+        depth-first recursion (left-half before right-half at every
+        node), so consecutive labels correspond to spatially-adjacent
+        tiles.
+
+    Notes
+    -----
+    **Algorithm.** Recursive k-d tree with median split:
+
+    1. If the current point set has `<= target_chunk` rows, assign it
+       the next label and return.
+    2. Otherwise pick the axis with the larger extent
+       (`max - min` over the current rows). Splitting along the longer
+       axis produces squarer leaf tiles, which have shorter perimeter
+       than narrow strips and therefore cross fewer edges.
+    3. Stable-sort the rows along the chosen axis, split at the
+       median index (`len(idx) // 2`), recurse on each half.
+
+    The split is on the *median index*, not the median value, so the
+    two halves differ in size by at most one regardless of how the
+    points are distributed. The stable sort makes the output
+    deterministic for a given input even when many points share a
+    coordinate.
+
+    **Complexity.** Each recursion level argsorts an
+    O(level_size)-sized array. With balanced halving the depth is
+    `log2(N / target_chunk)` and the per-level work sums to O(N log N),
+    giving an overall O(N log^2 N). N here is the number of
+    pixels/units handed to one `graph_optimize_corr` call (a few
+    thousand at most), so this is negligible next to the correlation
+    work itself.
+
+    **Why not pymetis.** This replaces a `pymetis.part_graph` call.
+    METIS minimises edge cuts on general graphs via multilevel
+    coarsening, which is the right answer when edges may span the
+    graph arbitrarily. The graphs we hand it never do -- they only
+    encode spatial neighbours by construction -- so the geometric
+    optimum coincides with the cut optimum, and the recursive median
+    split achieves it without an external compiled dependency.
     """
-    gdict = nx.to_dict_of_dicts(G)
-    return [np.array(list(gdict[k].keys())) for k in sorted(gdict.keys())]
+    positions = np.asarray(positions, dtype=float)
+    if positions.ndim != 2 or positions.shape[1] != 2:
+        raise ValueError(
+            f"positions must be (N, 2); got shape {positions.shape}"
+        )
+    if target_chunk < 1:
+        raise ValueError(f"target_chunk must be >= 1; got {target_chunk}")
+    # NaN/inf rows would silently cluster via argsort's NaN ordering and
+    # corrupt every downstream chunk assignment; reject them so the
+    # caller fixes the upstream contract.
+    if positions.size and not np.isfinite(positions).all():
+        n_bad = int((~np.isfinite(positions).all(axis=1)).sum())
+        raise ValueError(
+            f"positions must be finite; got {n_bad} row(s) with NaN or inf. "
+            "Non-finite coordinates indicate an upstream pipeline bug "
+            "(see unit_merge's zero-mass footprint check)."
+        )
+    n = positions.shape[0]
+    membership = np.empty(n, dtype=np.int64)
+    if n == 0:
+        return membership
+    next_label = [0]
+
+    def recurse(idx: np.ndarray) -> None:
+        if len(idx) <= target_chunk:
+            membership[idx] = next_label[0]
+            next_label[0] += 1
+            return
+        pts = positions[idx]
+        # Split on the longer axis -> squarer tiles -> shorter perimeter ->
+        # fewer cross-partition edges. See Notes in docstring.
+        axis = int(np.argmax(pts.max(axis=0) - pts.min(axis=0)))
+        order = np.argsort(pts[:, axis], kind="stable")
+        mid = len(idx) // 2
+        recurse(idx[order[:mid]])
+        recurse(idx[order[mid:]])
+
+    recurse(np.arange(n))
+    return membership
+
+
+def _canonicalize_edge_pairs(adj: "scipy.sparse.spmatrix") -> np.ndarray:
+    """Return unique undirected ``(i, j)`` pairs with ``i < j``.
+
+    Handles symmetric or triangular adjacency uniformly and drops
+    self-loops. Output is shape ``(M, 2)`` int64.
+    """
+    src, tgt = adj.nonzero()
+    lo = np.minimum(src, tgt)
+    hi = np.maximum(src, tgt)
+    keep = lo != hi
+    lo, hi = lo[keep], hi[keep]
+    if not lo.size:
+        return np.empty((0, 2), dtype=np.int64)
+    return np.unique(np.column_stack([lo, hi]), axis=0)
+
+
+def partition_diagnostics(
+    membership: np.ndarray,
+    adj: "scipy.sparse.spmatrix | None" = None,
+    n_frames: int | None = None,
+    bytes_per_sample: int = 4,
+) -> dict:
+    """
+    Compute quality statistics for a spatial partition.
+
+    Parameters
+    ----------
+    membership : np.ndarray
+        ``(N,)`` integer partition label per node.
+    adj : scipy.sparse.spmatrix, optional
+        ``(N, N)`` adjacency, symmetric or triangular. Self-loops and
+        duplicate entries are collapsed. When omitted, edge keys are
+        absent from the returned dict.
+    n_frames : int, optional
+        Length of the time axis. When supplied, ``"mem_mb"`` is added to
+        the returned dict.
+    bytes_per_sample : int, optional
+        Per-sample dtype size in bytes (default 4 = float32). Ignored if
+        ``n_frames`` is None.
+
+    Returns
+    -------
+    diag : dict
+        Diagnostic keys vary with which optional inputs were supplied:
+
+        ============================== ============ ===================== ============================================================
+        key                            condition    type / shape          meaning
+        ============================== ============ ===================== ============================================================
+        ``"sizes"``                    always       ``(n_parts,)`` int64  Node count in each partition (``np.bincount(membership)``).
+        ``"n_parts"``                  always       int                   Number of distinct partition labels.
+        ``"edges_per_partition"``      ``adj``      ``(n_parts,)`` int64  Intra-partition edge count per partition.
+        ``"cross_edges"``              ``adj``      int                   Edges whose endpoints are in different partitions.
+        ``"total_edges"``              ``adj``      int                   Total unique undirected edges (self-loops dropped).
+        ``"cross_fraction"``           ``adj``      float                 ``cross_edges / total_edges`` (0.0 if no edges).
+        ``"mem_mb"``                   ``n_frames`` ``(n_parts,)`` float  Per-partition trace memory estimate in MiB.
+        ============================== ============ ===================== ============================================================
+
+        Returned as a plain ``dict`` for consistency with the rest of
+        the codebase. A structured-return migration is on the roadmap
+        with the project's pydantic adoption.
+    """
+    membership = np.asarray(membership, dtype=np.int64)
+    sizes = np.bincount(membership) if membership.size else np.zeros(0, dtype=np.int64)
+    n_parts = int(len(sizes))
+
+    diag: dict = {"sizes": sizes, "n_parts": n_parts}
+
+    if n_frames is not None:
+        diag["mem_mb"] = sizes.astype(float) * n_frames * bytes_per_sample / (1024 ** 2)
+
+    if adj is not None:
+        pairs = _canonicalize_edge_pairs(adj)
+        if pairs.size:
+            part_a = membership[pairs[:, 0]]
+            part_b = membership[pairs[:, 1]]
+            intra = part_a == part_b
+            diag["edges_per_partition"] = np.bincount(part_a[intra], minlength=n_parts)
+            diag["cross_edges"] = int((~intra).sum())
+        else:
+            diag["edges_per_partition"] = np.zeros(n_parts, dtype=np.int64)
+            diag["cross_edges"] = 0
+        diag["total_edges"] = int(pairs.shape[0])
+        diag["cross_fraction"] = (
+            diag["cross_edges"] / diag["total_edges"] if diag["total_edges"] else 0.0
+        )
+
+    return diag
 
 
 @darr.as_gufunc(signature="(p,f),(i),(i)->(i)", output_dtypes=[float])

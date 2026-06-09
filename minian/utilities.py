@@ -6,7 +6,6 @@ import re
 import shutil
 import warnings
 from collections.abc import Callable
-from copy import deepcopy
 from os import listdir
 from os.path import isdir, isfile
 from os.path import join as pjoin
@@ -34,16 +33,11 @@ from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import lsqr
 from tifffile import TiffFile, imread
 
-# dask >=2025 ships a new TaskSpec optimizer. The legacy `fuse` /
-# `inline_pattern` paths produce graphs the new scheduler can't track,
-# so `custom_arr_optimize` / `custom_delay_optimize` branch on this flag.
-try:
-    from dask.array.optimization import fuse_linear_task_spec
-
-    _DASK_HAS_TASK_SPEC = True
-except ImportError:
-    fuse_linear_task_spec = None
-    _DASK_HAS_TASK_SPEC = False
+# dask >=2025 (a hard floor in pyproject) ships the TaskSpec optimizer, which
+# does its own graph optimisation. The legacy `fuse` / `inline_pattern` hooks
+# produced graphs its scheduler can't track, so they have been removed; see
+# `custom_arr_optimize` / `custom_delay_optimize` below.
+from dask.array.optimization import fuse_linear_task_spec
 
 
 def ensure_ffmpeg() -> None:
@@ -473,12 +467,12 @@ def save_minian(
     dpath : str
         The path to the minian dataset directory.
     meta_dict : dict, optional
-        How metadata should be retrieved from directory hierarchy. The keys
-        should be negative integers representing directory level relative to
-        `dpath` (so `-1` means the immediate parent directory of `dpath`), and
-        values should be the name of dimensions represented by the corresponding
-        level of directory. The actual coordinate value of the dimensions will
-        be the directory name of corresponding level. By default `None`.
+        How metadata should be retrieved from the directory hierarchy. The keys
+        should be the name of the dimension to assign, and the values should be
+        negative integers representing the directory level relative to `dpath`
+        (so `-1` means the immediate parent directory of `dpath`). The
+        coordinate value will be the directory name of the corresponding level.
+        For example `{"session": -1, "animal": -2}`. By default `None`.
     overwrite : bool, optional
         Whether to overwrite the result on disk. By default `False`.
     chunks : dict, optional
@@ -512,7 +506,7 @@ def save_minian(
     >>> save_minian(
     ...     var.rename("important_array"),
     ...     "/spatial_memory/alpha/learning1/minian",
-    ...     {-1: "session", -2: "animal", -3: "experiment"},
+    ...     {"session": -1, "animal": -2, "experiment": -3},
     ... ) # doctest: +SKIP
     """
     dpath = os.path.normpath(dpath)
@@ -606,28 +600,55 @@ def xrconcat_recursive(var: dict | list, dims: list[str]) -> xr.Dataset:
         return xr.concat(var, dim=dims[0])
 
 
-def update_meta(dpath, pattern=r"^minian\.nc$", meta_dict=None, backend="netcdf") -> None:
-    for dirpath, dirnames, fnames in os.walk(dpath):
-        if backend == "netcdf":
-            fnames = filter(lambda fn: re.search(pattern, fn), fnames)
-        elif backend == "zarr":
-            fnames = filter(lambda fn: re.search(pattern, fn), dirnames)
-        else:
-            raise NotImplementedError(f"backend {backend} not supported")
-        for fname in fnames:
-            f_path = os.path.join(dirpath, fname)
-            pathlist = os.path.normpath(dirpath).split(os.sep)
-            new_ds = xr.Dataset()
-            old_ds = open_minian(f_path, f_path, backend)
-            new_ds.attrs = deepcopy(old_ds.attrs)
-            old_ds.close()
-            new_ds = new_ds.assign_coords(
-                **{cdname: pathlist[cdval] for cdname, cdval in meta_dict.items()}
-            )
-            if backend == "netcdf":
-                new_ds.to_netcdf(f_path, mode="a")
-            elif backend == "zarr":
-                new_ds.to_zarr(f_path, mode="w")
+def update_meta(dpath, pattern=r"^minian$", meta_dict=None):
+    """
+    Permanently update the metadata of saved minian datasets in place.
+
+    This function walks `dpath` and, for every dataset directory whose name
+    matches `pattern`, re-derives metadata coordinates from the directory
+    hierarchy (following the same convention as :func:`save_minian`) and adds
+    them to the on-disk `zarr` stores. Only the small coordinate arrays are
+    written, so the variables' data chunks are left untouched. It is useful as
+    a recovery tool when datasets were originally saved without `meta_dict`,
+    e.g. before a cross-registration workflow that relies on `session`/`animal`
+    coordinates.
+
+    Parameters
+    ----------
+    dpath : str
+        A path containing any number of minian datasets nested under it.
+    pattern : str, optional
+        Regular expression matched against directory names to identify minian
+        dataset directories. By default `r"^minian$"`.
+    meta_dict : dict, optional
+        How metadata should be retrieved from the directory hierarchy. The keys
+        should be the name of the dimension to assign, and the values should be
+        negative integers representing the directory level relative to the
+        dataset directory (so `-1` means its immediate parent directory). The
+        coordinate value will be the directory name of the corresponding level.
+        For example `{"session": -1, "animal": -2}`. By default `None`.
+
+    See Also
+    -------
+    save_minian : for how `meta_dict` is applied when first saving a dataset.
+    """
+    for dirpath, dirnames, _ in os.walk(dpath):
+        dnames = filter(lambda dn: re.search(pattern, dn), dirnames)
+        for dname in dnames:
+            f_path = os.path.join(dirpath, dname)
+            pathlist = os.path.split(os.path.abspath(f_path))[0].split(os.sep)
+
+            # Re-derive metadata coordinates from the directory hierarchy.
+            coords = {dn: pathlist[di] for dn, di in meta_dict.items()}
+
+            # Append the coordinates to each variable's zarr store. Writing a
+            # coords-only dataset with `mode="a"` adds just these small arrays
+            # without rewriting (or even reading) the variable's data chunks.
+            for store in os.listdir(f_path):
+                if store.endswith(".zarr"):
+                    xr.Dataset(coords=coords).to_zarr(
+                        os.path.join(f_path, store), mode="a"
+                    )
             print(f"updated: {f_path}")
 
 
@@ -849,12 +870,6 @@ class TaskAnnotation(SchedulerPlugin):
 
 def custom_arr_optimize(
     dsk: dict,
-    keys: list,
-    fast_funcs: list = FAST_FUNCTIONS,
-    inline_patterns=None,
-    rename_dict: dict | None = None,
-    rewrite_dict: dict | None = None,
-    keep_patterns=None,
     **kwargs,
 ) -> dict:
     """
@@ -864,22 +879,6 @@ def custom_arr_optimize(
     ----------
     dsk : dict
         Input dask task graph.
-    keys : list
-        Output task keys.
-    fast_funcs : list, optional
-        list of fast functions to be inlined. By default :const:`FAST_FUNCTIONS`.
-    inline_patterns : list, optional
-        list of patterns of task keys to be inlined. By default `[]`.
-    rename_dict : dict, optional
-        Dictionary mapping old task key substrings to new ones. Treated as a
-        synonym of `rewrite_dict` (applied post-hoc as aliased renames for
-        dependency-link safety on dask >=2025). By default `None`.
-    rewrite_dict : dict, optional
-        Dictionary mapping old task key substrings to new ones. Applied at the
-        end of optimization to all task keys. By default `None`.
-    keep_patterns : list, optional
-        list of patterns of task keys that should be preserved during
-        optimization. By default `[]`.
 
     Returns
     -------
@@ -891,45 +890,19 @@ def custom_arr_optimize(
     :doc:`dask:optimize`
     `dask.array.optimization.optimize`
     """
-    # inlining lots of array operations ref:
-    # https://github.com/dask/dask/issues/6668
-    if keep_patterns is None:
-        keep_patterns = []
-    if inline_patterns is None:
-        inline_patterns = []
-    keep_keys = []
-    if keep_patterns:
-        key_ls = list(dsk.keys())
-        for pat in keep_patterns:
-            keep_keys.extend(list(filter(lambda k: check_key(k, pat), key_ls)))
-    # `rename_fused_keys` was a pre-2025 hook. dask >=2025 silently ignores
-    # it, and the custom renamer breaks dependency tracking on the new
-    # scheduler (FutureCancelledError: lost dependencies). `fuse_keys` /
-    # `fast_functions` are honored by old dask, ignored by new -- safe to leave.
-    dsk = darr.optimization.optimize(
-        dsk,
-        keys,
-        fuse_keys=keep_keys,
-        fast_functions=fast_funcs,
-    )
-    if inline_patterns:
-        dsk = inline_pattern(dsk, inline_patterns, inline_constants=False)
-    # Post-hoc key-rewrite for memory-throttle annotations
-    # (`tensordot` -> `tensordot_restricted` etc.). Relies on the legacy
-    # convention that a tuple-of-(str,*) task value is a key reference,
-    # which dask >=2025's TaskSpec graph no longer honors -- aliased keys
-    # become dangling references there. Skipped on new dask; this loses
-    # throttling at compute_AtC, the YrA optimize, and the viz merge.
-    # TODO: port to `dask.annotate(resources=...)` at the call sites.
-    if not _DASK_HAS_TASK_SPEC:
-        effective_rewrite = rewrite_dict if rewrite_dict is not None else rename_dict
-        if effective_rewrite:
-            dsk_old = dsk.copy()
-            for key, val in dsk_old.items():
-                key_new = rewrite_key(key, effective_rewrite)
-                if key_new != key:
-                    dsk[key_new] = val
-                    dsk[key] = key_new
+    # Pass-through on dask >=2025: the TaskSpec scheduler does its own graph
+    # optimisation, and the legacy fuse_keys / fast_functions / key-rewrite
+    # path produced graphs it couldn't track (surfacing at compute time as
+    # `FutureCancelledError: <task> cancelled for reason: lost dependencies`).
+    #
+    # As a result the `keep_patterns` / `rename_dict` / `rewrite_dict` /
+    # `inline_patterns` / `fast_funcs` arguments are currently INERT. They were
+    # the hooks that drove MEM throttling (renaming `tensordot` / `rechunk` so
+    # `TaskAnnotation` would cap their concurrency); that throttle is not in
+    # effect on new dask. Restoring it via `dask.annotate(resources=...)`, and
+    # removing this now-vestigial optimizer + its arguments, is tracked
+    # separately. The argument surface is kept for now so the call sites that
+    # still pass these kwargs keep working until that follow-up lands.
     return dsk
 
 
@@ -1135,7 +1108,7 @@ def inline_pattern(dsk: dict, pat_ls: list[str], inline_constants: bool) -> dict
 
 
 def custom_delay_optimize(
-    dsk: dict, keys: list, fast_functions=None, inline_patterns=None, **kwargs
+    dsk: dict, keys: list, **kwargs
 ) -> dict:
     """
     Custom optimization functions for delayed tasks.
@@ -1148,39 +1121,23 @@ def custom_delay_optimize(
         Input dask task graph.
     keys : list
         Output task keys.
-    fast_functions : list, optional
-        list of fast functions to be inlined. By default `[]`.
-    inline_patterns : list, optional
-        list of patterns of task keys to be inlined. By default `[]`.
 
     Returns
     -------
     dsk : dict
         Optimized dask graph.
     """
-    if inline_patterns is None:
-        inline_patterns = []
-    if fast_functions is None:
-        fast_functions = []
-    if _DASK_HAS_TASK_SPEC:
-        # `optimization.fuse.delayed` defaults to False on dask >=2025, so
-        # `dask.delayed.optimize` is a no-op. Invoke `fuse_linear_task_spec`
-        # directly to keep per-frame chains fused. Skip the legacy
-        # `inline_pattern` / `inline_functions` paths -- they don't compose
-        # with the new TaskSpec graph. Flatten `keys` because nested lists
-        # (e.g. `da.compute([a, b])`) crash the fuser's internal `set(keys)`.
-        return fuse_linear_task_spec(ensure_dict(dsk), list(flatten(keys)))
-    # Legacy path for dask <2025.
-    dsk, _ = fuse(ensure_dict(dsk), rename_keys=custom_fused_keys_renamer)
-    if inline_patterns:
-        dsk = inline_pattern(dsk, inline_patterns, inline_constants=False)
-    if fast_functions:
-        dsk = inline_functions(
-            dsk,
-            [],
-            fast_functions=fast_functions,
+    if 'fast_functions' in kwargs or 'inline_patterns' in kwargs:
+        warnings.warn(
+            "fast_functions and inline_patterns are deprecated and ignored.",
+            DeprecationWarning,
+            stacklevel=2
         )
-    return dsk
+    # `optimization.fuse.delayed` defaults to False on dask >=2025, so
+    # `dask.delayed.optimize` is a no-op. Invoke `fuse_linear_task_spec`
+    # directly to keep per-frame chains fused. Flatten `keys` because nested
+    # lists (e.g. `da.compute([a, b])`) crash the fuser's internal `set(keys)`.
+    return fuse_linear_task_spec(ensure_dict(dsk), list(flatten(keys)))
 
 
 def unique_keys(keys: list) -> np.ndarray:

@@ -26,7 +26,7 @@ def _get_file(filename: str, version: str) -> None:
         print(f"File {filename} already exists, skipping install of this file.")
         return
     for vv in [version, "v" + version]:
-        r = requests.get(f"https://raw.github.com/DeniseCaiLab/minian/{vv}/{filename}")
+        r = requests.get(f"https://raw.githubusercontent.com/miniscope/minian/{vv}/{filename}")
         if r.status_code == 200:
             parent_dir = os.path.dirname(filename)
             if parent_dir:
