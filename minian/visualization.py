@@ -1220,7 +1220,9 @@ def write_video(
     vname: str | None = None,
     vpath: str | None = ".",
     norm=True,
+    vcodec="libx264",
     options={"crf": "18", "preset": "ultrafast"},
+    verbose=True,
 ) -> str:
     """
     Write a video from a movie array using `python-ffmpeg`.
@@ -1238,9 +1240,13 @@ def write_video(
     norm : bool, optional
         Whether to normalize the values of the input array such that they span
         the full pixel depth range (0, 255). By default `True`.
+    vcodec : str, optional
+        Name of the ffmpeg video encoder to use. By default `"libx264"`.
     options : dict, optional
         Optional output arguments passed to `ffmpeg`. By default `{"crf": "18",
         "preset": "ultrafast"}`.
+    verbose : bool, optional
+        Display verbose ffmpeg output. By default `True`.
 
     Returns
     -------
@@ -1269,11 +1275,15 @@ def write_video(
         arr *= 255
     arr = arr.clip(0, 255).astype(np.uint8)
     w, h = arr.sizes["width"], arr.sizes["height"]
+    verbosity_args = ["-hide_banner", "-nostats"]
+    if verbose:
+        verbosity_args = []
     process = (
         ffmpeg.input("pipe:", format="rawvideo", pix_fmt="gray", s=f"{w}x{h}")
         .filter("pad", int(np.ceil(w / 2) * 2), int(np.ceil(h / 2) * 2))
-        .output(fname, pix_fmt="yuv420p", vcodec="libx264", r=30, **options)
+        .output(fname, pix_fmt="yuv420p", vcodec=vcodec, r=30, **options)
         .overwrite_output()
+        .global_args(*verbosity_args)
         .run_async(pipe_stdin=True)
     )
     for blk in arr.data.blocks:
@@ -1311,7 +1321,9 @@ def generate_videos(
     gain=1.5,
     vpath=".",
     vname="minian.mp4",
+    vcodec="libx264",
     options={"crf": "18", "preset": "ultrafast"},
+    verbose=True,
 ) -> str:
     """
     Generate a video visualizaing the result of minian pipeline.
@@ -1356,9 +1368,13 @@ def generate_videos(
         Desired folder containing the resulting video. By default `"."`.
     vname : str, optional
         Desired name of the video. By default `"minian.mp4"`.
+    vcodec : str, optional
+        Name of the ffmpeg video encoder to use. By default `"libx264"`.
     options : dict, optional
         Output options for `ffmpeg`, passed directly to :func:`write_video`. By
         default `{"crf": "18", "preset": "ultrafast"}`.
+    verbose : bool, optional
+        Display verbose ffmpeg output. By default `True`.
 
     Returns
     -------
@@ -1393,7 +1409,9 @@ def generate_videos(
         "height",
         coords="minimal",
     )
-    return write_video(vid, vname, vpath, norm=False, options=options)
+    return write_video(
+        vid, vname, vpath, norm=False, vcodec=vcodec, options=options, verbose=verbose
+    )
 
 
 def datashade_ndcurve(

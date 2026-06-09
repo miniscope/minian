@@ -4,3 +4,4 @@ demo_movies export-ignore
 .readthedocs.yaml export-ignore
 codecov.yml export-ignore
 .github export-ignore
+demo_movies/*.mkv filter=lfs diff=lfs merge=lfs -text

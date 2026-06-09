@@ -243,7 +243,15 @@ def load_avi_lazy(fname: str) -> darr.array:
     video_info = next(s for s in probe["streams"] if s["codec_type"] == "video")
     w = int(video_info["width"])
     h = int(video_info["height"])
-    f = int(video_info["nb_frames"])
+    if "nb_frames" in video_info:
+        f = int(video_info["nb_frames"])
+    else:
+        r_fps = video_info["r_frame_rate"]
+        num, denom = r_fps.split("/")
+        fps = float(num) / float(denom)
+        f = float(probe["format"]["duration"]) * fps
+        f = np.round(f).astype(int)
+
     return da.array.from_delayed(
         da.delayed(load_avi_ffmpeg)(fname, h, w, f), dtype=np.uint8, shape=(f, h, w)
     )
@@ -275,6 +283,7 @@ def load_avi_ffmpeg(fname: str, h: int, w: int, f: int) -> np.ndarray:
     out_bytes, err = (
         ffmpeg.input(fname)
         .video.output("pipe:", format="rawvideo", pix_fmt="gray")
+        .global_args("-hide_banner", "-nostats")
         .run(capture_stdout=True)
     )
     return np.frombuffer(out_bytes, np.uint8).reshape(f, h, w)
