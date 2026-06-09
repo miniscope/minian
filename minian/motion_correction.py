@@ -371,7 +371,7 @@ def est_motion_chunk(
     prop_good = len(good_idxs) / len(good_fm)
     if prop_good < 0.9:
         warnings.warn(
-            f"only {prop_good} of the frames are good.Consider lowering your circularity threshold",
+            f"only {prop_good} of the frames are good. Consider lowering your circularity threshold",
             stacklevel=2,
         )
     # use good frame closest to center as template
