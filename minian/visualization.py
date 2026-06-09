@@ -36,6 +36,7 @@ from holoviews.streams import (
 from holoviews.util import Dynamic
 from matplotlib import cm
 from panel import widgets as pnwgt
+from param.parameterized import Event
 from scipy import linalg
 from scipy.ndimage.measurements import center_of_mass
 from scipy.spatial import cKDTree
@@ -267,7 +268,7 @@ class VArrayViewer:
     def _widgets(self) -> pn.WidgetBox:
         w_play = pnwgt.Player(length=len(self._f), interval=10, value=0, width=650, height=90)
 
-        def play(f: hv.Event) -> None:
+        def play(f: Event) -> None:
             if f.old != f.new:
                 self.strm_f.event(f=int(self._f[f.new]))
 
@@ -280,8 +281,8 @@ class VArrayViewer:
                 for d, v in self.meta_dicts.items()
             }
 
-            def make_update_func(meta_name: str) -> Callable[[hv.Event], None]:
-                def _update(x: hv.Event) -> None:
+            def make_update_func(meta_name: str) -> Callable[[Event], None]:
+                def _update(x: Event) -> None:
                     self.cur_metas[meta_name] = x.new
                     self._update_subs()
 
@@ -301,7 +302,7 @@ class VArrayViewer:
             self.sum_sub = self.summary.sel(**self.cur_metas)
         self.pnplot.objects[0].object = self.get_hvobj()
 
-    def _update_box(self, _click: hv.Event) -> None:
+    def _update_box(self, _click: Event) -> None:
         box = self.str_box.data
         self.mask.update(
             {
@@ -523,7 +524,7 @@ class CNMFViewer:
         else:
             self.cents_sub = self.cents
 
-    def compute_subs(self, _clicks: hv.Event | None = None) -> None:
+    def compute_subs(self, _clicks: Event | None = None) -> None:
         self.A_sub = self.A_sub.compute()
         self.C_sub = self.C_sub.compute()
         self.S_sub = self.S_sub.compute()
@@ -531,13 +532,13 @@ class CNMFViewer:
         self.C_norm_sub = self.C_norm_sub.compute()
         self.S_norm_sub = self.S_norm_sub.compute()
 
-    def update_all(self, _clicks: hv.Event | None = None) -> None:
+    def update_all(self, _clicks: Event | None = None) -> None:
         self.update_subs()
         self.strm_uid.event(index=[])
         self.strm_f.event(x=0)
         self.update_spatial_all()
 
-    def callback_uid(self, _index: hv.Event | None = None) -> None:
+    def callback_uid(self, _index: Event | None = None) -> None:
         self.update_temp()
         self.update_AC()
         self.update_usub_lab()
@@ -556,7 +557,7 @@ class CNMFViewer:
             self.pipAC.send([])
             self.pipmov.send([])
 
-    def callback_usub(self, usub: hv.Event | None = None) -> None:
+    def callback_usub(self, usub: Event | None = None) -> None:
         self.update_temp_comp_sub(usub)
         self.update_AC(usub)
         self.update_usub_lab(usub)
@@ -648,7 +649,7 @@ class CNMFViewer:
         self.temp_comp_sub.object = self._temp_comp_sub(usub).object
         self.wgt_man.objects = self._man_wgt().objects
 
-    def update_norm(self, norm: hv.Event) -> None:
+    def update_norm(self, norm: Event) -> None:
         self._normalize = norm.new
         self.update_temp_comp_sub()
 
@@ -660,7 +661,7 @@ class CNMFViewer:
         def_idxs = list(idxs_dict.values())[0]
         wgt_grp = pnwgt.Select(name="", options=idxs_dict, width=120, height=30, value=def_idxs)
 
-        def update_usub(usub: hv.Event) -> None:
+        def update_usub(usub: Event) -> None:
             self.usub_sel = []
             self.strm_usub.event(usub=usub.new)
 
@@ -671,7 +672,7 @@ class CNMFViewer:
             name="Previous Group", width=120, height=30, button_type="primary"
         )
 
-        def prv(_clicks: hv.Event) -> None:
+        def prv(_clicks: Event) -> None:
             cur_val = wgt_grp.value
             ig = list(idxs_dict.values()).index(cur_val)
             try:
@@ -683,7 +684,7 @@ class CNMFViewer:
         wgt_grp_prv.param.watch(prv, "clicks")
         wgt_grp_nxt = pnwgt.Button(name="Next Group", width=120, height=30, button_type="primary")
 
-        def nxt(_clicks: hv.Event) -> None:
+        def nxt(_clicks: Event) -> None:
             cur_val = wgt_grp.value
             ig = list(idxs_dict.values()).index(cur_val)
             try:
@@ -697,21 +698,21 @@ class CNMFViewer:
         wgt_norm.param.watch(self.update_norm, "value")
         wgt_showC = pnwgt.Checkbox(name="ShowC", value=self._showC, width=120, height=10)
 
-        def callback_showC(val: hv.Event) -> None:
+        def callback_showC(val: Event) -> None:
             self._showC = val.new
             self.update_temp_comp_sub()
 
         wgt_showC.param.watch(callback_showC, "value")
         wgt_showS = pnwgt.Checkbox(name="ShowS", value=self._showS, width=120, height=10)
 
-        def callback_showS(val: hv.Event) -> None:
+        def callback_showS(val: Event) -> None:
             self._showS = val.new
             self.update_temp_comp_sub()
 
         wgt_showS.param.watch(callback_showS, "value")
         wgt_play = pnwgt.Player(length=len(self._f), interval=10, value=0, width=280)
 
-        def play(f: hv.Event) -> None:
+        def play(f: Event) -> None:
             if f.old != f.new:
                 self.strm_f.event(x=self._f[f.new])
 
@@ -738,7 +739,7 @@ class CNMFViewer:
             for uid, ulb in zip(usub, ulabs)
         }
 
-        def callback_ulab(value: hv.Event, uid: str) -> None:
+        def callback_ulab(value: Event, uid: str) -> None:
             self.unit_labels.loc[uid] = value.new
 
         for uid, sel in wgt_sel.items():
@@ -749,7 +750,7 @@ class CNMFViewer:
             for uid in usub
         }
 
-        def callback_chk(val: hv.Event, uid: str) -> None:
+        def callback_chk(val: Event, uid: str) -> None:
             if val.old != val.new:
                 if val.new:
                     self.usub_sel.append(uid)
@@ -761,14 +762,14 @@ class CNMFViewer:
             chk.param.watch(cb, "value")
         wgt_discard = pnwgt.Button(name="Discard Selected", button_type="primary", width=180)
 
-        def callback_discard(_clicks: hv.Event | None) -> None:
+        def callback_discard(_clicks: Event | None) -> None:
             for uid in self.usub_sel:
                 wgt_sel[uid].value = -1
 
         wgt_discard.param.watch(callback_discard, "clicks")
         wgt_merge = pnwgt.Button(name="Merge Selected", button_type="primary", width=180)
 
-        def callback_merge(_clicks: hv.Event | None) -> None:
+        def callback_merge(_clicks: Event | None) -> None:
             for uid in self.usub_sel:
                 wgt_sel[uid].value = self.usub_sel[0]
 
@@ -837,7 +838,7 @@ class CNMFViewer:
     def _spatial_all_wgt(self) -> pn.WidgetBox:
         wgt_useAC = pnwgt.Checkbox(name="UseAC", value=self._useAC, width=120, height=15)
 
-        def callback_useAC(val: hv.Event) -> None:
+        def callback_useAC(val: Event) -> None:
             self._useAC = val.new
             self.update_AC()
 
@@ -1076,26 +1077,26 @@ class AlignViewer:
             self.curA = self.dataA.persist()
             self.curmap = self.mappings
 
-    def cb_update_erd(self, val: hv.Event) -> None:
+    def cb_update_erd(self, val: Event) -> None:
         self.erode = val.new
         self.processA()
         self.update_meta()
         self.plot.object = self.update_plot().object
 
-    def cb_update_meta(self, dim: str, val: hv.Event) -> None:
+    def cb_update_meta(self, dim: str, val: Event) -> None:
         self.meta[dim] = val.new
         self.update_meta()
         self.plot.object = self.update_plot().object
 
-    def cb_update_rgb(self, ch: str, ss: hv.Event) -> None:
+    def cb_update_rgb(self, ch: str, ss: Event) -> None:
         self.sess_rgb[ch] = ss.new
         self.plot.object = self.update_plot().object
 
-    def cb_showma(self, val: hv.Event) -> None:
+    def cb_showma(self, val: Event) -> None:
         self.show_ma = val.new
         self.plot.object = self.update_plot().object
 
-    def cb_showuma(self, val: hv.Event) -> None:
+    def cb_showuma(self, val: Event) -> None:
         self.show_uma = val.new
         self.plot.object = self.update_plot().object
 

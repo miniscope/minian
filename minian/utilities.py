@@ -875,6 +875,7 @@ class TaskAnnotation(SchedulerPlugin):
 
 def custom_arr_optimize(
     dsk: dict,
+    *args: Any,
     **kwargs: Any,
 ) -> dict:
     """
@@ -908,7 +909,7 @@ def custom_arr_optimize(
     # removing this now-vestigial optimizer + its arguments, is tracked
     # separately. The argument surface is kept for now so the call sites that
     # still pass these kwargs keep working until that follow-up lands.
-    if kwargs:
+    if args or kwargs:
         warnings.warn(
             "Passing kwargs to custom_arr_optimized is deprecated and ignored",
             DeprecationWarning,
