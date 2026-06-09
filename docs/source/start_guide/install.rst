@@ -46,7 +46,7 @@ MiniAn:
 
     git clone https://github.com/miniscope/minian.git
     cd minian/
-    pip install -e .
+    python -m pip install -e .
 
 This gives you an editable copy of MiniAn, so any change you make to the source
 is reflected in your pipeline. Maintainers can use ``pdm install`` to set up the
