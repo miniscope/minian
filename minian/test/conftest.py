@@ -6,7 +6,7 @@ from pathlib import Path
 import psutil
 import pytest
 
-from ._notebook import require_dataset
+from ..data import dataset_path
 
 
 def pytest_sessionstart(session):
@@ -37,42 +37,40 @@ def _remove(path: Path) -> None:
 
 
 @pytest.fixture(scope="session")
-def dataset() -> Callable[[str], Path]:
-    """Factory for resolving demo datasets (download + cache, or skip).
+def fetch_dataset() -> Callable[[str], Path]:
+    """Session-scoped resolver for demo datasets (download + cache once).
 
-    Returns a ``get_dataset(name) -> Path`` callable so any fixture or test can
-    pluck the dataset it needs from one shared, session-scoped resolver. This is
-    just dependency injection: ``require_dataset`` skips cleanly when the dataset
-    is unavailable, and the underlying ``minian.data`` cache means resolving the
-    same name twice is cheap.
+    Returns a ``get(name) -> Path`` callable so any fixture or test can pluck
+    the dataset it needs from one shared resolver. Resolving the same name
+    twice is cheap (the ``minian.data`` cache), and a dataset that cannot be
+    resolved fails rather than skips (see :func:`minian.data.dataset_path`).
+    Read-only consumers can depend on this directly; output-writing tests
+    should use the ``dataset`` fixture so their outputs get cleaned up.
     """
-    return require_dataset
+    return dataset_path
 
 
 @pytest.fixture
-def clean_dataset_outputs(
-    dataset: Callable[[str], Path],
-) -> Callable[[str], Path]:
-    """Factory yielding ``get_clean(name) -> Path`` for output-writing tests.
+def dataset(request, fetch_dataset: Callable[[str], Path]) -> Path:
+    """Function-scoped dataset directory with output cleanup tied to its scope.
 
-    Datasets are cached and shared, so a stale output from a prior run can mask a
-    failure (the test would read last run's file instead of this run's). This
-    fixture, built on top of the ``dataset`` factory, clears the known outputs
-    BEFORE the test and removes them again on teardown so the cached INPUT files
-    are left clean for the next run.
+    Parametrize indirectly with the dataset name; the known notebook outputs
+    (``DATASET_OUTPUTS``) are cleared before the test and removed again on
+    teardown, so cached INPUT files are reused while stale outputs can never
+    mask a failure (the test would otherwise read a prior run's results)::
+
+        @pytest.mark.parametrize("dataset", ["pipeline-demo"], indirect=True)
+        def test_x(dataset):
+            dpath = dataset  # ready, with its output slots cleared
+
+    Tying cleanup to the fixture (rather than a helper the test must remember
+    to call) means requesting the dataset is what schedules its cleanup.
     """
-    cleaned: list[tuple[Path, tuple[str, ...]]] = []
-
-    def get_clean(name: str) -> Path:
-        dpath = dataset(name)
-        outputs = DATASET_OUTPUTS.get(name, ())
-        for rel in outputs:  # setup: ensure the output slots are empty
-            _remove(dpath / rel)
-        cleaned.append((dpath, outputs))
-        return dpath
-
-    yield get_clean
-
-    for dpath, outputs in cleaned:  # teardown: leave only the input files
-        for rel in outputs:
-            _remove(dpath / rel)
+    name = request.param
+    dpath = fetch_dataset(name)
+    outputs = DATASET_OUTPUTS.get(name, ())
+    for rel in outputs:  # setup: ensure the output slots are empty
+        _remove(dpath / rel)
+    yield dpath
+    for rel in outputs:  # teardown: leave only the input files
+        _remove(dpath / rel)

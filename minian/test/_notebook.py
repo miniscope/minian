@@ -1,38 +1,20 @@
-"""Shared helpers for the notebook-execution tests.
+"""Shared helper for the notebook-execution tests.
 
 Notebooks now live inside the package (``minian/notebooks/**``) and pull their
-demo data on demand via :mod:`minian.data`. These helpers locate a notebook,
-make sure its dataset is available (downloading/caching it, or skipping the
-test cleanly when it cannot be resolved), and execute it with nbconvert.
+demo data on demand via :mod:`minian.data`. Datasets are resolved by the
+``dataset`` / ``fetch_dataset`` fixtures (see ``conftest.py``) so a notebook's
+own ``fetch`` call hits the warm cache; this module just locates and executes
+a notebook with nbconvert.
 """
 
 import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
-from ..data import dataset_path
 from ..notebooks import notebook_root
 
 NOTEBOOKS_DIR = notebook_root()
 ARTIFACT_DIR = Path("artifact").resolve()
-
-
-def require_dataset(name):
-    """Ensure a demo dataset is available locally, or skip the test.
-
-    Resolving it here (download + cache, or from a prepopulated
-    ``MINIAN_CACHE_DIR``) means the notebook's own ``fetch`` call hits the
-    cache. Skips the test if the dataset cannot be resolved.
-    """
-    try:
-        return dataset_path(name)
-    except OSError as exc:
-        # pooch raises requests/OS errors (a subclass of OSError) when it can't
-        # download and the file isn't already cached; skip rather than fail.
-        # An unknown dataset name (KeyError) still fails hard.
-        pytest.skip(f"demo dataset {name!r} unavailable: {exc}")
 
 
 def execute_notebook(relpath, output):
@@ -40,6 +22,8 @@ def execute_notebook(relpath, output):
 
     ``output`` is the output base name (no extension); the executed notebook is
     written to ``artifact/<output>.ipynb`` (the docs build reads it from there).
+    ``check=True`` turns a non-zero nbconvert exit (a failed notebook) into a
+    test failure.
     """
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     subprocess.run(

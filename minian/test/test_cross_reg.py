@@ -5,12 +5,12 @@ from ._notebook import execute_notebook
 
 
 @pytest.mark.slow
-def test_cross_reg_notebook(clean_dataset_outputs):
+@pytest.mark.parametrize("dataset", ["cross-reg-sessions"], indirect=True)
+def test_cross_reg_notebook(dataset):
     # The notebook fetches the two-session demo and writes its outputs back into
-    # that dataset directory, so resolve it (via clean_dataset_outputs, which
-    # clears stale outputs first and cleans up on teardown) and read the outputs
-    # from there.
-    dpath = clean_dataset_outputs("cross-reg-sessions")
+    # that dataset directory; the ``dataset`` fixture clears stale outputs first
+    # and cleans them up on teardown, so we just read the outputs from there.
+    dpath = dataset
     execute_notebook("cross_registration/cross-registration.ipynb", "cross-registration")
 
     assert (dpath / "shiftds.nc").exists()

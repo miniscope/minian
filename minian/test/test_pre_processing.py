@@ -18,14 +18,13 @@ param_background_removal = {"method": "tophat", "wnd": 15}
 
 
 # Module-scoped: resolving the dataset hashes ~688 MB, so do it once and share
-# the (read-only) videos across the tests below. The dataset path is plucked
-# from the shared ``dataset`` fixture tree (defined in conftest) rather than
-# resolved directly here.
+# the (read-only) videos across the tests below. These tests don't write any
+# dataset outputs, so they pull from the session-scoped ``fetch_dataset``
+# resolver directly rather than the output-cleaning ``dataset`` fixture.
 @pytest.fixture(scope="module")
-def varr(dataset):
-    # Same demo recording as the pipeline notebook (the msCam .avi files);
-    # download/cache it, or skip if unavailable.
-    dpath = dataset("pipeline-demo")
+def varr(fetch_dataset):
+    # Same demo recording as the pipeline notebook (the msCam .avi files).
+    dpath = fetch_dataset("pipeline-demo")
     return load_videos(str(dpath), **param_load_videos)
 
 
