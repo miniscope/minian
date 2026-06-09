@@ -21,9 +21,15 @@ import pandas as pd
 import rechunker
 import xarray as xr
 import zarr as zr
+
+# dask >=2025 (a hard floor in pyproject) ships the TaskSpec optimizer, which
+# does its own graph optimisation. The legacy `fuse` / `inline_pattern` hooks
+# produced graphs its scheduler can't track, so they have been removed; see
+# `custom_arr_optimize` / `custom_delay_optimize` below.
+from dask.array.optimization import fuse_linear_task_spec
 from dask.core import flatten
 from dask.delayed import optimize as default_delay_optimize
-from dask.optimization import cull, fuse, inline, inline_functions
+from dask.optimization import cull, inline
 from dask.utils import ensure_dict
 from distributed.diagnostics.plugin import SchedulerPlugin
 from distributed.scheduler import SchedulerState, cast
@@ -32,12 +38,6 @@ from scipy.ndimage import median_filter
 from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import lsqr
 from tifffile import TiffFile, imread
-
-# dask >=2025 (a hard floor in pyproject) ships the TaskSpec optimizer, which
-# does its own graph optimisation. The legacy `fuse` / `inline_pattern` hooks
-# produced graphs its scheduler can't track, so they have been removed; see
-# `custom_arr_optimize` / `custom_delay_optimize` below.
-from dask.array.optimization import fuse_linear_task_spec
 
 
 def ensure_ffmpeg() -> None:
@@ -600,7 +600,7 @@ def xrconcat_recursive(var: dict | list, dims: list[str]) -> xr.Dataset:
         return xr.concat(var, dim=dims[0])
 
 
-def update_meta(dpath, pattern=r"^minian$", meta_dict=None):
+def update_meta(dpath, pattern=r"^minian$", meta_dict=None) -> None:
     """
     Permanently update the metadata of saved minian datasets in place.
 

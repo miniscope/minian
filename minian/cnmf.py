@@ -1839,7 +1839,7 @@ def adj_corr(
     adj: np.ndarray,
     nod_df: pd.DataFrame,
     freq: float,
-    idx_dims=["height", "width"],
+    idx_dims=None,
     chunk: int = 600,
 ) -> scipy.sparse.csr_matrix:
     """
@@ -1881,6 +1881,8 @@ def adj_corr(
         Sparse matrix of the same shape as `adj` but with values corresponding
         the computed correlation.
     """
+    if idx_dims is None:
+        idx_dims = ["height", "width"]
     G = nx.Graph()
     G.add_nodes_from([(i, d) for i, d in enumerate(nod_df.to_dict("records"))])
     G.add_edges_from([(s, t) for s, t in zip(*adj.nonzero())])

@@ -2145,23 +2145,23 @@ def visualize_spatial_partition(
         "partition": membership,
         "color": [palette[int(p) % len(palette)] for p in membership],
     })
-    opts_im = dict(
-        frame_width=overlay_frame_width,
-        frame_height=overlay_frame_height,
-        cmap="Greys_r",
-    )
-    opts_pts = dict(
-        size=6,
-        color="color",
-        tools=["hover"],
-        line_alpha=0,
-        fill_alpha=0.9,
-        show_legend=False,
-        title=(
+    opts_im = {
+        "frame_width": overlay_frame_width,
+        "frame_height": overlay_frame_height,
+        "cmap": "Greys_r",
+    }
+    opts_pts = {
+        "size": 6,
+        "color": "color",
+        "tools": ["hover"],
+        "line_alpha": 0,
+        "fill_alpha": 0.9,
+        "show_legend": False,
+        "title": (
             f"{n_parts} partitions"
             f" — cross-partition edges: {diag['cross_fraction']:.1%}"
         ),
-    )
+    }
     overlay = hv.Image(max_proj, kdims=["width", "height"]).opts(**opts_im) * hv.Points(
         pts_df, kdims=["width", "height"], vdims=["partition", "color"]
     ).opts(**opts_pts)
@@ -2191,11 +2191,11 @@ def visualize_spatial_partition(
     # edge of the row lines up with the bottom of the image. Floor at
     # 100 px to keep axis labels legible if the overlay is very short.
     hist_frame_height = max(100, overlay_frame_height // len(hist_specs))
-    hist_opts = dict(
-        frame_width=360,
-        frame_height=hist_frame_height,
-        tools=["hover"],
-    )
+    hist_opts = {
+        "frame_width": 360,
+        "frame_height": hist_frame_height,
+        "tools": ["hover"],
+    }
 
     def _hist(values: np.ndarray, label: str, title: str) -> hv.Histogram:
         # A single-bar histogram means perfect balance, not a render error.
