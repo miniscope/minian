@@ -157,3 +157,6 @@ zenodo_upload/
 
 # Zenodo personal access token (scripts/zenodo_upload.py) - never commit
 .zenodo_token
+
+# Default output dir of `minian notebooks copy` (run from the repo root)
+minian-notebooks/
