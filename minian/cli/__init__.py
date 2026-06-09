@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="minian",
         description="MiniAn command line tools: fetch demo data and copy out notebooks.",
     )
-    sub = parser.add_subparsers(dest="group", required=True)
+    sub = parser.add_subparsers(title="subcommands", dest="group", required=True)
     data.add_subparser(sub)
     notebooks.add_subparser(sub)
     return parser

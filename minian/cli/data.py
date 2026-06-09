@@ -32,7 +32,7 @@ def _cmd_path(args):
 
 def add_subparser(subparsers):
     parser = subparsers.add_parser("data", help="fetch demo datasets")
-    sub = parser.add_subparsers(dest="data_command", required=True)
+    sub = parser.add_subparsers(title="subcommands", dest="data_command", required=True)
 
     sub.add_parser("list", help="list datasets and sizes").set_defaults(func=_cmd_list)
 

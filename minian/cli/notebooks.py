@@ -26,7 +26,7 @@ def add_subparser(subparsers):
     parser = subparsers.add_parser(
         "notebooks", help="copy bundled notebooks out of the package"
     )
-    sub = parser.add_subparsers(dest="notebooks_command", required=True)
+    sub = parser.add_subparsers(title="subcommands", dest="notebooks_command", required=True)
 
     sub.add_parser("list", help="list available notebooks").set_defaults(func=_cmd_list)
 
