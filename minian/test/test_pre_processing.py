@@ -5,8 +5,6 @@ import holoviews as hv
 from ..io import load_videos
 from ..preprocessing import denoise, remove_background, stripe_correction
 
-dpath = "./demo_movies"
-
 param_load_videos = {
     "pattern": "msCam[0-9].avi",
     "dtype": np.uint8,
@@ -19,9 +17,15 @@ param_denoise = {"method": "median", "ksize": 7}
 param_background_removal = {"method": "tophat", "wnd": 15}
 
 
-@pytest.fixture
-def varr():
-    return load_videos(dpath, **param_load_videos)
+# Module-scoped: resolving the dataset hashes ~688 MB, so do it once and share
+# the (read-only) videos across the tests below. These tests don't write any
+# dataset outputs, so they pull from the session-scoped ``fetch_dataset``
+# resolver directly rather than the output-cleaning ``dataset`` fixture.
+@pytest.fixture(scope="module")
+def varr(fetch_dataset):
+    # Same demo recording as the pipeline notebook (the msCam .avi files).
+    dpath = fetch_dataset("pipeline-demo")
+    return load_videos(str(dpath), **param_load_videos)
 
 
 def test_can_load_videos(varr):

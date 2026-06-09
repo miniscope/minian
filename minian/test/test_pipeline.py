@@ -1,28 +1,20 @@
-import os
-import subprocess
-import sys
-
 import pytest
 
 from ..utilities import open_minian
+from ._notebook import execute_notebook
 
 
-def test_pipeline_notebook():
-    os.makedirs("artifact", exist_ok=True)
-    args = [
-        sys.executable,
-        "-m",
-        "jupyter",
-        "nbconvert",
-        "--to",
-        "notebook",
-        "--output",
-        "artifact/pipeline.ipynb",
-        "--execute",
-        "pipeline.ipynb",
-    ]
-    subprocess.run(args, check=True)
-    minian_ds = open_minian("./demo_movies/minian")
+@pytest.mark.slow
+@pytest.mark.parametrize("dataset", ["pipeline-demo"], indirect=True)
+def test_pipeline_notebook(dataset):
+    # Resolve (download/cache) the demo recording up front; the notebook's own
+    # fetch("pipeline-demo") call then hits the cache. The ``dataset`` fixture
+    # also clears any stale notebook outputs in the shared cache before the run
+    # (so we can't read a prior run's results) and removes them on teardown.
+    dpath = dataset
+    execute_notebook("pipeline/pipeline.ipynb", "pipeline")
+
+    minian_ds = open_minian(str(dpath / "minian"))
     # Input dimensions are fixed by the demo movie, so check them exactly.
     assert minian_ds.sizes["frame"] == 2000
     assert minian_ds.sizes["height"] == 480
@@ -41,5 +33,5 @@ def test_pipeline_notebook():
     assert int(minian_ds["C"].sum().compute()) == pytest.approx(546290, rel=5e-2)
     assert int(minian_ds["S"].sum().compute()) == pytest.approx(5065, rel=1e-1)
     assert int(minian_ds["A"].sum().compute()) == pytest.approx(71468, rel=5e-2)
-    assert os.path.exists("./demo_movies/minian_mc.mp4")
-    assert os.path.exists("./demo_movies/minian.mp4")
+    assert (dpath / "minian_mc.mp4").exists()
+    assert (dpath / "minian.mp4").exists()

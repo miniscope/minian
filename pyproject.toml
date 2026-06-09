@@ -25,6 +25,7 @@ dependencies = [
     "opencv-python>=4.2.0.34",
     "pandas>=1.2.3",
     "panel>=0.8.0",
+    "pooch>=1.6.0",
     "pyfftw>=0.12.0",
     "rechunker>=0.3.3",
     "scikit-image>=0.18.1",
@@ -74,6 +75,10 @@ Issues = "https://github.com/miniscope/minian/issues"
 Changelog = "https://github.com/miniscope/minian/blob/master/CHANGELOG.md"
 
 [project.scripts]
+# `minian` is the canonical CLI. `minian-install` is a thin deprecated alias for
+# the one command that actually shipped before; new functionality lives only
+# under `minian` subcommands (`minian data ...`, `minian notebooks ...`).
+minian = "minian.cli:main"
 minian-install = "minian.install:main"
 
 [project.optional-dependencies]
@@ -104,14 +109,18 @@ tag_filter = "v*"
 tag_regex = 'v(?P<version>([1-9][0-9]*!)?(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))*((a|b|c|rc)(0|[1-9][0-9]*))?(\.post(0|[1-9][0-9]*))?(\.dev(0|[1-9][0-9]*))?$)$'
 
 [tool.pdm.build]
-# Keep build artifacts (bytecode, numba AOT caches) out of the wheel/sdist.
-# pdm-backend's defaults pick these up when the package directory is walked.
+# pdm-backend auto-detects the `minian` package and ships every file under it,
+# which now includes the bundled notebooks and their assets. Keep build junk
+# and notebook execution caches out of the wheel.
 excludes = [
     "**/__pycache__",
     "**/*.pyc",
+    "**/.ipynb_checkpoints",
     "**/*.nbi",
     "**/*.nbc",
 ]
+# Ship the maintainer Zenodo helper in the sdist (not the wheel).
+source-includes = ["scripts/", "minian/test/"]
 
 [tool.pdm.scripts]
 lock.composite = [
@@ -119,7 +128,13 @@ lock.composite = [
     'pdm lock --with :all --python=">=3.12,<3.14" --append',
     'pdm lock --with :all --python=">=3.14" --append'
 ]
+# The `not slow` default lives in pytest config (addopts) so a bare
+# `python -m pytest` behaves exactly like `pdm run test`. `test-all` clears
+# the marker filter to also run the heavy end-to-end notebook runs; CI uses it
+# across the whole matrix because the pipeline notebook is currently our main
+# cross-version/cross-OS integration coverage.
 test = "pytest"
+test-all = "pytest -m ''"
 
 # Dependency cooldown: exclude packages published in the last 7 days when
 # resolving the lockfile, dodging most supply-chain attacks (usually caught
@@ -151,9 +166,16 @@ addopts = [
     '-v',
     '--color=yes',
     '--cov=minian',
+    # Deselect the heavy notebook runs by default; `pdm run test-all` (and CI)
+    # clear this with `-m ''`. Keeps bare `python -m pytest` fast and identical
+    # to `pdm run test`.
+    '-m', 'not slow',
 ]
 testpaths = [
   "minian/test"
+]
+markers = [
+  "slow: heavy end-to-end notebook runs (deselect with '-m \"not slow\"')",
 ]
 
 
