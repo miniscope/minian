@@ -32,13 +32,11 @@ from pathlib import Path
 
 import pooch
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
-
-from minian.data._registry import DATASETS  # noqa: E402
+from minian.data._registry import DATASETS
 
 # Source bytes are read from a directory laid out by dataset name, the same
 # layout the pooch cache uses: ``<source>/<dataset>/<in-dataset relpath>``.
+REPO = Path(__file__).resolve().parent.parent
 DEFAULT_SOURCE = str(REPO / ".minian_data")
 
 COMMON_METADATA = """\
