@@ -2,19 +2,19 @@
 
 from pathlib import Path
 
-from ..notebooks import copy, notebooks
+from ..notebooks import NOTEBOOKS, copy
 from ._common import add_select_args, print_table, selected
 
 DEFAULT_DEST = "minian-notebooks"
 
 
 def _cmd_list(args):
-    print_table(list(notebooks().items()))
+    print_table(list(NOTEBOOKS.items()))
 
 
 def _cmd_copy(args):
     dest = Path(args.output) if args.output else Path(DEFAULT_DEST)
-    for name in selected(args, notebooks(), "notebook"):
+    for name in selected(args, NOTEBOOKS, "notebook"):
         for path in copy(name, dest):
             print(f"copied {name} -> {path}")
 

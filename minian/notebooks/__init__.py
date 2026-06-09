@@ -19,7 +19,7 @@ import importlib.resources as ir
 import shutil
 from pathlib import Path
 
-__all__ = ["NOTEBOOKS", "notebooks", "notebook_root", "notebook_files", "copy"]
+__all__ = ["NOTEBOOKS", "notebook_root", "notebook_files", "copy"]
 
 # Canonical one-line descriptions, keyed by notebook name. The prose guides
 # live in the docs site (docs/source/pipeline, docs/source/cross_reg); the CLI
@@ -45,11 +45,6 @@ _IGNORE = shutil.ignore_patterns(
 def notebook_root() -> Path:
     """Filesystem directory holding the bundled notebooks."""
     return Path(ir.files(__name__))
-
-
-def notebooks() -> dict[str, str]:
-    """Mapping of notebook name -> one-line description."""
-    return dict(NOTEBOOKS)
 
 
 def notebook_files() -> list[str]:
