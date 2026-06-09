@@ -105,7 +105,7 @@ def fetch(name: str, *, progressbar: bool = True) -> Path:
 
 
 def fetch_all(*, progressbar: bool = True) -> list[Path]:
-    """Fetch every registered dataset (used by ``minian data download --all``)."""
+    """Fetch every registered dataset; convenience wrapper over :func:`fetch`."""
     return [fetch(name, progressbar=progressbar) for name in _registry.DATASETS]
 
 

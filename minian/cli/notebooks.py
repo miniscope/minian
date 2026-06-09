@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from ..notebooks import copy, notebooks
-from ._common import print_table
+from ._common import add_select_args, print_table, selected
 
 DEFAULT_DEST = "minian-notebooks"
 
@@ -14,10 +14,7 @@ def _cmd_list(args):
 
 def _cmd_copy(args):
     dest = Path(args.output) if args.output else Path(DEFAULT_DEST)
-    names = list(notebooks()) if args.all else ([args.name] if args.name else [])
-    if not names:
-        raise SystemExit("Give a notebook name or --all (see `minian notebooks list`).")
-    for name in names:
+    for name in selected(args, notebooks(), "notebook"):
         for path in copy(name, dest):
             print(f"copied {name} -> {path}")
 
@@ -31,8 +28,7 @@ def add_subparser(subparsers):
     sub.add_parser("list", help="list available notebooks").set_defaults(func=_cmd_list)
 
     cp = sub.add_parser("copy", help="copy a notebook into a directory")
-    cp.add_argument("name", nargs="?", help="notebook name (see `list`)")
-    cp.add_argument("--all", action="store_true", help="copy every notebook")
+    add_select_args(cp, "notebook")
     cp.add_argument(
         "-o", "--output", help=f"destination directory (default: ./{DEFAULT_DEST})"
     )
