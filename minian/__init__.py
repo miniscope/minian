@@ -7,7 +7,7 @@ from .utilities import custom_arr_optimize, custom_delay_optimize
 
 try:
     __version__ = version("minian")
-except:
+except:  # noqa: E722
     __version__ = "0.0.0"
 
 da.config.set(array_optimize=custom_arr_optimize, delayed_optimize=custom_delay_optimize)

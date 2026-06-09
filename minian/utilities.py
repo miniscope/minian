@@ -10,6 +10,7 @@ from os import listdir
 from os.path import isdir, isfile
 from os.path import join as pjoin
 from pathlib import Path
+from typing import Any, Literal
 from uuid import uuid4
 
 import cv2
@@ -32,7 +33,7 @@ from dask.delayed import optimize as default_delay_optimize
 from dask.optimization import cull, inline
 from dask.utils import ensure_dict
 from distributed.diagnostics.plugin import SchedulerPlugin
-from distributed.scheduler import SchedulerState, cast
+from distributed.scheduler import Scheduler, SchedulerState, cast
 from natsort import natsorted
 from scipy.ndimage import median_filter
 from scipy.sparse import csc_matrix
@@ -53,10 +54,10 @@ def ensure_ffmpeg() -> None:
 
 def load_videos(
     vpath: str,
-    pattern=r"msCam[0-9]+\.avi$",
+    pattern: str = r"msCam[0-9]+\.avi$",
     dtype: str | type = np.float64,
     downsample: dict | None = None,
-    downsample_strategy="subset",
+    downsample_strategy: Literal["subset", "mean"] = "subset",
     post_process: Callable | None = None,
 ) -> xr.DataArray:
     """
@@ -285,7 +286,7 @@ def load_avi_perframe(fname: str, fid: int) -> np.ndarray:
 
 
 def open_minian(
-    dpath: str, post_process: Callable | None = None, return_dict=False
+    dpath: str, post_process: Callable | None = None, return_dict: bool = False
 ) -> dict | xr.Dataset:
     """
     Load an existing minian dataset.
@@ -351,11 +352,11 @@ def open_minian(
 def open_minian_mf(
     dpath: str,
     index_dims: list[str],
-    result_format="xarray",
-    pattern=r"minian$",
+    result_format: Literal["xarray", "pandas"] = "xarray",
+    pattern: str = r"minian$",
     sub_dirs: list[str] = None,
-    exclude=True,
-    **kwargs,
+    exclude: bool = True,
+    **kwargs: Any,
 ) -> xr.Dataset | pd.DataFrame:
     """
     Open multiple minian datasets across multiple directories.
@@ -444,10 +445,10 @@ def save_minian(
     var: xr.DataArray,
     dpath: str,
     meta_dict: dict | None = None,
-    overwrite=False,
+    overwrite: bool = False,
     chunks: dict | None = None,
-    compute=True,
-    mem_limit="500MB",
+    compute: bool = True,
+    mem_limit: str = "500MB",
 ) -> xr.DataArray:
     """
     Save a `xr.DataArray` with `zarr` storage backend following minian
@@ -548,7 +549,7 @@ def save_minian(
     return arr
 
 
-def xrconcat_recursive(var: dict | list, dims: list[str]) -> xr.Dataset:
+def xrconcat_recursive(var: dict | list, dims: list[str]) -> xr.Dataset | xr.DataTree:
     """
     Recursively concatenate `xr.DataArray` over multiple dimensions.
 
@@ -600,7 +601,7 @@ def xrconcat_recursive(var: dict | list, dims: list[str]) -> xr.Dataset:
         return xr.concat(var, dim=dims[0])
 
 
-def update_meta(dpath, pattern=r"^minian$", meta_dict=None) -> None:
+def update_meta(dpath: str, pattern: str = r"^minian$", meta_dict: dict | None = None) -> None:
     """
     Permanently update the metadata of saved minian datasets in place.
 
@@ -646,9 +647,7 @@ def update_meta(dpath, pattern=r"^minian$", meta_dict=None) -> None:
             # without rewriting (or even reading) the variable's data chunks.
             for store in os.listdir(f_path):
                 if store.endswith(".zarr"):
-                    xr.Dataset(coords=coords).to_zarr(
-                        os.path.join(f_path, store), mode="a"
-                    )
+                    xr.Dataset(coords=coords).to_zarr(os.path.join(f_path, store), mode="a")
             print(f"updated: {f_path}")
 
 
@@ -696,8 +695,8 @@ def rechunk_like(x: xr.DataArray, y: xr.DataArray) -> xr.DataArray:
 
 def get_optimal_chk(
     arr: xr.DataArray,
-    dim_grp=None,
-    csize=256,
+    dim_grp: list[tuple[str, ...]] | None = None,
+    csize: int = 256,
     dtype: type | None = None,
 ) -> dict:
     """
@@ -852,7 +851,13 @@ class TaskAnnotation(SchedulerPlugin):
         super().__init__()
         self.annt_dict = ANNOTATIONS
 
-    def update_graph(self, scheduler, client, tasks, **kwargs) -> None:
+    def update_graph(
+        self,
+        scheduler: Scheduler,
+        client: str,  # noqa: ARG002
+        tasks: list[str | int | float | tuple[Any, ...]],
+        **kwargs: Any,  # noqa: ARG002
+    ) -> None:
         parent = cast(SchedulerState, scheduler)
         for tk in tasks:
             for pattern, annt in self.annt_dict.items():
@@ -870,7 +875,7 @@ class TaskAnnotation(SchedulerPlugin):
 
 def custom_arr_optimize(
     dsk: dict,
-    **kwargs,
+    **kwargs: Any,
 ) -> dict:
     """
     Customized implementation of array optimization function.
@@ -903,6 +908,12 @@ def custom_arr_optimize(
     # removing this now-vestigial optimizer + its arguments, is tracked
     # separately. The argument surface is kept for now so the call sites that
     # still pass these kwargs keep working until that follow-up lands.
+    if kwargs:
+        warnings.warn(
+            "Passing kwargs to custom_arr_optimized is deprecated and ignored",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     return dsk
 
 
@@ -946,7 +957,7 @@ def rewrite_key(key: str | tuple, rwdict: dict) -> str:
 
 
 def custom_fused_keys_renamer(
-    keys: list, max_fused_key_length=120, rename_dict: dict | None = None
+    keys: list, max_fused_key_length: int = 120, rename_dict: dict | None = None
 ) -> str:
     """
     Custom implmentation to create new keys for `fuse` tasks.
@@ -980,7 +991,7 @@ def custom_fused_keys_renamer(
     if max_fused_key_length:  # Take into account size of hash suffix
         max_fused_key_length -= 5
 
-    def _enforce_max_key_limit(key_name):
+    def _enforce_max_key_limit(key_name: str) -> str:
         if max_fused_key_length and len(key_name) > max_fused_key_length:
             name_hash = f"{hash(key_name):x}"[:4]
             key_name = f"{key_name[:max_fused_key_length]}-{name_hash}"
@@ -1107,9 +1118,7 @@ def inline_pattern(dsk: dict, pat_ls: list[str], inline_constants: bool) -> dict
     return dsk
 
 
-def custom_delay_optimize(
-    dsk: dict, keys: list, **kwargs
-) -> dict:
+def custom_delay_optimize(dsk: dict, keys: list, **kwargs: Any) -> dict:
     """
     Custom optimization functions for delayed tasks.
 
@@ -1127,11 +1136,11 @@ def custom_delay_optimize(
     dsk : dict
         Optimized dask graph.
     """
-    if 'fast_functions' in kwargs or 'inline_patterns' in kwargs:
+    if "fast_functions" in kwargs or "inline_patterns" in kwargs:
         warnings.warn(
             "fast_functions and inline_patterns are deprecated and ignored.",
             DeprecationWarning,
-            stacklevel=2
+            stacklevel=2,
         )
     # `optimization.fuse.delayed` defaults to False on dask >=2025, so
     # `dask.delayed.optimize` is a no-op. Invoke `fuse_linear_task_spec`
@@ -1166,7 +1175,7 @@ def unique_keys(keys: list) -> np.ndarray:
     return np.unique(new_keys)
 
 
-def get_keys_pat(pat: str, keys: list, return_all=False) -> list | str:
+def get_keys_pat(pat: str, keys: list, return_all: bool = False) -> list | str:
     """
     Filter a list of task keys by pattern.
 
@@ -1221,7 +1230,9 @@ def optimize_chunk(arr: xr.DataArray, chk: dict) -> xr.DataArray:
     return arr_chk
 
 
-def local_extreme(fm: np.ndarray, k: np.ndarray, etype="max", diff=0) -> np.ndarray:
+def local_extreme(
+    fm: np.ndarray, k: np.ndarray, etype: Literal["min", "max"] = "max", diff: int = 0
+) -> np.ndarray:
     """
     Find local extreme of a 2d array.
 
@@ -1285,7 +1296,7 @@ def med_baseline(a: np.ndarray, wnd: int) -> np.ndarray:
 
 
 @darr.as_gufunc(signature="(m,n),(m)->(n)", output_dtypes=float)
-def sps_lstsq(a: csc_matrix, b: np.ndarray, **kwargs):
+def sps_lstsq(a: csc_matrix, b: np.ndarray, **kwargs: Any) -> np.ndarray:
     out = np.zeros((b.shape[0], a.shape[1]))
     for i in range(b.shape[0]):
         out[i, :] = lsqr(a, b[i, :].squeeze(), **kwargs)[0]

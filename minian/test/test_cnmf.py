@@ -1,5 +1,7 @@
 """Unit tests for discrete functions in ``minian.cnmf`` on synthetic input."""
 
+from collections.abc import Callable
+
 import dask.array as da
 import networkx as nx
 import numpy as np
@@ -57,9 +59,9 @@ class TestSpatialPartitionBaseCase:
         membership = spatial_partition(grid_4x4, target_chunk=4)
 
         expected_tiles = [
-            {0, 1, 4, 5},      # top-left  (h in 0..1, w in 0..1)
-            {2, 3, 6, 7},      # top-right (h in 0..1, w in 2..3)
-            {8, 9, 12, 13},    # bot-left  (h in 2..3, w in 0..1)
+            {0, 1, 4, 5},  # top-left  (h in 0..1, w in 0..1)
+            {2, 3, 6, 7},  # top-right (h in 0..1, w in 2..3)
+            {8, 9, 12, 13},  # bot-left  (h in 2..3, w in 0..1)
             {10, 11, 14, 15},  # bot-right (h in 2..3, w in 2..3)
         ]
         # Every node assigned to exactly one of the four tiles.
@@ -74,7 +76,7 @@ class TestSpatialPartitionBaseCase:
         # protects that guarantee from a future "shuffle labels"
         # refactor.
         membership = spatial_partition(grid_4x4, target_chunk=4)
-        top_label = membership[0]   # tile containing (0,0)
+        top_label = membership[0]  # tile containing (0,0)
         bot_label = membership[12]  # tile containing (3,0)
         assert top_label < bot_label
 
@@ -82,9 +84,7 @@ class TestSpatialPartitionBaseCase:
         # 8 points along x, only 1 along y -> first split must be on x.
         # With target_chunk=4 the result is left half {0..3}, right
         # half {4..7}; the y-coordinate is irrelevant.
-        positions = np.column_stack(
-            [np.arange(8, dtype=float), np.zeros(8)]
-        )
+        positions = np.column_stack([np.arange(8, dtype=float), np.zeros(8)])
         membership = spatial_partition(positions, target_chunk=4)
         assert set(membership[:4]) == {membership[0]}
         assert set(membership[4:]) == {membership[4]}
@@ -175,7 +175,7 @@ class TestSpatialPartitionCompactness:
         positions = rng.uniform(0, 100, size=(256, 2))
         membership = spatial_partition(positions, target_chunk=16)
 
-        def max_diameter(labels):
+        def max_diameter(labels: np.ndarray) -> float:
             d = 0.0
             for lab in np.unique(labels):
                 pts = positions[labels == lab]
@@ -183,9 +183,7 @@ class TestSpatialPartitionCompactness:
                 d = max(d, diag)
             return d
 
-        random_labels = rng.permutation(len(positions)) % (
-            membership.max() + 1
-        )
+        random_labels = rng.permutation(len(positions)) % (membership.max() + 1)
         spatial_diam = max_diameter(membership)
         random_diam = max_diameter(random_labels)
         # Spatial partition packs each leaf into a tile of side
@@ -198,12 +196,8 @@ class TestSpatialPartitionCompactness:
     def test_neighbouring_points_share_partition_more_often(self):
         # Construct two clusters, far apart. The partitioner must keep
         # each cluster intact at target_chunk = cluster size.
-        cluster_a = np.column_stack(
-            [np.zeros(8), np.linspace(0, 1, 8)]
-        )
-        cluster_b = np.column_stack(
-            [np.full(8, 100.0), np.linspace(0, 1, 8)]
-        )
+        cluster_a = np.column_stack([np.zeros(8), np.linspace(0, 1, 8)])
+        cluster_b = np.column_stack([np.full(8, 100.0), np.linspace(0, 1, 8)])
         positions = np.vstack([cluster_a, cluster_b])
         membership = spatial_partition(positions, target_chunk=8)
         assert set(membership[:8]) == {membership[0]}
@@ -281,7 +275,7 @@ class TestSpatialPartitionContractViolations:
 
 
 @pytest.fixture
-def synthetic_varr():
+def synthetic_varr() -> Callable[[int, int, int, int], xr.DataArray]:
     """Factory: build a (frame, height, width) random xr.DataArray.
 
     Dim order matches what ``minian.utilities.load_videos`` produces and
@@ -292,7 +286,8 @@ def synthetic_varr():
     a transpose bug in ``construct_comput`` slip past every assertion
     in this file.
     """
-    def _build(height: int, width: int, frames: int, seed: int = 0):
+
+    def _build(height: int, width: int, frames: int, seed: int = 0) -> xr.DataArray:
         rng = np.random.RandomState(seed)
         return xr.DataArray(
             rng.standard_normal((frames, height, width)).astype("float32"),
@@ -303,25 +298,30 @@ def synthetic_varr():
                 "width": np.arange(width),
             },
         )
+
     return _build
 
 
 @pytest.fixture
-def adj_corr_setup(synthetic_varr):
+def adj_corr_setup(
+    synthetic_varr,
+) -> Callable[[int, int, int, int, int, int], tuple[xr.DataArray, np.ndarray, pd.DataFrame]]:
     """Factory: ``(varr, adj, nod_df)`` for a radius-neighbour graph on
     randomly placed nodes. Defaults match the smaller-FOV regression
     case; bump ``n``/``t``/``radius`` per test as needed.
     """
-    def _build(n=80, h=15, w=15, t=300, radius=4, seed=0):
+
+    def _build(
+        n=80, h=15, w=15, t=300, radius=4, seed=0
+    ) -> tuple[xr.DataArray, np.ndarray, pd.DataFrame]:
         rng = np.random.RandomState(seed)
         varr = synthetic_varr(h, w, t, seed=seed + 1)
         hs = rng.randint(0, h, size=n)
         ws = rng.randint(0, w, size=n)
         nod_df = pd.DataFrame({"height": hs, "width": ws})
-        adj = radius_neighbors_graph(
-            nod_df[["height", "width"]].values, radius=radius
-        ).astype(bool)
+        adj = radius_neighbors_graph(nod_df[["height", "width"]].values, radius=radius).astype(bool)
         return varr, adj, nod_df
+
     return _build
 
 
@@ -350,9 +350,7 @@ class TestAdjCorr:
         # pixel subset, so its output depended on which other pixels
         # happened to share the chunk -- matching np.corrcoef at
         # multiple chunk sizes is a direct fingerprint of the fix.
-        varr, adj, nod_df = adj_corr_setup(
-            n=16, t=80, h=25, w=25, radius=8, seed=11
-        )
+        varr, adj, nod_df = adj_corr_setup(n=16, t=80, h=25, w=25, radius=8, seed=11)
         hs = nod_df["height"].values
         ws = nod_df["width"].values
         out = adj_corr(varr, adj, nod_df, freq=freq, chunk=chunk).toarray()
@@ -360,12 +358,9 @@ class TestAdjCorr:
         traces = np.stack(
             [varr.isel(height=hs[k], width=ws[k]).values for k in range(len(nod_df))]
         ).astype("float32")
-        if freq is not None:
-            # filt_fft_vec mutates in place; copy to keep `traces` clean for
-            # later inspection if this assertion fails.
-            traces_truth = filt_fft_vec(traces.copy(), freq, "low")
-        else:
-            traces_truth = traces
+        # filt_fft_vec mutates in place; copy to keep `traces` clean for
+        # later inspection if this assertion fails.
+        traces_truth = filt_fft_vec(traces.copy(), freq, "low") if freq is not None else traces
         for i, j in zip(*out.nonzero()):
             truth = np.corrcoef(traces_truth[i], traces_truth[j])[0, 1]
             assert out[i, j] == pytest.approx(truth, abs=1e-5)
@@ -401,6 +396,7 @@ class TestAdjCorr:
 @pytest.fixture
 def line_graph_with_pos_attrs():
     """Factory: n-node line graph with optional ``height``/``width`` node attrs."""
+
     def _build(n: int, with_pos_attrs: bool = True) -> nx.Graph:
         G = nx.Graph()
         for i in range(n):
@@ -409,6 +405,7 @@ def line_graph_with_pos_attrs():
         for i in range(n - 1):
             G.add_edge(i, i + 1)
         return G
+
     return _build
 
 
@@ -439,18 +436,16 @@ class TestGraphOptimizeCorr:
         ws = rng.randint(0, w, size=n)
 
         G = nx.Graph()
-        G.add_nodes_from(
-            [(i, {"height": int(hs[i]), "width": int(ws[i])}) for i in range(n)]
-        )
+        G.add_nodes_from([(i, {"height": int(hs[i]), "width": int(ws[i])}) for i in range(n)])
         # Sparse edges so we have a few intra- and cross-partition pairs.
         for src, tgt in [(0, 1), (2, 3), (4, 5), (6, 7), (0, 6), (3, 9), (5, 11)]:
             G.add_edge(src, tgt)
 
         corr_df = graph_optimize_corr(varr, G, freq, chunk=4)
 
-        traces = np.stack(
-            [varr.isel(height=hs[k], width=ws[k]).values for k in range(n)]
-        ).astype("float32")
+        traces = np.stack([varr.isel(height=hs[k], width=ws[k]).values for k in range(n)]).astype(
+            "float32"
+        )
         if freq is not None:
             traces = filt_fft_vec(traces.copy(), freq, "low")
 
@@ -517,11 +512,13 @@ def line_graph_membership():
     node index in stride ``chunk``; radius=1.5 -> exactly the
     consecutive-pair edges.
     """
-    def _build(n: int, chunk: int):
+
+    def _build(n: int, chunk: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         positions = np.column_stack([np.arange(n, dtype=float), np.zeros(n)])
         membership = spatial_partition(positions, target_chunk=chunk)
         adj = radius_neighbors_graph(positions, radius=1.5).astype(bool)
         return positions, membership, adj
+
     return _build
 
 
@@ -540,8 +537,11 @@ class TestPartitionDiagnostics:
         assert diag["n_parts"] == 4
         assert diag["sizes"].tolist() == [2, 2, 2, 2]
         for absent in (
-            "edges_per_partition", "cross_fraction", "cross_edges",
-            "total_edges", "mem_mb",
+            "edges_per_partition",
+            "cross_fraction",
+            "cross_edges",
+            "total_edges",
+            "mem_mb",
         ):
             assert absent not in diag
 
@@ -569,9 +569,7 @@ class TestPartitionDiagnostics:
         diag_tri = partition_diagnostics(membership, adj=scipy.sparse.tril(adj, k=-1))
         for key in ("total_edges", "cross_edges", "cross_fraction"):
             assert diag_sym[key] == diag_tri[key]
-        assert (
-            diag_sym["edges_per_partition"] == diag_tri["edges_per_partition"]
-        ).all()
+        assert (diag_sym["edges_per_partition"] == diag_tri["edges_per_partition"]).all()
 
     def test_self_loops_are_dropped(self):
         # Some sparse-graph constructors (e.g. radius_neighbors_graph with
@@ -592,7 +590,7 @@ class TestPartitionDiagnostics:
         # tuning in the notebook preview.
         _, membership, _ = line_graph_membership(8, chunk=2)
         diag = partition_diagnostics(membership, n_frames=1000)
-        expected_mib = 2 * 1000 * 4 / (1024 ** 2)
+        expected_mib = 2 * 1000 * 4 / (1024**2)
         assert diag["mem_mb"].tolist() == pytest.approx([expected_mib] * 4)
 
     def test_empty_membership_returns_empty_diag(self):

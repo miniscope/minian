@@ -36,7 +36,10 @@ def calculate_centroids(A: xr.DataArray, window: xr.DataArray) -> pd.DataFrame:
 
 
 def calculate_centroid_distance(
-    cents: pd.DataFrame, by="session", index_dim=None, tile=(50, 50)
+    cents: pd.DataFrame,
+    by: str = "session",
+    index_dim: list[str] | None = None,
+    tile: tuple[int, int] = (50, 50),
 ) -> pd.DataFrame:
     """
     Calculate pairwise distance between centroids across all pairs of sessions.
@@ -80,7 +83,7 @@ def calculate_centroid_distance(
         index_dim = ["animal"]
     res_list = []
 
-    def cent_pair(grp):
+    def cent_pair(grp: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         dist_df_ls = []
         len_df = 0
         for (byA, grpA), (byB, grpB) in itt.combinations(list(grp.groupby(by)), 2):
@@ -311,7 +314,7 @@ def cal_mapping(dist: pd.DataFrame) -> pd.DataFrame:
     return map_list
 
 
-def resolve_mapping(mapping: pd.DataFrame, mode="majority") -> pd.DataFrame:
+def resolve_mapping(mapping: pd.DataFrame, mode: str = "majority") -> pd.DataFrame:
     """
     Extend and resolve mappings of pairs of sessions into mappings across
     multiple sessions.
@@ -473,7 +476,7 @@ def resolve(mapping: pd.DataFrame, mode: str) -> pd.DataFrame:
     resolve_mapping
     """
 
-    def to_eg(row):
+    def to_eg(row: pd.Series) -> pd.Series:
         row = row.dropna()
         assert len(row) == 2
         ss = row.index
@@ -485,7 +488,7 @@ def resolve(mapping: pd.DataFrame, mode: str) -> pd.DataFrame:
             }
         )
 
-    def maj_deg(df):
+    def maj_deg(df: pd.DataFrame) -> pd.DataFrame:
         is_max = df["deg"] == df["deg"].max()
         if is_max.sum() > 1:
             return df
@@ -558,7 +561,7 @@ def fill_mapping(mappings: pd.DataFrame, cents: pd.DataFrame) -> pd.DataFrame:
         Output mappings with unmatched cells.
     """
 
-    def fill(cur_grp, cur_cent):
+    def fill(cur_grp: pd.DataFrame, cur_cent: pd.DataFrame) -> pd.DataFrame:
         fill_ls = []
         for cur_ss in list(cur_grp["session"]):
             cur_ss_grp = cur_grp["session"][cur_ss].dropna()

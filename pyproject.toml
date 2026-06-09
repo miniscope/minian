@@ -202,6 +202,8 @@ ignore = [
     "B905",
     # docstrings for __init__
     "D107",
+    # use of assert - i guess it's used in here!?
+    "S101",
     # unsafe pickles - no network data used here
     "S301",
     # subprocess calls - no untrusted user data
@@ -211,6 +213,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # all modules related to testing
 "**/test/**.py" = [
+    # allow unused params (normal for fixtures)
+    "ARG001",
     # allow unused imports - fixtures
     "F401",
     # allow star import of fixtures

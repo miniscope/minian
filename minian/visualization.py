@@ -208,9 +208,7 @@ class VArrayViewer:
             )
             self.xyrange = RangeXY(source=im).rename(x_range="w", y_range="h")
             if not self._layout:
-                hv_box = hv.Rectangles([]).options(
-                    fill_alpha=0.3, line_color="white"
-                )
+                hv_box = hv.Rectangles([]).options(fill_alpha=0.3, line_color="white")
                 self.str_box = BoxEdit(source=hv_box)
                 im_ovly = im * hv_box
             else:
@@ -432,7 +430,7 @@ class CNMFViewer:
         self._org = org if org is not None else minian["org"]
         try:
             self.unit_labels = minian["unit_labels"].compute()
-        except:
+        except:  # noqa: E722
             self.unit_labels = xr.DataArray(
                 self._A["unit_id"].values.copy(),
                 dims=self._A["unit_id"].dims,
@@ -679,7 +677,7 @@ class CNMFViewer:
             try:
                 prv_val = idxs_dict[list(idxs_dict.keys())[ig - 1]]
                 wgt_grp.value = prv_val
-            except:
+            except:  # noqa: E722, S110
                 pass
 
         wgt_grp_prv.param.watch(prv, "clicks")
@@ -691,7 +689,7 @@ class CNMFViewer:
             try:
                 nxt_val = idxs_dict[list(idxs_dict.keys())[ig + 1]]
                 wgt_grp.value = nxt_val
-            except:
+            except:  # noqa: E722, S110
                 pass
 
         wgt_grp_nxt.param.watch(nxt, "clicks")
@@ -706,7 +704,7 @@ class CNMFViewer:
         wgt_showC.param.watch(callback_showC, "value")
         wgt_showS = pnwgt.Checkbox(name="ShowS", value=self._showS, width=120, height=10)
 
-        def callback_showS(val) -> None:
+        def callback_showS(val: hv.Event) -> None:
             self._showS = val.new
             self.update_temp_comp_sub()
 
@@ -1287,7 +1285,9 @@ def generate_videos(
     Y = Y * gain
     if nfm_norm is not None:
         norm_idx = np.sort(
-            np.random.choice(np.arange(Y.sizes["frame"]), size=nfm_norm, replace=False)
+            np.random.default_rng().choice(
+                np.arange(Y.sizes["frame"]), size=nfm_norm, replace=False
+            )
         )
         Y_sub = Y.isel(frame=norm_idx).values.reshape(-1)
         AC_sub = scisps.csc_matrix(AC.isel(frame=norm_idx).values.reshape((-1, 1)))
@@ -2139,12 +2139,14 @@ def visualize_spatial_partition(
     # degenerates when n_parts == 1 (vmin == vmax) and otherwise has fiddly
     # categorical-factor ordering. Modular indexing wraps cleanly past 256.
     palette = cc.glasbey
-    pts_df = pd.DataFrame({
-        "height": positions[:, 0],
-        "width": positions[:, 1],
-        "partition": membership,
-        "color": [palette[int(p) % len(palette)] for p in membership],
-    })
+    pts_df = pd.DataFrame(
+        {
+            "height": positions[:, 0],
+            "width": positions[:, 1],
+            "partition": membership,
+            "color": [palette[int(p) % len(palette)] for p in membership],
+        }
+    )
     opts_im = {
         "frame_width": overlay_frame_width,
         "frame_height": overlay_frame_height,
@@ -2157,10 +2159,7 @@ def visualize_spatial_partition(
         "line_alpha": 0,
         "fill_alpha": 0.9,
         "show_legend": False,
-        "title": (
-            f"{n_parts} partitions"
-            f" — cross-partition edges: {diag['cross_fraction']:.1%}"
-        ),
+        "title": (f"{n_parts} partitions — cross-partition edges: {diag['cross_fraction']:.1%}"),
     }
     overlay = hv.Image(max_proj, kdims=["width", "height"]).opts(**opts_im) * hv.Points(
         pts_df, kdims=["width", "height"], vdims=["partition", "color"]
@@ -2258,6 +2257,4 @@ def visualize_seeds_merge_partition(
     positions = seeds_in[["height", "width"]].values
     adj = radius_neighbors_graph(positions, radius=thres_dist).astype(bool)
     membership = spatial_partition(positions, target_chunk=chunk)
-    return visualize_spatial_partition(
-        max_proj, positions, membership, adj=adj, n_frames=n_frames
-    )
+    return visualize_spatial_partition(max_proj, positions, membership, adj=adj, n_frames=n_frames)

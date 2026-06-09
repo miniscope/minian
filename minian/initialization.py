@@ -26,13 +26,13 @@ from .utilities import local_extreme, med_baseline, save_minian, sps_lstsq
 
 def seeds_init(
     varr: xr.DataArray,
-    wnd_size=500,
-    method="rolling",
-    stp_size=200,
-    nchunk=100,
-    max_wnd=10,
-    diff_thres=2,
-):
+    wnd_size: int = 500,
+    method: str = "rolling",
+    stp_size: int = 200,
+    nchunk: int = 100,
+    max_wnd: int = 10,
+    diff_thres: int = 2,
+) -> xr.DataArray:
     """
     Generate over-complete set of seeds by finding local maxima across frames.
 
@@ -90,7 +90,8 @@ def seeds_init(
         hwnd = np.ceil(wnd_size / 2)
         max_idx = [slice(int(np.floor(c - hwnd).clip(0)), int(np.ceil(c + hwnd))) for c in centers]
     elif method == "random":
-        max_idx = [np.random.randint(0, nfm - 1, wnd_size) for _ in range(nchunk)]
+        generator = np.random.default_rng()
+        max_idx = [generator.integers(0, nfm - 1, wnd_size) for _ in range(nchunk)]
     print("computing max projections")
     res = [max_proj_frame(varr, cur_idx) for cur_idx in max_idx]
     max_res = xr.concat(res, "sample")
@@ -178,10 +179,10 @@ def local_max_roll(fm: np.ndarray, k0: int, k1: int, diff: int | float) -> np.nd
 def gmm_refine(
     varr: xr.DataArray,
     seeds: pd.DataFrame,
-    q=(0.1, 99.9),
-    n_components=2,
-    valid_components=1,
-    mean_mask=True,
+    q: tuple[int, int] = (0.1, 99.9),
+    n_components: int = 2,
+    valid_components: int = 1,
+    mean_mask: bool = True,
 ) -> tuple[pd.DataFrame, xr.DataArray, GaussianMixture]:
     """
     Filter seeds by fitting a GMM to peak-to-peak values.
@@ -268,9 +269,9 @@ def gmm_refine(
 def pnr_refine(
     varr: xr.DataArray,
     seeds: pd.DataFrame,
-    noise_freq=0.25,
+    noise_freq: float = 0.25,
     thres: float | str = 1.5,
-    q=(0.1, 99.9),
+    q: tuple[float, float] = (0.1, 99.9),
     med_wnd: int | None = None,
 ) -> tuple[pd.DataFrame, xr.DataArray, GaussianMixture | None]:
     """
@@ -415,7 +416,7 @@ def pnr_perseed(a: np.ndarray, freq: float, q: tuple) -> float:
     return ptp / ptp_noise
 
 
-def intensity_refine(varr: xr.DataArray, seeds: pd.DataFrame, thres_mul=2) -> pd.DataFrame:
+def intensity_refine(varr: xr.DataArray, seeds: pd.DataFrame, thres_mul: float = 2) -> pd.DataFrame:
     """
     Filter seeds by thresholding the intensity of their corresponding pixels in
     the max projection of the movie.
@@ -460,7 +461,7 @@ def intensity_refine(varr: xr.DataArray, seeds: pd.DataFrame, thres_mul=2) -> pd
     return seeds
 
 
-def ks_refine(varr: xr.DataArray, seeds: pd.DataFrame, sig=0.01) -> pd.DataFrame:
+def ks_refine(varr: xr.DataArray, seeds: pd.DataFrame, sig: float = 0.01) -> pd.DataFrame:
     """
     Filter the seeds using Kolmogorov-Smirnov (KS) test.
 
@@ -537,8 +538,8 @@ def seeds_merge(
     varr: xr.DataArray,
     max_proj: xr.DataArray,
     seeds: pd.DataFrame,
-    thres_dist=5,
-    thres_corr=0.6,
+    thres_dist: int = 5,
+    thres_corr: float = 0.6,
     noise_freq: float | None = None,
     chunk: int = 600,
 ) -> pd.DataFrame:
@@ -610,8 +611,8 @@ def seeds_merge(
 def initA(
     varr: xr.DataArray,
     seeds: pd.DataFrame,
-    thres_corr=0.8,
-    wnd=10,
+    thres_corr: float = 0.8,
+    wnd: int = 10,
     noise_freq: float | None = None,
     chunk: int = 600,
 ) -> xr.DataArray:

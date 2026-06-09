@@ -1,6 +1,7 @@
 import functools as fct
 import itertools as itt
 import warnings
+from typing import Any
 
 import cv2
 import dask as da
@@ -14,7 +15,11 @@ from .utilities import custom_arr_optimize, xrconcat_recursive
 
 
 def estimate_motion(
-    varr: xr.DataArray, dim="frame", npart=3, chunk_nfm: int | None = None, **kwargs
+    varr: xr.DataArray,
+    dim: str = "frame",
+    npart: int = 3,
+    chunk_nfm: int | None = None,
+    **kwargs: Any,
 ) -> xr.DataArray:
     """
     Estimate motion for each frame of the input movie data.
@@ -177,7 +182,7 @@ def estimate_motion(
 
 
 def est_motion_part(
-    varr: darr.Array, npart: int, chunk_nfm: int, alt_error=5, **kwargs
+    varr: darr.Array, npart: int, chunk_nfm: int, alt_error: int = 5, **kwargs: Any
 ) -> tuple[darr.Array, darr.Array]:
     """
     Construct dask graph for the recursive motion estimation algorithm.
@@ -262,12 +267,12 @@ def est_motion_chunk(
     sh_org: np.ndarray,
     npart: int,
     alt_error: float,
-    aggregation="mean",
-    upsample=100,
-    max_sh=100,
+    aggregation: str = "mean",
+    upsample: int = 100,
+    max_sh: int = 100,
     circ_thres: float | None = None,
     mesh_size: tuple[int, int] | None = None,
-    niter=100,
+    niter: int = 100,
     bin_thres: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -377,7 +382,7 @@ def est_motion_chunk(
         motions = np.zeros((varr.shape[0], 2, int(param[1]), int(param[0])))
     else:
         motions = np.zeros((varr.shape[0], 2))
-    for i, fm in enumerate(varr):
+    for i, _ in enumerate(varr):
         if i < mid:
             if varr.ndim > 3:
                 src, dst = varr[i][1], varr[i + 1][1]
@@ -460,7 +465,7 @@ def est_motion_perframe(
     src_ma: np.ndarray | None = None,
     dst_ma: np.ndarray | None = None,
     mesh_size: tuple[int, int] | None = None,
-    niter=100,
+    niter: int = 100,
 ) -> np.ndarray:
     """
     Estimate motion given two frames.
@@ -526,7 +531,9 @@ def est_motion_perframe(
     return coef
 
 
-def match_temp(src, dst, max_sh, local, subpixel=False):
+def match_temp(
+    src: np.ndarray, dst: np.ndarray, max_sh: int, local: bool, subpixel: bool = False
+) -> np.ndarray:
     dst = np.pad(dst, max_sh)
     cor = cv2.matchTemplate(src.astype(np.float32), dst.astype(np.float32), cv2.TM_CCOEFF_NORMED)
     if not len(np.unique(cor)) > 1:
@@ -593,7 +600,7 @@ def check_temp(fm: np.ndarray, max_sh: int) -> float:
     return circularity
 
 
-def apply_shifts(varr, shifts, fill=np.nan):
+def apply_shifts(varr: xr.DataArray, shifts: xr.DataArray, fill: Any = np.nan) -> xr.DataArray:
     sh_dim = shifts.coords["shift_dim"].values.tolist()
     varr_sh = xr.apply_ufunc(
         shift_perframe,
@@ -609,7 +616,7 @@ def apply_shifts(varr, shifts, fill=np.nan):
     return varr_sh
 
 
-def shift_perframe(fm, sh, fill=np.nan):
+def shift_perframe(fm: np.ndarray, sh: int, fill: Any = np.nan) -> np.ndarray:
     if np.isnan(fm).all():
         return fm
     sh = np.around(sh).astype(int)
@@ -628,7 +635,7 @@ def shift_perframe(fm, sh, fill=np.nan):
     return fm
 
 
-def get_mask(fm, bin_thres, bin_wnd):
+def get_mask(fm: np.ndarray, bin_thres: float, bin_wnd: int) -> np.ndarray:
     return cv2.adaptiveThreshold(
         fm,
         1,
@@ -640,7 +647,7 @@ def get_mask(fm, bin_thres, bin_wnd):
 
 
 def apply_transform(
-    varr: xr.DataArray, trans: xr.DataArray, fill=0, mesh_size: tuple[int, int] = None
+    varr: xr.DataArray, trans: xr.DataArray, fill: int = 0, mesh_size: tuple[int, int] = None
 ) -> xr.DataArray:
     """
     Apply necessary transform to correct for motion.
@@ -697,7 +704,7 @@ def apply_transform(
 def transform_perframe(
     fm: np.ndarray,
     tx_coef: np.ndarray,
-    fill=0,
+    fill: int = 0,
     param: np.ndarray | None = None,
     mesh_size: tuple[int, int] | None = None,
 ) -> np.ndarray:

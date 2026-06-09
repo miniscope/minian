@@ -17,7 +17,7 @@ DEMO_FILES = [f"demo_movies/msCam{i}.avi" for i in range(1, 11)] + [
 ]
 try:
     VERSION = version("minian")
-except:
+except:  # noqa: E722
     VERSION = "0.0.0"
 
 
@@ -26,7 +26,9 @@ def _get_file(filename: str, version: str) -> None:
         print(f"File {filename} already exists, skipping install of this file.")
         return
     for vv in [version, "v" + version]:
-        r = requests.get(f"https://raw.githubusercontent.com/miniscope/minian/{vv}/{filename}")
+        r = requests.get(
+            f"https://raw.githubusercontent.com/miniscope/minian/{vv}/{filename}", timeout=60
+        )
         if r.status_code == 200:
             parent_dir = os.path.dirname(filename)
             if parent_dir:

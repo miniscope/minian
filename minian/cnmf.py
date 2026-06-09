@@ -1,6 +1,7 @@
 import functools as fct
 import os
 import warnings
+from typing import Any
 
 import cv2
 import cvxpy as cvx
@@ -37,7 +38,7 @@ try:
 except ImportError:
     from collections.abc import Callable
 
-    def jit(**kwargs) -> Callable:
+    def jit(**kwargs: Any) -> Callable:  # noqa: ARG001
         def wrapper(fn: Callable) -> Callable:
             return fn
 
@@ -45,7 +46,9 @@ except ImportError:
 
 
 def get_noise_fft(
-    varr: xr.DataArray, noise_range=(0.25, 0.5), noise_method="logmexp"
+    varr: xr.DataArray,
+    noise_range: tuple[float, float] = (0.25, 0.5),
+    noise_method: str = "logmexp",
 ) -> xr.DataArray:
     """
     Estimates noise along the "frame" dimension aggregating power spectral
@@ -95,7 +98,12 @@ def get_noise_fft(
     return sn
 
 
-def noise_fft(px: np.ndarray, noise_range=(0.25, 0.5), noise_method="logmexp", threads=1) -> float:
+def noise_fft(
+    px: np.ndarray,
+    noise_range: tuple[float, float] = (0.25, 0.5),
+    noise_method: str = "logmexp",
+    threads: float = 1,
+) -> float:
     """
     Estimates noise of the input by aggregating power spectral density within
     `noise_range`.
@@ -139,7 +147,7 @@ def noise_fft(px: np.ndarray, noise_range=(0.25, 0.5), noise_method="logmexp", t
 
 
 def get_noise_welch(
-    varr: xr.DataArray, noise_range=(0.25, 0.5), noise_method="logmexp"
+    varr: xr.DataArray, noise_range: tuple[str, str] = (0.25, 0.5), noise_method: str = "logmexp"
 ) -> xr.DataArray:
     """
     Estimates noise along the "frame" dimension aggregating power spectral
@@ -183,7 +191,9 @@ def get_noise_welch(
     return sn
 
 
-def noise_welch(y: np.ndarray, noise_range=(0.25, 0.5), noise_method="logmexp") -> float:
+def noise_welch(
+    y: np.ndarray, noise_range: tuple[float, float] = (0.25, 0.5), noise_method: str = "logmexp"
+) -> float:
     """
     Estimates noise of the input by aggregating power spectral density within
     `noise_range`.
@@ -231,12 +241,12 @@ def update_spatial(
     sn: xr.DataArray,
     b: xr.DataArray = None,
     f: xr.DataArray = None,
-    dl_wnd=5,
-    sparse_penal=0.5,
-    update_background=False,
-    normalize=True,
-    size_thres=(9, None),
-    in_memory=False,
+    dl_wnd: int = 5,
+    sparse_penal: float = 0.5,
+    update_background: bool = False,
+    normalize: bool = True,
+    size_thres: tuple[int | None, int | None] = (9, None),
+    in_memory: bool = False,
 ) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray]:
     """
     Update spatial components given the input data and temporal dynamic for each
@@ -523,7 +533,9 @@ def update_spatial_perpx(
 
 
 @darr.as_gufunc(signature="(f),(),(u)->(u)", output_dtypes=float)
-def update_spatial_block(y: np.ndarray, alpha: np.ndarray, sub: sparse.COO, **kwargs) -> sparse.COO:
+def update_spatial_block(
+    y: np.ndarray, alpha: np.ndarray, sub: sparse.COO, **kwargs: Any
+) -> sparse.COO:
     """
     Carry out spatial update for each 3d block of data.
 
@@ -651,21 +663,21 @@ def update_temporal(
     f: xr.DataArray | None = None,
     Y: xr.DataArray | None = None,
     YrA: xr.DataArray | None = None,
-    noise_freq=0.25,
-    p=2,
-    add_lag="p",
-    jac_thres=0.1,
-    sparse_penal=1,
+    noise_freq: float = 0.25,
+    p: int = 2,
+    add_lag: str = "p",
+    jac_thres: float = 0.1,
+    sparse_penal: float = 1,
     bseg: np.ndarray | None = None,
     med_wd: int | None = None,
-    zero_thres=1e-8,
-    max_iters=200,
-    use_smooth=True,
-    normalize=True,
-    warm_start=False,
-    post_scal=False,
-    scs_fallback=False,
-    concurrent_update=False,
+    zero_thres: float = 1e-8,
+    max_iters: int = 200,
+    use_smooth: bool = True,
+    normalize: bool = True,
+    warm_start: bool = False,
+    post_scal: bool = False,
+    scs_fallback: bool = False,
+    concurrent_update: bool = False,
 ) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray]:
     """
     Update temporal components and deconvolve calcium traces for each cell given
@@ -1056,7 +1068,7 @@ def get_ar_coef(
         return g
 
 
-def get_p(y):
+def get_p(y: np.ndarray) -> np.ndarray:
     dif = np.append(np.diff(y), 0)
     rising = dif > 0
     prd_ris, num_ris = label(rising)
@@ -1072,12 +1084,12 @@ def update_temporal_block(
     YrA: np.ndarray,
     noise_freq: float,
     p: int,
-    add_lag="p",
-    normalize=True,
-    use_smooth=True,
-    med_wd=None,
-    concurrent=False,
-    **kwargs,
+    add_lag: str = "p",
+    normalize: bool = True,
+    use_smooth: bool = True,
+    med_wd: int | None = None,
+    concurrent: bool = False,
+    **kwargs: Any,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Update temporal components given residule traces of a group of cells.
@@ -1182,7 +1194,12 @@ def update_temporal_block(
 
 
 def update_temporal_cvxpy(
-    y: np.ndarray, g: np.ndarray, sn: np.ndarray, A=None, bseg=None, **kwargs
+    y: np.ndarray,
+    g: np.ndarray,
+    sn: np.ndarray,
+    A: np.ndarray | None = None,
+    bseg: np.ndarray | None = None,
+    **kwargs: Any,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Solve the temporal update optimization problem using `cvxpy`
@@ -1376,7 +1393,7 @@ def unit_merge(
     A: xr.DataArray,
     C: xr.DataArray,
     add_list: list[xr.DataArray] | None = None,
-    thres_corr=0.9,
+    thres_corr: float = 0.9,
     noise_freq: float | None = None,
     chunk: int = 600,
 ) -> tuple[xr.DataArray, xr.DataArray, list[xr.DataArray] | None]:
@@ -1459,9 +1476,7 @@ def unit_merge(
             "footprints via size_thres / mask, so an empty footprint reaching "
             "unit_merge indicates an upstream pipeline bug."
         )
-    nod_df = (
-        cents.set_index("unit_id").loc[unit_ids, ["height", "width"]].reset_index()
-    )
+    nod_df = cents.set_index("unit_id").loc[unit_ids, ["height", "width"]].reset_index()
     adj = adj_corr(C, A_inter, nod_df, freq=noise_freq, idx_dims=["unit_id"], chunk=chunk)
     print("labeling units to be merged")
     adj = adj > thres_corr
@@ -1499,7 +1514,7 @@ def unit_merge(
         return A_merge, C_merge
 
 
-def label_connected(adj: np.ndarray, only_connected=False) -> np.ndarray:
+def label_connected(adj: np.ndarray, only_connected: bool = False) -> np.ndarray:
     """
     Label connected components given adjacency matrix.
 
@@ -1522,7 +1537,7 @@ def label_connected(adj: np.ndarray, only_connected=False) -> np.ndarray:
         np.fill_diagonal(adj, 0)
         adj = np.triu(adj)
         g = nx.from_numpy_array(adj)
-    except:
+    except:  # noqa: E722
         g = nx.from_scipy_sparse_array(adj)
     labels = np.zeros(adj.shape[0], dtype=int)
     for icomp, comp in enumerate(nx.connected_components(g)):
@@ -1534,7 +1549,9 @@ def label_connected(adj: np.ndarray, only_connected=False) -> np.ndarray:
     return labels
 
 
-def smooth_sig(sig: xr.DataArray, freq: float, method="fft", btype="low") -> xr.DataArray:
+def smooth_sig(
+    sig: xr.DataArray, freq: float, method: str = "fft", btype: str = "low"
+) -> xr.DataArray:
     """
     Filter the input timeseries with a cut-off frequency in vecorized fashion.
 
@@ -1565,8 +1582,8 @@ def smooth_sig(sig: xr.DataArray, freq: float, method="fft", btype="low") -> xr.
     """
     try:
         filt_func = {"fft": filt_fft, "butter": filt_butter}[method]
-    except KeyError:
-        raise NotImplementedError(method)
+    except KeyError as e:
+        raise NotImplementedError(method) from e
     sig_smth = xr.apply_ufunc(
         filt_func,
         sig,
@@ -1700,9 +1717,9 @@ def graph_optimize_corr(
     varr: xr.DataArray,
     G: nx.Graph,
     freq: float,
-    idx_dims=None,
+    idx_dims: list[str] | None = None,
     chunk: int = 600,
-    step_size=50,
+    step_size: int = 50,
 ) -> pd.DataFrame:
     """
     Compute correlation in an optimized fashion given a computation graph.
@@ -1768,9 +1785,7 @@ def graph_optimize_corr(
         ) from None
     membership = spatial_partition(positions, target_chunk=chunk)
     # Cast np.int64 -> plain int to keep node attributes as plain Python types.
-    nx.set_node_attributes(
-        G, {k: {"part": int(v)} for k, v in zip(nodes_sorted, membership)}
-    )
+    nx.set_node_attributes(G, {k: {"part": int(v)} for k, v in zip(nodes_sorted, membership)})
     eg_df = nx.to_pandas_edgelist(G)
     part_map = nx.get_node_attributes(G, "part")
     eg_df["part_src"] = eg_df["source"].map(part_map)
@@ -1782,7 +1797,7 @@ def graph_optimize_corr(
     egd_same, egd_diff = eg_df[~eg_df["part_diff"]], eg_df[eg_df["part_diff"]]
     idx_dict = {d: nx.get_node_attributes(G, d) for d in idx_dims}
 
-    def construct_comput(edf, pxs):
+    def construct_comput(edf: pd.DataFrame, pxs: list[int]) -> np.ndarray:
         px_map = {k: v for v, k in enumerate(pxs)}
         ridx = edf["source"].map(px_map).values
         cidx = edf["target"].map(px_map).values
@@ -1797,10 +1812,8 @@ def graph_optimize_corr(
         # single-dim sel returns `(unit_id, frame)` already in the right
         # orientation but still needs a rechunk so the trace axis is
         # contiguous for the numba kernel.
-        if len(idx_arr) > 1:  # vectorized indexing
-            vsub = vsub.T
-        else:
-            vsub = vsub.rechunk(-1)
+        # vectorized indexing
+        vsub = vsub.T if len(idx_arr) > 1 else vsub.rechunk(-1)
         with da.config.set(**{"optimization.fuse.ave-width": vsub.shape[0]}):
             return da.optimize(smooth_corr(vsub, ridx, cidx, freq=freq))[0]
 
@@ -1839,7 +1852,7 @@ def adj_corr(
     adj: np.ndarray,
     nod_df: pd.DataFrame,
     freq: float,
-    idx_dims=None,
+    idx_dims: list[str] | None = None,
     chunk: int = 600,
 ) -> scipy.sparse.csr_matrix:
     """
@@ -1892,9 +1905,7 @@ def adj_corr(
     )
 
 
-def spatial_partition(
-    positions: np.ndarray, target_chunk: int
-) -> np.ndarray:
+def spatial_partition(positions: np.ndarray, target_chunk: int) -> np.ndarray:
     """
     Partition 2D points into balanced groups via k-d tree median split.
 
@@ -1964,9 +1975,7 @@ def spatial_partition(
     """
     positions = np.asarray(positions, dtype=float)
     if positions.ndim != 2 or positions.shape[1] != 2:
-        raise ValueError(
-            f"positions must be (N, 2); got shape {positions.shape}"
-        )
+        raise ValueError(f"positions must be (N, 2); got shape {positions.shape}")
     if target_chunk < 1:
         raise ValueError(f"target_chunk must be >= 1; got {target_chunk}")
     # NaN/inf rows would silently cluster via argsort's NaN ordering and
@@ -2019,6 +2028,7 @@ def _canonicalize_edge_pairs(adj: "scipy.sparse.spmatrix") -> np.ndarray:
     return np.unique(np.column_stack([lo, hi]), axis=0)
 
 
+# ruff: disable[E501]
 def partition_diagnostics(
     membership: np.ndarray,
     adj: "scipy.sparse.spmatrix | None" = None,
@@ -2048,22 +2058,25 @@ def partition_diagnostics(
     diag : dict
         Diagnostic keys vary with which optional inputs were supplied:
 
-        ============================== ============ ===================== ============================================================
+
+        ============================== ============ ===================== ============================================================  # noqa: E501
         key                            condition    type / shape          meaning
-        ============================== ============ ===================== ============================================================
-        ``"sizes"``                    always       ``(n_parts,)`` int64  Node count in each partition (``np.bincount(membership)``).
-        ``"n_parts"``                  always       int                   Number of distinct partition labels.
-        ``"edges_per_partition"``      ``adj``      ``(n_parts,)`` int64  Intra-partition edge count per partition.
-        ``"cross_edges"``              ``adj``      int                   Edges whose endpoints are in different partitions.
-        ``"total_edges"``              ``adj``      int                   Total unique undirected edges (self-loops dropped).
-        ``"cross_fraction"``           ``adj``      float                 ``cross_edges / total_edges`` (0.0 if no edges).
-        ``"mem_mb"``                   ``n_frames`` ``(n_parts,)`` float  Per-partition trace memory estimate in MiB.
-        ============================== ============ ===================== ============================================================
+        ============================== ============ ===================== ============================================================  # noqa: E501
+        ``"sizes"``                    always       ``(n_parts,)`` int64  Node count in each partition (``np.bincount(membership)``).  # noqa: E501
+        ``"n_parts"``                  always       int                   Number of distinct partition labels.  # noqa: E501
+        ``"edges_per_partition"``      ``adj``      ``(n_parts,)`` int64  Intra-partition edge count per partition.  # noqa: E501
+        ``"cross_edges"``              ``adj``      int                   Edges whose endpoints are in different partitions.  # noqa: E501
+        ``"total_edges"``              ``adj``      int                   Total unique undirected edges (self-loops dropped).  # noqa: E501
+        ``"cross_fraction"``           ``adj``      float                 ``cross_edges / total_edges`` (0.0 if no edges).  # noqa: E501
+        ``"mem_mb"``                   ``n_frames`` ``(n_parts,)`` float  Per-partition trace memory estimate in MiB.  # noqa: E501
+        ============================== ============ ===================== ============================================================  # noqa: E501
+
 
         Returned as a plain ``dict`` for consistency with the rest of
         the codebase. A structured-return migration is on the roadmap
         with the project's pydantic adoption.
     """
+    # ruff: enable[E501]
     membership = np.asarray(membership, dtype=np.int64)
     sizes = np.bincount(membership) if membership.size else np.zeros(0, dtype=np.int64)
     n_parts = int(len(sizes))
@@ -2071,7 +2084,7 @@ def partition_diagnostics(
     diag: dict = {"sizes": sizes, "n_parts": n_parts}
 
     if n_frames is not None:
-        diag["mem_mb"] = sizes.astype(float) * n_frames * bytes_per_sample / (1024 ** 2)
+        diag["mem_mb"] = sizes.astype(float) * n_frames * bytes_per_sample / (1024**2)
 
     if adj is not None:
         pairs = _canonicalize_edge_pairs(adj)
