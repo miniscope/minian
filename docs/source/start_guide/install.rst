@@ -12,7 +12,7 @@ MiniAn is available on `PyPI <https://pypi.org/project/minian/>`_:
 
 .. code-block:: console
 
-    pip install minian
+    python -m pip install minian
 
 We recommend installing into a fresh virtual environment. A pip install does not
 include FFmpeg, so make sure it is on your ``PATH`` (see above).
