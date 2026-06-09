@@ -26,7 +26,15 @@ def _cmd_path(args):
 
 
 def add_subparser(subparsers):
-    parser = subparsers.add_parser("data", help="fetch demo datasets")
+    parser = subparsers.add_parser(
+        "data",
+        help="fetch demo datasets",
+        description=(
+            "Fetch demo datasets from Zenodo. Downloads are cached under the OS "
+            "cache dir; set the MINIAN_CACHE_DIR environment variable to override "
+            "the location (point it at a prepopulated cache to run offline)."
+        ),
+    )
     sub = parser.add_subparsers(title="subcommands", dest="data_command", required=True)
 
     sub.add_parser("list", help="list datasets and sizes").set_defaults(func=_cmd_list)
