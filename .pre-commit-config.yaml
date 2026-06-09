@@ -1,0 +1,9 @@
+# Run `pre-commit install` once to enable these hooks locally.
+# Outputs are stripped from committed notebooks so diffs stay reviewable and
+# the repo never carries stale execution results. CI enforces the same check.
+repos:
+  - repo: https://github.com/kynan/nbstripout
+    rev: "0.8.1"
+    hooks:
+      - id: nbstripout
+        files: '\.ipynb$'
