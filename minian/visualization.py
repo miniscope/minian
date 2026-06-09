@@ -9,7 +9,6 @@ from uuid import uuid4
 
 import colorcet as cc
 import cv2
-import dask
 import dask.array as da
 import ffmpeg
 import holoviews as hv
@@ -43,7 +42,7 @@ from scipy.spatial import cKDTree
 
 from .cnmf import compute_AtC
 from .motion_correction import apply_shifts
-from .utilities import custom_arr_optimize, ensure_ffmpeg, rechunk_like
+from .utilities import ensure_ffmpeg, rechunk_like
 
 
 class VArrayViewer:
@@ -1169,11 +1168,9 @@ def write_video(
         vname = f"{uuid4()}.mp4"
     fname = os.path.join(vpath, vname)
     if norm:
-        arr_opt = fct.partial(custom_arr_optimize, rename_dict={"rechunk": "merge_restricted"})
-        with dask.config.set(array_optimize=arr_opt):
-            arr = arr.astype(np.float32)
-            arr_max = arr.max().compute().values
-            arr_min = arr.min().compute().values
+        arr = arr.astype(np.float32)
+        arr_max = arr.max().compute().values
+        arr_min = arr.min().compute().values
         den = arr_max - arr_min
         arr -= arr_min
         arr /= den

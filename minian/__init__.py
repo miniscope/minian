@@ -3,14 +3,14 @@ from importlib.metadata import version
 
 import dask as da
 
-from .utilities import custom_arr_optimize, custom_delay_optimize
+from .utilities import custom_delay_optimize
 
 try:
     __version__ = version("minian")
 except:  # noqa: E722
     __version__ = "0.0.0"
 
-da.config.set(array_optimize=custom_arr_optimize, delayed_optimize=custom_delay_optimize)
+da.config.set(delayed_optimize=custom_delay_optimize)
 # setting fuse width ref: https://github.com/dask/dask/issues/5105
 da.config.set(
     **{

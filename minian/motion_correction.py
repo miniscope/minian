@@ -1,4 +1,3 @@
-import functools as fct
 import itertools as itt
 import warnings
 from typing import Any
@@ -11,7 +10,7 @@ import SimpleITK as sitk
 import xarray as xr
 from skimage.registration import phase_cross_correlation
 
-from .utilities import custom_arr_optimize, xrconcat_recursive
+from .utilities import xrconcat_recursive
 
 
 def estimate_motion(
@@ -212,7 +211,6 @@ def est_motion_part(
     if chunk_nfm is None:
         chunk_nfm = varr.chunksize[0]
     varr = varr.rechunk((chunk_nfm, None, None))
-    arr_opt = fct.partial(custom_arr_optimize, keep_patterns=["^est_motion_chunk"])
     if kwargs.get("mesh_size"):
         param = get_bspline_param(varr[0].compute(), kwargs["mesh_size"])
     tmp_ls = []
@@ -233,9 +231,9 @@ def est_motion_part(
             sh = darr.from_delayed(res[1], shape=(blk.shape[0], 2), dtype=float)
         tmp_ls.append(tmp)
         sh_ls.append(sh)
-    with da.config.set(array_optimize=arr_opt):
-        temps = da.optimize(darr.stack(tmp_ls, axis=0))[0]
-        shifts = da.optimize(darr.concatenate(sh_ls, axis=0))[0]
+
+    temps = da.optimize(darr.stack(tmp_ls, axis=0))[0]
+    shifts = da.optimize(darr.concatenate(sh_ls, axis=0))[0]
     while temps.shape[0] > 1:
         tmp_ls = []
         sh_ls = []

@@ -1,6 +1,4 @@
-import _operator
 import contextlib
-import functools as fct
 import os
 import re
 import shutil
@@ -153,9 +151,8 @@ def load_videos(
     varr = varr.rename("fluorescence")
     if post_process:
         varr = post_process(varr, vpath, vlist, varr_list)
-    arr_opt = fct.partial(custom_arr_optimize, keep_patterns=["^load_avi_ffmpeg"])
-    with da.config.set(array_optimize=arr_opt):
-        varr = da.optimize(varr)[0]
+
+    varr = da.optimize(varr)[0]
     return varr
 
 
@@ -822,23 +819,6 @@ See Also
 :doc:`distributed:resources`
 """
 
-FAST_FUNCTIONS = [
-    darr.core.getter_inline,
-    darr.core.getter,
-    _operator.getitem,
-    zr.core.Array,
-    darr.chunk.astype,
-    darr.core.concatenate_axes,
-    darr.core._vindex_merge,
-]
-"""
-list of fast functions that should be inlined during optimization.
-
-See Also
--------
-:doc:`dask:optimize`
-"""
-
 
 class TaskAnnotation(SchedulerPlugin):
     """
@@ -1219,15 +1199,8 @@ def optimize_chunk(arr: xr.DataArray, chk: dict) -> xr.DataArray:
     arr_chk : xr.DataArray
         The rechunked array.
     """
-    fast_funcs = FAST_FUNCTIONS + [darr.core.concatenate3]
     arr_chk = arr.chunk(chk)
-    arr_opt = fct.partial(
-        custom_arr_optimize,
-        fast_funcs=fast_funcs,
-        rewrite_dict={"rechunk-merge": "merge_restricted"},
-    )
-    with da.config.set(array_optimize=arr_opt):
-        arr_chk.data = da.optimize(arr_chk.data)[0]
+    arr_chk.data = da.optimize(arr_chk.data)[0]
     return arr_chk
 
 

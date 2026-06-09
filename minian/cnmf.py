@@ -25,7 +25,6 @@ from sklearn.linear_model import LassoLars
 from statsmodels.tsa.stattools import acovf
 
 from .utilities import (
-    custom_arr_optimize,
     custom_delay_optimize,
     med_baseline,
     open_minian,
@@ -641,13 +640,7 @@ def compute_trace(
     CtA = darr.dot(C, AtA)
     CtA = darr.dot(CtA, A_norm)
     YrA = (YtA - CtA + C).clip(0)
-    arr_opt = fct.partial(
-        custom_arr_optimize,
-        inline_patterns=["from-getitem-transpose"],
-        rename_dict={"tensordot": "tensordot_restricted"},
-    )
-    with da.config.set(array_optimize=arr_opt):
-        YrA = da.optimize(YrA)[0]
+    YrA = da.optimize(YrA)[0]
     YrA = xr.DataArray(
         YrA,
         dims=["frame", "unit_id"],
@@ -970,14 +963,12 @@ def update_temporal(
         coords={"unit_id": uids_new, "lag": np.arange(p)},
         name="g",
     )
-    arr_opt = fct.partial(custom_arr_optimize, keep_patterns=["^update_temporal_block"])
-    with da.config.set(array_optimize=arr_opt):
-        da.compute(
-            [
-                save_minian(var.chunk({"unit_id": 1}), intpath, compute=False, overwrite=True)
-                for var in [C_new, S_new, b0_new, c0_new, g]
-            ]
-        )
+    da.compute(
+        [
+            save_minian(var.chunk({"unit_id": 1}), intpath, compute=False, overwrite=True)
+            for var in [C_new, S_new, b0_new, c0_new, g]
+        ]
+    )
     int_ds = open_minian(intpath, return_dict=True)
     C_new, S_new, b0_new, c0_new, g = (
         int_ds["C_new"],
@@ -1703,9 +1694,7 @@ def compute_AtC(A: xr.DataArray, C: xr.DataArray) -> xr.DataArray:
     A = darr.from_array(A.data.map_blocks(sparse.COO, dtype=A.dtype).compute(), chunks=-1)
     C = C.transpose("frame", "unit_id").data.map_blocks(sparse.COO, dtype=C.dtype)
     AtC = darr.tensordot(C, A, axes=(1, 0)).map_blocks(lambda a: a.todense(), dtype=A.dtype)
-    arr_opt = fct.partial(custom_arr_optimize, rename_dict={"tensordot": "tensordot_restricted"})
-    with da.config.set(array_optimize=arr_opt):
-        AtC = da.optimize(AtC)[0]
+    AtC = da.optimize(AtC)[0]
     return xr.DataArray(
         AtC,
         dims=["frame", "height", "width"],
