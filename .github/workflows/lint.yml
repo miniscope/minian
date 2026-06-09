@@ -36,23 +36,14 @@ jobs:
       - name: check lockfile
         run: pdm lock --check --with :all
 
-  notebooks-stripped:
+  pre-commit:
+    # Runs the hooks in .pre-commit-config.yaml (currently nbstripout, which
+    # verifies committed notebooks carry no outputs). Configuring the check
+    # only in pre-commit means `pre-commit run --all-files` locally matches CI.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install nbstripout
-        run: python -m pip install nbstripout
-      - name: Verify committed notebooks have no outputs
-        run: |
-          if ! find minian/notebooks -name '*.ipynb' -print0 | xargs -0 nbstripout --verify; then
-            echo "::error::Committed notebook(s) still contain outputs or execution counts."
-            echo "Fix locally, then re-commit:"
-            echo "  python -m pip install pre-commit"
-            echo "  pre-commit install                  # enable the hook for future commits"
-            echo "  pre-commit run nbstripout --all-files"
-            echo "Or strip directly:  nbstripout minian/notebooks/*.ipynb"
-            exit 1
-          fi
+      - uses: pre-commit/action@v3.0.1
