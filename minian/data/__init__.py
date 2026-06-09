@@ -26,7 +26,7 @@ import pooch
 
 from . import _registry
 
-__all__ = ["fetch", "fetch_all", "datasets", "dataset_path", "cache_dir"]
+__all__ = ["fetch", "datasets", "dataset_path", "cache_dir"]
 
 
 def cache_dir() -> Path:
@@ -102,11 +102,6 @@ def fetch(name: str, *, progressbar: bool = True) -> Path:
     for relpath in meta["files"]:
         POOCH.fetch(f"{name}/{relpath}", progressbar=progressbar)
     return cache_dir() / name
-
-
-def fetch_all(*, progressbar: bool = True) -> list[Path]:
-    """Fetch every registered dataset; convenience wrapper over :func:`fetch`."""
-    return [fetch(name, progressbar=progressbar) for name in _registry.DATASETS]
 
 
 def dataset_path(name: str) -> Path:
