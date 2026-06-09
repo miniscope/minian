@@ -75,11 +75,11 @@ Issues = "https://github.com/miniscope/minian/issues"
 Changelog = "https://github.com/miniscope/minian/blob/master/CHANGELOG.md"
 
 [project.scripts]
-# `minian` is the canonical CLI; the rest are thin deprecated aliases.
+# `minian` is the canonical CLI. `minian-install` is a thin deprecated alias for
+# the one command that actually shipped before; new functionality lives only
+# under `minian` subcommands (`minian data ...`, `minian notebooks ...`).
 minian = "minian.cli:main"
 minian-install = "minian.install:main"
-minian-notebooks = "minian.cli:notebooks_main"
-minian-data = "minian.cli:data_main"
 
 [project.optional-dependencies]
 numba = [
