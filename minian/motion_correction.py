@@ -14,7 +14,12 @@ from .utilities import xrconcat_recursive
 
 
 def estimate_motion(
-    varr: xr.DataArray, dim="frame", npart=3, chunk_nfm: int | None = None, **kwargs
+    varr: xr.DataArray,
+    dim="frame",
+    npart=3,
+    chunk_nfm: int | None = None,
+    mesh_size: tuple[int, int] | None = None,
+    **kwargs,
 ) -> xr.DataArray:
     """
     Estimate motion for each frame of the input movie data.
@@ -132,8 +137,10 @@ def estimate_motion(
         res_dict = dict()
         for lab in itt.product(*loop_labs):
             va = varr.sel({loop_dims[i]: lab[i] for i in range(len(loop_dims))})
-            vmax, sh = est_motion_part(va.data, npart, chunk_nfm, **kwargs)
-            if kwargs.get("mesh_size", None):
+            vmax, sh = est_motion_part(
+                va.data, npart, chunk_nfm, mesh_size=mesh_size, **kwargs
+            )
+            if mesh_size:
                 sh = xr.DataArray(
                     sh,
                     dims=[dim, "shift_dim", "grid0", "grid1"],
@@ -154,8 +161,10 @@ def estimate_motion(
             res_dict[lab] = sh.assign_coords(**{k: v for k, v in zip(loop_dims, lab)})
         sh = xrconcat_recursive(res_dict, loop_dims)
     else:
-        vmax, sh = est_motion_part(varr.data, npart, chunk_nfm, **kwargs)
-        if kwargs.get("mesh_size", None):
+        vmax, sh = est_motion_part(
+            varr.data, npart, chunk_nfm, mesh_size=mesh_size, **kwargs
+        )
+        if mesh_size:
             sh = xr.DataArray(
                 sh,
                 dims=[dim, "shift_dim", "grid0", "grid1"],
@@ -177,7 +186,12 @@ def estimate_motion(
 
 
 def est_motion_part(
-    varr: darr.Array, npart: int, chunk_nfm: int, alt_error=5, **kwargs
+    varr: darr.Array,
+    npart: int,
+    chunk_nfm: int,
+    alt_error=5,
+    mesh_size: tuple[int, int] | None = None,
+    **kwargs,
 ) -> tuple[darr.Array, darr.Array]:
     """
     Construct dask graph for the recursive motion estimation algorithm.
@@ -193,6 +207,10 @@ def est_motion_part(
     alt_error : int, optional
         Error threshold between estimated shifts from two alternative methods,
         specified in pixels. By default `5`.
+    mesh_size : tuple[int, int], optional
+        Number of control points for the BSpline mesh in each dimension. If not
+        `None` the experimental non-rigid motion estimation is enabled. By
+        default `None`.
 
     Returns
     -------
@@ -207,9 +225,9 @@ def est_motion_part(
     if chunk_nfm is None:
         chunk_nfm = varr.chunksize[0]
     varr = varr.rechunk((chunk_nfm, None, None))
-    has_mesh = bool(kwargs.get("mesh_size", None))
+    has_mesh = bool(mesh_size)
     if has_mesh:
-        param = get_bspline_param(varr[0].compute(), kwargs["mesh_size"])
+        param = get_bspline_param(varr[0].compute(), mesh_size)
     height, width = varr.shape[1], varr.shape[2]
     tmp_shape = (3, height, width) if alt_error else (height, width)
     sh_shape = (sum(varr.chunks[0]), 2)
@@ -223,14 +241,18 @@ def est_motion_part(
     # with recursion depth. The final tuple is split once, at the end.
     res_ls = [
         da.delayed(est_motion_chunk)(
-            blk, None, alt_error=alt_error, npart=npart, **kwargs
+            blk, None, alt_error=alt_error, npart=npart, mesh_size=mesh_size, **kwargs
         )
         for blk in varr.blocks
     ]
     while len(res_ls) > 1:
         res_ls = [
             da.delayed(_est_motion_reduce)(
-                res_ls[idx : idx + npart], alt_error, npart, **kwargs
+                res_ls[idx : idx + npart],
+                alt_error,
+                npart,
+                mesh_size=mesh_size,
+                **kwargs,
             )
             for idx in range(0, len(res_ls), npart)
         ]
@@ -534,29 +556,37 @@ def _xcorr_subpixel(
 
     Returns
     -------
-    sh : np.ndarray
-        Shift `(height, width)` of src relative to dst; `-sh` registers src onto
-        dst (the convention :func:`est_motion_perframe` returns).
+    shift : np.ndarray
+        Shift `(height, width)` of src relative to dst; `-shift` registers src
+        onto dst (the convention :func:`est_motion_perframe` returns).
     """
-    cc = np.fft.irfft2(src_fft * np.conj(dst_fft), s=shape)
-    peak = np.unravel_index(np.argmax(cc), cc.shape)
-    c0 = cc[peak]
-    sh = np.empty(2)
-    for ax in range(2):
-        n = cc.shape[ax]
-        pk = peak[ax]
-        idx_m = list(peak)
-        idx_p = list(peak)
-        idx_m[ax] = (pk - 1) % n
-        idx_p[ax] = (pk + 1) % n
-        cm, cp = cc[tuple(idx_m)], cc[tuple(idx_p)]
-        denom = cm - 2 * c0 + cp
-        delta = 0.5 * (cm - cp) / denom if denom != 0 else 0.0
-        pos = pk + delta
-        if pos > n // 2:  # wrap negative shifts
-            pos -= n
-        sh[ax] = pos
-    return sh
+    # The cross-correlation peaks where src best aligns with dst; its (integer)
+    # location is the whole-pixel shift between the two frames.
+    cross_corr = np.fft.irfft2(src_fft * np.conj(dst_fft), s=shape)
+    peak_idx = np.unravel_index(np.argmax(cross_corr), cross_corr.shape)
+    peak_val = cross_corr[peak_idx]
+    # Refine that integer peak to sub-pixel one axis at a time: fit a parabola
+    # through the peak and its two immediate neighbours and take the vertex.
+    # The FFT wraps negative shifts into the upper half of each axis, so a
+    # refined position past the midpoint is folded back to a negative shift.
+    shift = np.empty(2)
+    for axis in range(2):
+        axis_len = cross_corr.shape[axis]
+        peak_pos = peak_idx[axis]
+        # cross-correlation values at the neighbours one step below/above the peak
+        idx_prev = list(peak_idx)
+        idx_next = list(peak_idx)
+        idx_prev[axis] = (peak_pos - 1) % axis_len
+        idx_next[axis] = (peak_pos + 1) % axis_len
+        val_prev = cross_corr[tuple(idx_prev)]
+        val_next = cross_corr[tuple(idx_next)]
+        denom = val_prev - 2 * peak_val + val_next
+        delta = 0.5 * (val_prev - val_next) / denom if denom != 0 else 0.0
+        refined_pos = peak_pos + delta
+        if refined_pos > axis_len // 2:  # wrap negative shifts
+            refined_pos -= axis_len
+        shift[axis] = refined_pos
+    return shift
 
 
 def est_motion_perframe(
@@ -581,8 +611,8 @@ def est_motion_perframe(
         The destination frame of registration.
     upsample : int
         Upsample factor. Only used for the non-rigid (`mesh_size`) path; the
-        rigid path estimates sub-pixel shifts by parabolic interpolation of the
-        cross-correlation peak (see :func:`_xcorr_subpixel`).
+        rigid path instead estimates sub-pixel shifts by fitting a parabola to
+        the cross-correlation peak and its two neighbours along each axis.
     src_ma : np.ndarray, optional
         Boolean mask for `src`. Only used if `mesh_size is not None`. By default
         `None`.
