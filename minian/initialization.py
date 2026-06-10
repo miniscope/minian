@@ -1,10 +1,7 @@
-import functools as fct
 import itertools as itt
 import os
-from typing import Optional, Union
 
 import cv2
-import dask as da
 import dask.array as darr
 import networkx as nx
 import numpy as np
@@ -12,7 +9,6 @@ import pandas as pd
 import sparse
 import xarray as xr
 from scipy.ndimage.measurements import label
-from scipy.signal import butter, lfilter
 from scipy.sparse import csc_matrix
 from scipy.stats import kstest, zscore
 from skimage.morphology import disk
@@ -30,13 +26,13 @@ from .utilities import local_extreme, med_baseline, save_minian, sps_lstsq
 
 def seeds_init(
     varr: xr.DataArray,
-    wnd_size=500,
-    method="rolling",
-    stp_size=200,
-    nchunk=100,
-    max_wnd=10,
-    diff_thres=2,
-):
+    wnd_size: int = 500,
+    method: str = "rolling",
+    stp_size: int = 200,
+    nchunk: int = 100,
+    max_wnd: int = 10,
+    diff_thres: int = 2,
+) -> xr.DataArray:
     """
     Generate over-complete set of seeds by finding local maxima across frames.
 
@@ -92,16 +88,10 @@ def seeds_init(
         nstp = np.ceil(nfm / stp_size) + 1
         centers = np.linspace(0, nfm - 1, int(nstp))
         hwnd = np.ceil(wnd_size / 2)
-        max_idx = list(
-            map(
-                lambda c: slice(
-                    int(np.floor(c - hwnd).clip(0)), int(np.ceil(c + hwnd))
-                ),
-                centers,
-            )
-        )
+        max_idx = [slice(int(np.floor(c - hwnd).clip(0)), int(np.ceil(c + hwnd))) for c in centers]
     elif method == "random":
-        max_idx = [np.random.randint(0, nfm - 1, wnd_size) for _ in range(nchunk)]
+        generator = np.random.default_rng()
+        max_idx = [generator.integers(0, nfm - 1, wnd_size) for _ in range(nchunk)]
     print("computing max projections")
     res = [max_proj_frame(varr, cur_idx) for cur_idx in max_idx]
     max_res = xr.concat(res, "sample")
@@ -115,11 +105,9 @@ def seeds_init(
         vectorize=True,
         dask="parallelized",
         output_dtypes=[np.uint8],
-        kwargs=dict(k0=2, k1=max_wnd, diff=diff_thres),
+        kwargs={"k0": 2, "k1": max_wnd, "diff": diff_thres},
     ).sum("sample")
-    seeds = (
-        loc_max.where(loc_max > 0).rename("seeds").to_dataframe().dropna().reset_index()
-    )
+    seeds = loc_max.where(loc_max > 0).rename("seeds").to_dataframe().dropna().reset_index()
     return seeds[["height", "width", "seeds"]]
 
 
@@ -142,9 +130,7 @@ def max_proj_frame(varr: xr.DataArray, idx: np.ndarray) -> xr.DataArray:
     return varr.isel(frame=idx).max("frame")
 
 
-def local_max_roll(
-    fm: np.ndarray, k0: int, k1: int, diff: int | float
-) -> np.ndarray:
+def local_max_roll(fm: np.ndarray, k0: int, k1: int, diff: int | float) -> np.ndarray:
     """
     Compute local maxima of a frame with a range of kernel size.
 
@@ -193,10 +179,10 @@ def local_max_roll(
 def gmm_refine(
     varr: xr.DataArray,
     seeds: pd.DataFrame,
-    q=(0.1, 99.9),
-    n_components=2,
-    valid_components=1,
-    mean_mask=True,
+    q: tuple[int, int] = (0.1, 99.9),
+    n_components: int = 2,
+    valid_components: int = 1,
+    mean_mask: bool = True,
 ) -> tuple[pd.DataFrame, xr.DataArray, GaussianMixture]:
     """
     Filter seeds by fitting a GMM to peak-to-peak values.
@@ -251,17 +237,17 @@ def gmm_refine(
     print("computing peak-valley values")
     varr_valley = xr.apply_ufunc(
         np.percentile,
-        varr_sub.chunk(dict(frame=-1)),
+        varr_sub.chunk({"frame": -1}),
         input_core_dims=[["frame"]],
-        kwargs=dict(q=q[0], axis=-1),
+        kwargs={"q": q[0], "axis": -1},
         dask="parallelized",
         output_dtypes=[varr_sub.dtype],
     )
     varr_peak = xr.apply_ufunc(
         np.percentile,
-        varr_sub.chunk(dict(frame=-1)),
+        varr_sub.chunk({"frame": -1}),
         input_core_dims=[["frame"]],
-        kwargs=dict(q=q[1], axis=-1),
+        kwargs={"q": q[1], "axis": -1},
         dask="parallelized",
         output_dtypes=[varr_sub.dtype],
     )
@@ -283,9 +269,9 @@ def gmm_refine(
 def pnr_refine(
     varr: xr.DataArray,
     seeds: pd.DataFrame,
-    noise_freq=0.25,
+    noise_freq: float = 0.25,
     thres: float | str = 1.5,
-    q=(0.1, 99.9),
+    q: tuple[float, float] = (0.1, 99.9),
     med_wnd: int | None = None,
 ) -> tuple[pd.DataFrame, xr.DataArray, GaussianMixture | None]:
     """
@@ -343,9 +329,7 @@ def pnr_refine(
     chk_size = min(int(len(seeds) / 128), 100)
     vsub_ls = []
     for _, seed_sub in seeds.groupby(np.arange(len(seeds)) // chk_size):
-        vsub = varr.sel(
-            height=seed_sub["height"].to_xarray(), width=seed_sub["width"].to_xarray()
-        )
+        vsub = varr.sel(height=seed_sub["height"].to_xarray(), width=seed_sub["width"].to_xarray())
         vsub_ls.append(vsub)
     varr_sub = xr.concat(vsub_ls, "index")
     if med_wnd:
@@ -432,9 +416,7 @@ def pnr_perseed(a: np.ndarray, freq: float, q: tuple) -> float:
     return ptp / ptp_noise
 
 
-def intensity_refine(
-    varr: xr.DataArray, seeds: pd.DataFrame, thres_mul=2
-) -> pd.DataFrame:
+def intensity_refine(varr: xr.DataArray, seeds: pd.DataFrame, thres_mul: float = 2) -> pd.DataFrame:
     """
     Filter seeds by thresholding the intensity of their corresponding pixels in
     the max projection of the movie.
@@ -479,7 +461,7 @@ def intensity_refine(
     return seeds
 
 
-def ks_refine(varr: xr.DataArray, seeds: pd.DataFrame, sig=0.01) -> pd.DataFrame:
+def ks_refine(varr: xr.DataArray, seeds: pd.DataFrame, sig: float = 0.01) -> pd.DataFrame:
     """
     Filter the seeds using Kolmogorov-Smirnov (KS) test.
 
@@ -512,9 +494,7 @@ def ks_refine(varr: xr.DataArray, seeds: pd.DataFrame, sig=0.01) -> pd.DataFrame
     chk_size = min(int(len(seeds) / 128), 100)
     vsub_ls = []
     for _, seed_sub in seeds.groupby(np.arange(len(seeds)) // chk_size):
-        vsub = varr.sel(
-            height=seed_sub["height"].to_xarray(), width=seed_sub["width"].to_xarray()
-        )
+        vsub = varr.sel(height=seed_sub["height"].to_xarray(), width=seed_sub["width"].to_xarray())
         vsub_ls.append(vsub)
     varr_sub = xr.concat(vsub_ls, "index")
     print("performing KS test")
@@ -558,8 +538,8 @@ def seeds_merge(
     varr: xr.DataArray,
     max_proj: xr.DataArray,
     seeds: pd.DataFrame,
-    thres_dist=5,
-    thres_corr=0.6,
+    thres_dist: int = 5,
+    thres_corr: float = 0.6,
     noise_freq: float | None = None,
     chunk: int = 600,
 ) -> pd.DataFrame:
@@ -617,9 +597,7 @@ def seeds_merge(
         cur_smp = np.where(labels == cur_cmp)[0]
         cur_max = np.array(
             [
-                max_proj.sel(
-                    height=seeds.iloc[s]["height"], width=seeds.iloc[s]["width"]
-                )
+                max_proj.sel(height=seeds.iloc[s]["height"], width=seeds.iloc[s]["width"])
                 for s in cur_smp
             ]
         )
@@ -633,8 +611,8 @@ def seeds_merge(
 def initA(
     varr: xr.DataArray,
     seeds: pd.DataFrame,
-    thres_corr=0.8,
-    wnd=10,
+    thres_corr: float = 0.8,
+    wnd: int = 10,
     noise_freq: float | None = None,
     chunk: int = 600,
 ) -> xr.DataArray:
@@ -677,9 +655,7 @@ def initA(
     """
     print("optimizing computation graph")
     nod_df = pd.DataFrame(
-        np.array(
-            list(itt.product(varr.coords["height"].values, varr.coords["width"].values))
-        ),
+        np.array(list(itt.product(varr.coords["height"].values, varr.coords["width"].values))),
         columns=["height", "width"],
     ).merge(seeds.reset_index(), how="outer", on=["height", "width"])
     seed_df = nod_df[nod_df["index"].notnull()]
@@ -687,12 +663,7 @@ def initA(
     nns_arr = nn_tree.query_radius(seed_df[["height", "width"]], r=wnd)
     sdg = nx.Graph()
     sdg.add_nodes_from(
-        [
-            (i, d)
-            for i, d in enumerate(
-                nod_df[["height", "width", "index"]].to_dict("records")
-            )
-        ]
+        [(i, d) for i, d in enumerate(nod_df[["height", "width", "index"]].to_dict("records"))]
     )
     for isd, nns in enumerate(nns_arr):
         cur_sd = seed_df.index[isd]
@@ -748,9 +719,7 @@ def initA(
         cur_corr["iheight"] = cur_corr["height"].map(ih_dict)
         cur_corr["iwidth"] = cur_corr["width"].map(iw_dict)
         cur_A = darr.array(
-            sparse.COO(
-                cur_corr[["iheight", "iwidth"]].T, cur_corr["corr"], shape=Ashape
-            )
+            sparse.COO(cur_corr[["iheight", "iwidth"]].T, cur_corr["corr"], shape=Ashape)
         )
         A_ls.append(cur_A)
     A = xr.DataArray(

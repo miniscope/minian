@@ -1,16 +1,16 @@
-import dask as da
 import os
 from importlib.metadata import version
-from .utilities import custom_arr_optimize, custom_delay_optimize
+
+import dask as da
+
+from .utilities import custom_delay_optimize
 
 try:
     __version__ = version("minian")
-except:
+except:  # noqa: E722
     __version__ = "0.0.0"
 
-da.config.set(
-    array_optimize=custom_arr_optimize, delayed_optimize=custom_delay_optimize
-)
+da.config.set(delayed_optimize=custom_delay_optimize)
 # setting fuse width ref: https://github.com/dask/dask/issues/5105
 da.config.set(
     **{
@@ -32,4 +32,3 @@ da.config.set(
 # os.environ["LD_PRELOAD"] = "~/.conda/envs/minian-dev/lib/libjemalloc.so"
 # alternatively one can limit the malloc pool, which is the default for minian
 os.environ["MALLOC_MMAP_THRESHOLD_"] = "16384"
-

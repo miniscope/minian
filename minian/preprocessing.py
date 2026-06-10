@@ -1,3 +1,5 @@
+from typing import Any
+
 import cv2
 import numpy as np
 import xarray as xr
@@ -50,7 +52,7 @@ def remove_background(varr: xr.DataArray, method: str, wnd: int) -> xr.DataArray
         vectorize=True,
         dask="parallelized",
         output_dtypes=[varr.dtype],
-        kwargs=dict(method=method, wnd=wnd, selem=selem),
+        kwargs={"method": method, "wnd": wnd, "selem": selem},
     )
     res = res.astype(varr.dtype)
     return res.rename(varr.name + "_subtracted")
@@ -89,7 +91,9 @@ def remove_background_perframe(
         return cv2.morphologyEx(fm, cv2.MORPH_TOPHAT, selem)
 
 
-def stripe_correction(varr, reduce_dim="height", on="mean"):
+def stripe_correction(
+    varr: xr.DataArray, reduce_dim: str = "height", on: str = "mean"
+) -> xr.DataArray:
     if on == "mean":
         temp = varr.mean(dim="frame")
     elif on == "max":
@@ -103,7 +107,7 @@ def stripe_correction(varr, reduce_dim="height", on="mean"):
     return varr_sc.rename(varr.name + "_Stripe_Corrected")
 
 
-def denoise(varr: xr.DataArray, method: str, **kwargs) -> xr.DataArray:
+def denoise(varr: xr.DataArray, method: str, **kwargs: Any) -> xr.DataArray:
     """
     Denoise the movie frame by frame.
 

@@ -1,16 +1,15 @@
-import pytest
 import numpy as np
-import holoviews as hv
+import pytest
 
+from ..preprocessing import denoise, remove_background
 from ..utilities import load_videos
-from ..preprocessing import denoise, remove_background, stripe_correction
 
 dpath = "./demo_movies"
 
 param_load_videos = {
     "pattern": "msCam[0-9].avi",
     "dtype": np.uint8,
-    "downsample": dict(frame=2, height=1, width=1),
+    "downsample": {"frame": 2, "height": 1, "width": 1},
     "downsample_strategy": "subset",
 }
 

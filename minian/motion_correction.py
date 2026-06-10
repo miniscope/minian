@@ -1,7 +1,6 @@
-import functools as fct
 import itertools as itt
 import warnings
-from typing import Optional
+from typing import Any
 
 import cv2
 import dask as da
@@ -11,11 +10,15 @@ import SimpleITK as sitk
 import xarray as xr
 from skimage.registration import phase_cross_correlation
 
-from .utilities import custom_arr_optimize, xrconcat_recursive
+from .utilities import xrconcat_recursive
 
 
 def estimate_motion(
-    varr: xr.DataArray, dim="frame", npart=3, chunk_nfm: int | None = None, **kwargs
+    varr: xr.DataArray,
+    dim: str = "frame",
+    npart: int = 3,
+    chunk_nfm: int | None = None,
+    **kwargs: Any,
 ) -> xr.DataArray:
     """
     Estimate motion for each frame of the input movie data.
@@ -124,17 +127,17 @@ def estimate_motion(
         for overview of the non-rigid estimation method
     """
     varr = varr.transpose(..., dim, "height", "width")
-    loop_dims = list(set(varr.dims) - set(["height", "width", dim]))
+    loop_dims = list(set(varr.dims) - {"height", "width", dim})
     if npart is None:
         # by default use a npart that result in two layers of recursion
         npart = max(3, int(np.ceil((varr.sizes[dim] / chunk_nfm) ** (1 / 2))))
     if loop_dims:
         loop_labs = [varr.coords[d].values for d in loop_dims]
-        res_dict = dict()
+        res_dict = {}
         for lab in itt.product(*loop_labs):
             va = varr.sel({loop_dims[i]: lab[i] for i in range(len(loop_dims))})
             vmax, sh = est_motion_part(va.data, npart, chunk_nfm, **kwargs)
-            if kwargs.get("mesh_size", None):
+            if kwargs.get("mesh_size"):
                 sh = xr.DataArray(
                     sh,
                     dims=[dim, "shift_dim", "grid0", "grid1"],
@@ -152,11 +155,11 @@ def estimate_motion(
                         "shift_dim": ["height", "width"],
                     },
                 )
-            res_dict[lab] = sh.assign_coords(**{k: v for k, v in zip(loop_dims, lab)})
+            res_dict[lab] = sh.assign_coords(**dict(zip(loop_dims, lab)))
         sh = xrconcat_recursive(res_dict, loop_dims)
     else:
         vmax, sh = est_motion_part(varr.data, npart, chunk_nfm, **kwargs)
-        if kwargs.get("mesh_size", None):
+        if kwargs.get("mesh_size"):
             sh = xr.DataArray(
                 sh,
                 dims=[dim, "shift_dim", "grid0", "grid1"],
@@ -178,7 +181,7 @@ def estimate_motion(
 
 
 def est_motion_part(
-    varr: darr.Array, npart: int, chunk_nfm: int, alt_error=5, **kwargs
+    varr: darr.Array, npart: int, chunk_nfm: int, alt_error: int = 5, **kwargs: Any
 ) -> tuple[darr.Array, darr.Array]:
     """
     Construct dask graph for the recursive motion estimation algorithm.
@@ -208,24 +211,17 @@ def est_motion_part(
     if chunk_nfm is None:
         chunk_nfm = varr.chunksize[0]
     varr = varr.rechunk((chunk_nfm, None, None))
-    arr_opt = fct.partial(custom_arr_optimize, keep_patterns=["^est_motion_chunk"])
-    if kwargs.get("mesh_size", None):
+    if kwargs.get("mesh_size"):
         param = get_bspline_param(varr[0].compute(), kwargs["mesh_size"])
     tmp_ls = []
     sh_ls = []
     for blk in varr.blocks:
-        res = da.delayed(est_motion_chunk)(
-            blk, None, alt_error=alt_error, npart=npart, **kwargs
-        )
+        res = da.delayed(est_motion_chunk)(blk, None, alt_error=alt_error, npart=npart, **kwargs)
         if alt_error:
-            tmp = darr.from_delayed(
-                res[0], shape=(3, blk.shape[1], blk.shape[2]), dtype=blk.dtype
-            )
+            tmp = darr.from_delayed(res[0], shape=(3, blk.shape[1], blk.shape[2]), dtype=blk.dtype)
         else:
-            tmp = darr.from_delayed(
-                res[0], shape=(blk.shape[1], blk.shape[2]), dtype=blk.dtype
-            )
-        if kwargs.get("mesh_size", None):
+            tmp = darr.from_delayed(res[0], shape=(blk.shape[1], blk.shape[2]), dtype=blk.dtype)
+        if kwargs.get("mesh_size"):
             sh = darr.from_delayed(
                 res[1],
                 shape=(blk.shape[0], 2, int(param[1]), int(param[0])),
@@ -235,9 +231,9 @@ def est_motion_part(
             sh = darr.from_delayed(res[1], shape=(blk.shape[0], 2), dtype=float)
         tmp_ls.append(tmp)
         sh_ls.append(sh)
-    with da.config.set(array_optimize=arr_opt):
-        temps = da.optimize(darr.stack(tmp_ls, axis=0))[0]
-        shifts = da.optimize(darr.concatenate(sh_ls, axis=0))[0]
+
+    temps = da.optimize(darr.stack(tmp_ls, axis=0))[0]
+    shifts = da.optimize(darr.concatenate(sh_ls, axis=0))[0]
     while temps.shape[0] > 1:
         tmp_ls = []
         sh_ls = []
@@ -269,12 +265,12 @@ def est_motion_chunk(
     sh_org: np.ndarray,
     npart: int,
     alt_error: float,
-    aggregation="mean",
-    upsample=100,
-    max_sh=100,
+    aggregation: str = "mean",
+    upsample: int = 100,
+    max_sh: int = 100,
     circ_thres: float | None = None,
     mesh_size: tuple[int, int] | None = None,
-    niter=100,
+    niter: int = 100,
     bin_thres: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -335,15 +331,10 @@ def est_motion_chunk(
                 pass
             else:
                 motions = np.array([0, 0])[np.newaxis, :]
-        if alt_error:
-            tmp = np.stack([varr[0]] * 3)
-        else:
-            tmp = varr[0]
+        tmp = np.stack([varr[0]] * 3) if alt_error else varr[0]
         return tmp, motions
     while varr.shape[0] > npart:
-        part_idx = np.array_split(
-            np.arange(varr.shape[0]), np.ceil(varr.shape[0] / npart)
-        )
+        part_idx = np.array_split(np.arange(varr.shape[0]), np.ceil(varr.shape[0] / npart))
         tmp_ls = []
         sh_ls = []
         for idx in part_idx:
@@ -378,8 +369,9 @@ def est_motion_chunk(
     prop_good = len(good_idxs) / len(good_fm)
     if prop_good < 0.9:
         warnings.warn(
-            f"only {prop_good} of the frames are good."
-            "Consider lowering your circularity threshold"
+            f"only {prop_good} of the frames are good. "
+            "Consider lowering your circularity threshold",
+            stacklevel=2,
         )
     # use good frame closest to center as template
     mid = good_idxs[np.abs(good_idxs - varr.shape[0] / 2).argmin()]
@@ -389,7 +381,7 @@ def est_motion_chunk(
         motions = np.zeros((varr.shape[0], 2, int(param[1]), int(param[0])))
     else:
         motions = np.zeros((varr.shape[0], 2))
-    for i, fm in enumerate(varr):
+    for i, _ in enumerate(varr):
         if i < mid:
             if varr.ndim > 3:
                 src, dst = varr[i][1], varr[i + 1][1]
@@ -447,15 +439,9 @@ def est_motion_chunk(
             varr[i] = transform_perframe(v, motions[i], fill=0)
     varr = varr[good_idxs]
     if aggregation == "max":
-        if varr.ndim > 3:
-            tmp = varr.max(axis=(0, 1))
-        else:
-            tmp = varr.max(axis=0)
+        tmp = varr.max(axis=(0, 1)) if varr.ndim > 3 else varr.max(axis=0)
     elif aggregation == "mean":
-        if varr.ndim > 3:
-            tmp = varr.mean(axis=(0, 1))
-        else:
-            tmp = varr.mean(axis=0)
+        tmp = varr.mean(axis=(0, 1)) if varr.ndim > 3 else varr.mean(axis=0)
     else:
         raise ValueError(f"does not understand aggregation: {aggregation}")
     if alt_error:
@@ -467,9 +453,7 @@ def est_motion_chunk(
             tmp1 = varr[1]
         tmp = np.stack([tmp0, tmp, tmp1], axis=0)
     if sh_org is not None:
-        motions = np.concatenate(
-            [motions[i] + sh for i, sh in enumerate(sh_org)], axis=0
-        )
+        motions = np.concatenate([motions[i] + sh for i, sh in enumerate(sh_org)], axis=0)
     return tmp, motions
 
 
@@ -480,7 +464,7 @@ def est_motion_perframe(
     src_ma: np.ndarray | None = None,
     dst_ma: np.ndarray | None = None,
     mesh_size: tuple[int, int] | None = None,
-    niter=100,
+    niter: int = 100,
 ) -> np.ndarray:
     """
     Estimate motion given two frames.
@@ -533,9 +517,7 @@ def est_motion_perframe(
         reg.SetMetricMovingMask(sitk.GetImageFromArray(src_ma.astype(np.uint8)))
     if dst_ma is not None:
         reg.SetMetricFixedMask(sitk.GetImageFromArray(dst_ma.astype(np.uint8)))
-    trans_opt = sitk.BSplineTransformInitializer(
-        image1=dst, transformDomainMeshSize=mesh_size
-    )
+    trans_opt = sitk.BSplineTransformInitializer(image1=dst, transformDomainMeshSize=mesh_size)
     reg.SetInitialTransform(trans_opt)
     reg.SetMetricAsCorrelation()
     reg.SetInterpolator(sitk.sitkLinear)
@@ -543,18 +525,16 @@ def est_motion_perframe(
         learningRate=0.1, convergenceMinimumValue=1e-5, numberOfIterations=niter
     )
     tx = reg.Execute(dst, src)
-    coef = np.stack(
-        [sitk.GetArrayFromImage(im) for im in tx.Downcast().GetCoefficientImages()]
-    )
+    coef = np.stack([sitk.GetArrayFromImage(im) for im in tx.Downcast().GetCoefficientImages()])
     coef = coef + sh.reshape((2, 1, 1))
     return coef
 
 
-def match_temp(src, dst, max_sh, local, subpixel=False):
+def match_temp(
+    src: np.ndarray, dst: np.ndarray, max_sh: int, local: bool, subpixel: bool = False
+) -> np.ndarray:
     dst = np.pad(dst, max_sh)
-    cor = cv2.matchTemplate(
-        src.astype(np.float32), dst.astype(np.float32), cv2.TM_CCOEFF_NORMED
-    )
+    cor = cv2.matchTemplate(src.astype(np.float32), dst.astype(np.float32), cv2.TM_CCOEFF_NORMED)
     if not len(np.unique(cor)) > 1:
         return np.array([0, 0])
     cent = np.floor(np.array(cor.shape) / 2)
@@ -604,9 +584,7 @@ def check_temp(fm: np.ndarray, max_sh: int) -> float:
     estimate_motion
     """
     fm_pad = np.pad(fm, max_sh)
-    cor = cv2.matchTemplate(
-        fm.astype(np.float32), fm_pad.astype(np.float32), cv2.TM_SQDIFF_NORMED
-    )
+    cor = cv2.matchTemplate(fm.astype(np.float32), fm_pad.astype(np.float32), cv2.TM_SQDIFF_NORMED)
     conts = cv2.findContours(
         (cor < 1).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )[0]
@@ -617,15 +595,15 @@ def check_temp(fm: np.ndarray, max_sh: int) -> float:
     if perimeter <= 0:
         return 0
     area = cv2.contourArea(cont)
-    circularity = 4 * np.pi * (area / (perimeter ** 2))
+    circularity = 4 * np.pi * (area / (perimeter**2))
     return circularity
 
 
-def apply_shifts(varr, shifts, fill=np.nan):
+def apply_shifts(varr: xr.DataArray, shifts: xr.DataArray, fill: Any = np.nan) -> xr.DataArray:
     sh_dim = shifts.coords["shift_dim"].values.tolist()
     varr_sh = xr.apply_ufunc(
         shift_perframe,
-        varr.chunk({d: -1 for d in sh_dim}),
+        varr.chunk(dict.fromkeys(sh_dim, -1)),
         shifts,
         input_core_dims=[sh_dim, ["shift_dim"]],
         output_core_dims=[sh_dim],
@@ -637,7 +615,7 @@ def apply_shifts(varr, shifts, fill=np.nan):
     return varr_sh
 
 
-def shift_perframe(fm, sh, fill=np.nan):
+def shift_perframe(fm: np.ndarray, sh: int, fill: Any = np.nan) -> np.ndarray:
     if np.isnan(fm).all():
         return fm
     sh = np.around(sh).astype(int)
@@ -656,7 +634,7 @@ def shift_perframe(fm, sh, fill=np.nan):
     return fm
 
 
-def get_mask(fm, bin_thres, bin_wnd):
+def get_mask(fm: np.ndarray, bin_thres: float, bin_wnd: int) -> np.ndarray:
     return cv2.adaptiveThreshold(
         fm,
         1,
@@ -668,7 +646,7 @@ def get_mask(fm, bin_thres, bin_wnd):
 
 
 def apply_transform(
-    varr: xr.DataArray, trans: xr.DataArray, fill=0, mesh_size: tuple[int, int] = None
+    varr: xr.DataArray, trans: xr.DataArray, fill: int = 0, mesh_size: tuple[int, int] = None
 ) -> xr.DataArray:
     """
     Apply necessary transform to correct for motion.
@@ -710,7 +688,7 @@ def apply_transform(
         mdim = ["shift_dim"]
     varr_sh = xr.apply_ufunc(
         transform_perframe,
-        varr.chunk({d: -1 for d in sh_dim}),
+        varr.chunk(dict.fromkeys(sh_dim, -1)),
         trans,
         input_core_dims=[sh_dim, mdim],
         output_core_dims=[sh_dim],
@@ -725,7 +703,7 @@ def apply_transform(
 def transform_perframe(
     fm: np.ndarray,
     tx_coef: np.ndarray,
-    fill=0,
+    fill: int = 0,
     param: np.ndarray | None = None,
     mesh_size: tuple[int, int] | None = None,
 ) -> np.ndarray:

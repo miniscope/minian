@@ -1,10 +1,12 @@
+from pathlib import Path
+
 import numpy as np
 import xarray as xr
 
 from ..utilities import open_minian, save_minian, update_meta
 
 
-def _make_var(name, fill, attrs=None):
+def _make_var(name, fill, attrs=None) -> xr.DataArray:
     """Build a small named DataArray with optional attrs."""
     var = xr.DataArray(
         np.full((2, 3, 4), fill, dtype=float),
@@ -17,7 +19,7 @@ def _make_var(name, fill, attrs=None):
     return var
 
 
-def _make_dataset(dpath):
+def _make_dataset(dpath: Path) -> xr.DataArray:
     """Save a single-variable minian dataset at `dpath` with no metadata coords."""
     var = _make_var("test_var", fill=1.0)
     save_minian(var, str(dpath), overwrite=True)
@@ -53,9 +55,7 @@ def test_update_meta_is_lazy(tmp_path):
     _make_dataset(mn_path)
 
     non_updated_paths = [
-        p for p in mn_path.rglob("*")
-        if not p.is_dir()
-        and p.parent.name not in meta_dict
+        p for p in mn_path.rglob("*") if not p.is_dir() and p.parent.name not in meta_dict
     ]
     assert len(non_updated_paths) > 0
 
