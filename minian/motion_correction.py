@@ -644,6 +644,10 @@ def est_motion_perframe(
         if dst_fft is None:
             dst_fft = np.fft.rfft2(dst)
         return -_xcorr_subpixel(src_fft, dst_fft, src.shape)
+    # TODO: This SimpleITK BSpline non-rigid path is experimental, likely unused
+    # (the pipeline never sets `mesh_size`), and not ideal. Worth revisiting in
+    # favour of a grid/patch-based piecewise-rigid approach like NoRMCorre, which
+    # estimates a rigid shift per patch and interpolates between them.
     sh, error, phasediff = phase_cross_correlation(
         src,
         dst,
