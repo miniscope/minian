@@ -5,35 +5,35 @@ You need **FFmpeg** on ``PATH`` for video I/O (``ffmpeg`` and ``ffprobe``). Inst
 it with your OS package manager or follow the `FFmpeg download page
 <https://ffmpeg.org/download.html>`_.
 
-Install using conda
--------------------
+Install with pip
+----------------
 
-MiniAn is available on `conda-forge` and this is the recommended way to get MiniAn.
-Before you start though, we highly recommend creating an empty environment for MiniAn:
+MiniAn is available on `PyPI <https://pypi.org/project/minian/>`_:
+
+.. code-block:: console
+
+    # regular installation (most platform compatible)
+    python -m pip install minian
+    # installation with optimized numba routines
+    python -m pip install 'minian[numba]'
+
+We recommend installing into a fresh virtual environment. A pip install does not
+include FFmpeg, so make sure it is on your ``PATH`` (see above).
+
+Install with conda
+------------------
+
+MiniAn is also on `conda-forge`. Installing this way pulls in FFmpeg
+automatically, so it is convenient if you do not already have it:
 
 .. code-block:: console
 
     conda create -y -n minian
     conda activate minian
-
-See `conda start guide <https://conda.io/projects/conda/en/latest/user-guide/getting-started.html>`_ for more detail.
-
-After you have created and activated an environment, you can install MiniAn with:
-
-.. code-block:: console
-
     conda install -y -c conda-forge minian
 
-and Done!
-
-Alternatively, you can use `mamba <https://mamba.readthedocs.io/en/latest/>`_ to install minian, which usually provides faster speed when solving the dependencies.
-To do so, you first need to install `mamba`, either in minian environment or in your base environment.
-
-.. code-block:: console
-
-    conda install -y -c conda-forge mamba
-
-After this, you can use `mamba` as a drop-in replacement command for `conda` to install minian:
+You can use `mamba <https://mamba.readthedocs.io/en/latest/>`_ as a faster
+drop-in replacement for ``conda`` when solving dependencies:
 
 .. code-block:: console
 
@@ -42,18 +42,18 @@ After this, you can use `mamba` as a drop-in replacement command for `conda` to 
 Install from source
 -------------------
 
-You can install MiniAn directly using github repo.
-This is helpful if you want to checkout latest development, or to contribute to MiniAn.
-Run the following to obtain a full copy of MiniAn repo and setup necessary dependencies.
+Install from the GitHub repo to track the latest development or to contribute to
+MiniAn:
 
 .. code-block:: console
 
     git clone https://github.com/miniscope/minian.git
     cd minian/
-    conda env create -n minian -f environment.yml
+    python -m pip install -e .
 
-You can then activate the environment and start running the notebooks.
-Note that if you install in this way you will have a local copy of MiniAn scripts, and any modification made to those scripts will be reflect in your pipeline.
+This gives you an editable copy of MiniAn, so any change you make to the source
+is reflected in your pipeline. Maintainers can use ``pdm install`` to set up the
+locked development environment.
 
 Getting notebooks and demos
 ---------------------------
