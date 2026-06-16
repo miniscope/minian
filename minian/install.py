@@ -25,16 +25,14 @@ def _deprecation(message: str) -> None:
     print(f"Note: {message}", file=sys.stderr)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Deprecated alias for the `minian` CLI (`minian notebooks` / `minian data`)."
     )
     parser.add_argument(
         "--notebooks", action="store_true", help="copy bundled notebooks (all of them)"
     )
-    parser.add_argument(
-        "--demo", action="store_true", help="download the demo datasets"
-    )
+    parser.add_argument("--demo", action="store_true", help="download the demo datasets")
     parser.add_argument(
         "-v",
         action="store",
@@ -52,7 +50,5 @@ def main():
         )
         minian_main(["notebooks", "copy", "--all"])
     if args.demo:
-        _deprecation(
-            "`minian-install --demo` is deprecated; use `minian data download --all`."
-        )
+        _deprecation("`minian-install --demo` is deprecated; use `minian data download --all`.")
         minian_main(["data", "download", "--all"])

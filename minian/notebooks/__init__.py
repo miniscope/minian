@@ -29,16 +29,21 @@ NOTEBOOKS: dict[str, str] = {
         "End-to-end calcium-imaging pipeline: load videos, preprocess, "
         "motion-correct, then CNMF (spatial/temporal)."
     ),
-    "cross_registration": (
-        "Align and match cells across recording sessions of the same animal."
-    ),
+    "cross_registration": ("Align and match cells across recording sessions of the same animal."),
 }
 
 # Never copy/list build junk or notebook execution output.
 _SKIP = {"__pycache__", ".ipynb_checkpoints", "minian_intermediate"}
 _IGNORE = shutil.ignore_patterns(
-    "__pycache__", "*.pyc", ".ipynb_checkpoints", "*.nbi", "*.nbc",
-    "minian_intermediate", "*.zarr", "*.mp4", "*.nc",
+    "__pycache__",
+    "*.pyc",
+    ".ipynb_checkpoints",
+    "*.nbi",
+    "*.nbc",
+    "minian_intermediate",
+    "*.zarr",
+    "*.mp4",
+    "*.nc",
 )
 
 
@@ -68,9 +73,7 @@ def copy(name: str, dest: Path) -> list[Path]:
     root = notebook_root()
     matches = [p for p in sorted(root.glob(f"{name}*")) if p.name not in _SKIP]
     if not matches:
-        raise KeyError(
-            f"No notebook matching {name!r}. Available: {', '.join(NOTEBOOKS)}"
-        )
+        raise KeyError(f"No notebook matching {name!r}. Available: {', '.join(NOTEBOOKS)}")
     dest = Path(dest)
     copied = []
     for src in matches:

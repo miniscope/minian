@@ -135,6 +135,12 @@ lock.composite = [
 # cross-version/cross-OS integration coverage.
 test = "pytest"
 test-all = "pytest -m ''"
+lint.composite = [
+    "ruff check",
+    "ruff format --check"
+]
+lint-fix = "ruff check --fix"
+format = "ruff format"
 
 # Dependency cooldown: exclude packages published in the last 7 days when
 # resolving the lockfile, dodging most supply-chain attacks (usually caught
@@ -156,10 +162,92 @@ changelog_incremental = true
 
 [tool.ruff]
 target-version = "py310"
+include = ["minian/**/*.py", "**/pyproject.toml"]
+exclude = ["docs"]
+line-length = 100
 
 [tool.ruff.lint]
-select = ["UP"]
 fixable = ["ALL"]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # isort
+    "I",
+    # numpy-specific rules
+    "NPY",
+    # bandit - security
+    "S",
+    ## ----------
+    # flake8
+    # annotations
+    "ANN",
+    # unused arguments
+    "ARG",
+    # bugbear
+    "B",
+    # comprehensions
+    "C4",
+    # simplify
+    "SIM",
+    # no debugger
+    "T10",
+    ## ----------
+    # pydocstyle
+    # indentation
+    "D207", "D208",
+    # whitespace
+    "D210", "D211",
+    # emptiness
+    "D419",
+    ## ----------
+    # TODO - fix gradually
+    # pathlib
+    # "PTH",
+]
+
+ignore = [
+    #"special" methods like `__init__` don't need to be annotated
+    "ANN204",
+    # any types are semantically valid actually sometimes
+    "ANN401",
+    # explicit strict arg for zip
+    "B905",
+    # docstrings for __init__
+    "D107",
+    # use of assert - i guess it's used in here!?
+    "S101",
+    # unsafe pickles - no network data used here
+    "S301",
+    # subprocess calls - no untrusted user data
+    "S603",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# all modules related to testing
+"**/test/**.py" = [
+    # allow unused params (normal for fixtures)
+    "ARG001",
+    # allow unused imports - fixtures
+    "F401",
+    # allow star import of fixtures
+    "F403",
+    # assert is the name of the game in pytest
+    "S101",
+]
+# specifically the test-containing modules
+"**/test/**/test_*" = [
+    # don't require annotating fixture types in test functions
+    "ANN001", "ANN201",
+    # allow unused variables, also normal in tests
+    "F841",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["minian"]
 
 [tool.pytest.ini_options]
 addopts = [

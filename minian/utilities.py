@@ -1,17 +1,18 @@
+import _operator
+import contextlib
 import functools as fct
 import os
 import re
 import shutil
 import warnings
+from collections.abc import Callable
 from os import listdir
 from os.path import isdir, isfile
 from os.path import join as pjoin
 from pathlib import Path
-from typing import Optional, Union
-from collections.abc import Callable
+from typing import Any
 from uuid import uuid4
 
-import _operator
 import cv2
 import dask as da
 import dask.array as darr
@@ -20,21 +21,21 @@ import pandas as pd
 import rechunker
 import xarray as xr
 import zarr as zr
-from dask.core import flatten
-from dask.delayed import optimize as default_delay_optimize
-from dask.optimization import cull, fuse, inline, inline_functions
-from dask.utils import ensure_dict
-from distributed.diagnostics.plugin import SchedulerPlugin
-from distributed.scheduler import SchedulerState, cast
-from scipy.ndimage import median_filter
-from scipy.sparse import csc_matrix
-from scipy.sparse.linalg import lsqr
 
 # dask >=2025 (a hard floor in pyproject) ships the TaskSpec optimizer, which
 # does its own graph optimisation. The legacy `fuse` / `inline_pattern` hooks
 # produced graphs its scheduler can't track, so they have been removed; see
 # `custom_arr_optimize` / `custom_delay_optimize` below.
 from dask.array.optimization import fuse_linear_task_spec
+from dask.core import flatten
+from dask.delayed import optimize as default_delay_optimize
+from dask.optimization import cull, inline
+from dask.utils import ensure_dict
+from distributed.diagnostics.plugin import SchedulerPlugin
+from distributed.scheduler import SchedulerState, cast
+from scipy.ndimage import median_filter
+from scipy.sparse import csc_matrix
+from scipy.sparse.linalg import lsqr
 
 _IO_DEPRECATED_NAMES = frozenset(
     {
@@ -55,7 +56,7 @@ _IO_MOVED_NAMES = frozenset(
 )
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name in _IO_MOVED_NAMES | _IO_DEPRECATED_NAMES:
         warnings.warn(
             f"Importing {name!r} from minian.utilities is deprecated and will be "
@@ -78,7 +79,7 @@ def __getattr__(name: str):
 
 
 def open_minian(
-    dpath: str, post_process: Callable | None = None, return_dict=False
+    dpath: str, post_process: Callable | None = None, return_dict: bool = False
 ) -> dict | xr.Dataset:
     """
     Load an existing minian dataset.
@@ -133,14 +134,9 @@ def open_minian(
             arr_path = pjoin(dpath, d)
             if isdir(arr_path):
                 arr = list(xr.open_zarr(arr_path).values())[0]
-                arr.data = darr.from_zarr(
-                    os.path.join(arr_path, arr.name), inline_array=True
-                )
+                arr.data = darr.from_zarr(os.path.join(arr_path, arr.name), inline_array=True)
                 dslist.append(arr)
-        if return_dict:
-            ds = {d.name: d for d in dslist}
-        else:
-            ds = xr.merge(dslist, compat="no_conflicts")
+        ds = {d.name: d for d in dslist} if return_dict else xr.merge(dslist, compat="no_conflicts")
     if (not return_dict) and post_process:
         ds = post_process(ds, dpath)
     return ds
@@ -149,11 +145,11 @@ def open_minian(
 def open_minian_mf(
     dpath: str,
     index_dims: list[str],
-    result_format="xarray",
-    pattern=r"minian$",
-    sub_dirs: list[str] = [],
-    exclude=True,
-    **kwargs,
+    result_format: str = "xarray",
+    pattern: str = r"minian$",
+    sub_dirs: list[str] | None = None,
+    exclude: bool = True,
+    **kwargs: Any,
 ) -> xr.Dataset | pd.DataFrame:
     """
     Open multiple minian datasets across multiple directories.
@@ -205,15 +201,14 @@ def open_minian_mf(
     NotImplementedError
         if `result_format` is not "xarray" or "pandas"
     """
-    minian_dict = dict()
+    if sub_dirs is None:
+        sub_dirs = []
+    minian_dict = {}
     for nextdir, dirlist, filelist in os.walk(dpath, topdown=False):
         nextdir = os.path.abspath(nextdir)
         cur_path = Path(nextdir)
         dir_tag = bool(
-            
-                (any([Path(epath) in cur_path.parents for epath in sub_dirs]))
-                or nextdir in sub_dirs
-            
+            (any(Path(epath) in cur_path.parents for epath in sub_dirs)) or nextdir in sub_dirs
         )
         if exclude == dir_tag:
             continue
@@ -221,7 +216,7 @@ def open_minian_mf(
         if flist:
             print(f"opening dataset under {nextdir}")
             if len(flist) > 1:
-                warnings.warn(f"multiple dataset found: {flist}")
+                warnings.warn(f"multiple dataset found: {flist}", stacklevel=2)
             fname = flist[-1]
             print(f"opening {fname}")
             minian = open_minian(dpath=os.path.join(nextdir, fname), **kwargs)
@@ -243,10 +238,10 @@ def save_minian(
     var: xr.DataArray,
     dpath: str,
     meta_dict: dict | None = None,
-    overwrite=False,
+    overwrite: bool = False,
     chunks: dict | None = None,
-    compute=True,
-    mem_limit="500MB",
+    compute: bool = True,
+    mem_limit: str = "500MB",
 ) -> xr.DataArray:
     """
     Save a `xr.DataArray` with `zarr` storage backend following minian
@@ -313,16 +308,12 @@ def save_minian(
     ds = var.to_dataset()
     if meta_dict is not None:
         pathlist = os.path.split(os.path.abspath(dpath))[0].split(os.sep)
-        ds = ds.assign_coords(
-            **dict([(dn, pathlist[di]) for dn, di in meta_dict.items()])
-        )
+        ds = ds.assign_coords(**{dn: pathlist[di] for dn, di in meta_dict.items()})
     md = {True: "a", False: "w-"}[overwrite]
     fp = os.path.join(dpath, var.name + ".zarr")
     if overwrite:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(fp)
-        except FileNotFoundError:
-            pass
     arr = ds.to_zarr(fp, compute=compute, mode=md)
     if (chunks is not None) and compute:
         chunks = {d: var.sizes[d] if v <= 0 else v for d, v in chunks.items()}
@@ -337,10 +328,8 @@ def save_minian(
                 zstore[var.name], chunks, mem_limit, dst_path, temp_store=temp_path
             )
             rechk.execute()
-        try:
+        with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(temp_path)
-        except FileNotFoundError:
-            pass
         arr_path = os.path.join(fp, var.name)
         for f in os.listdir(arr_path):
             os.remove(os.path.join(arr_path, f))
@@ -386,17 +375,15 @@ def xrconcat_recursive(var: dict | list, dims: list[str]) -> xr.Dataset:
             var_dict = {tuple([np.asscalar(v[d]) for d in dims]): v for v in var}
         else:
             raise NotImplementedError(f"type {type(var)} not supported")
-        try:
+        with contextlib.suppress(AttributeError):
             var_dict = {k: v.to_dataset() for k, v in var_dict.items()}
-        except AttributeError:
-            pass
         data = np.empty(len(var_dict), dtype=object)
         for iv, ds in enumerate(var_dict.values()):
             data[iv] = ds
         index = pd.MultiIndex.from_tuples(list(var_dict.keys()), names=dims)
         var_ps = pd.Series(data=data, index=index)
         xr_ls = []
-        for idx, v in var_ps.groupby(level=dims[0]):
+        for _idx, v in var_ps.groupby(level=dims[0]):
             v.index = v.index.droplevel(dims[0])
             xarr = xrconcat_recursive(v.to_dict(), dims[1:])
             xr_ls.append(xarr)
@@ -407,7 +394,7 @@ def xrconcat_recursive(var: dict | list, dims: list[str]) -> xr.Dataset:
         return xr.concat(var, dim=dims[0])
 
 
-def update_meta(dpath, pattern=r"^minian$", meta_dict=None):
+def update_meta(dpath: str, pattern: str = r"^minian$", meta_dict: dict | None = None) -> None:
     """
     Permanently update the metadata of saved minian datasets in place.
 
@@ -453,9 +440,7 @@ def update_meta(dpath, pattern=r"^minian$", meta_dict=None):
             # without rewriting (or even reading) the variable's data chunks.
             for store in os.listdir(f_path):
                 if store.endswith(".zarr"):
-                    xr.Dataset(coords=coords).to_zarr(
-                        os.path.join(f_path, store), mode="a"
-                    )
+                    xr.Dataset(coords=coords).to_zarr(os.path.join(f_path, store), mode="a")
             print(f"updated: {f_path}")
 
 
@@ -473,7 +458,7 @@ def get_chk(arr: xr.DataArray) -> dict:
     chk : dict
         Dictionary mapping dimension names to chunks.
     """
-    return {d: c for d, c in zip(arr.dims, arr.chunks)}
+    return dict(zip(arr.dims, arr.chunks))
 
 
 def rechunk_like(x: xr.DataArray, y: xr.DataArray) -> xr.DataArray:
@@ -503,8 +488,8 @@ def rechunk_like(x: xr.DataArray, y: xr.DataArray) -> xr.DataArray:
 
 def get_optimal_chk(
     arr: xr.DataArray,
-    dim_grp=[("frame",), ("height", "width")],
-    csize=256,
+    dim_grp: list | None = None,
+    csize: int = 256,
     dtype: type | None = None,
 ) -> dict:
     """
@@ -539,25 +524,27 @@ def get_optimal_chk(
     chk : dict
         Dictionary mapping dimension names to chunk sizes.
     """
+    if dim_grp is None:
+        dim_grp = [("frame",), ("height", "width")]
     if dtype is not None:
         arr = arr.astype(dtype)
     dims = arr.dims
     if not dim_grp:
         dim_grp = [(d,) for d in dims]
-    chk_compute = dict()
+    chk_compute = {}
     for dg in dim_grp:
         d_rest = set(dims) - set(dg)
-        dg_dict = {d: "auto" for d in dg}
-        dr_dict = {d: -1 for d in d_rest}
+        dg_dict = dict.fromkeys(dg, "auto")
+        dr_dict = dict.fromkeys(d_rest, -1)
         dg_dict.update(dr_dict)
         with da.config.set({"array.chunk-size": f"{csize}MiB"}):
             arr_chk = arr.chunk(dg_dict)
         chk = get_chunksize(arr_chk)
         chk_compute.update({d: chk[d] for d in dg})
     with da.config.set({"array.chunk-size": f"{csize}MiB"}):
-        arr_chk = arr.chunk({d: "auto" for d in dims})
+        arr_chk = arr.chunk(dict.fromkeys(dims, "auto"))
     chk_store_da = get_chunksize(arr_chk)
-    chk_store = dict()
+    chk_store = {}
     for d in dims:
         ncomp = int(arr.sizes[d] / chk_compute[d])
         sz = np.array(factors(ncomp)) * chk_compute[d]
@@ -581,7 +568,7 @@ def get_chunksize(arr: xr.DataArray) -> dict:
     """
     dims = arr.dims
     sz = arr.data.chunksize
-    return {d: s for d, s in zip(dims, sz)}
+    return dict(zip(dims, sz))
 
 
 def factors(x: int) -> list[int]:
@@ -657,9 +644,9 @@ class TaskAnnotation(SchedulerPlugin):
         super().__init__()
         self.annt_dict = ANNOTATIONS
 
-    def update_graph(self, scheduler, client, tasks, **kwargs):
+    def update_graph(self, scheduler: Any, client: Any, tasks: Any, **kwargs: Any) -> None:  # noqa: ARG002
         parent = cast(SchedulerState, scheduler)
-        for tk in tasks.keys():
+        for tk in tasks:
             for pattern, annt in self.annt_dict.items():
                 if re.search(pattern, tk):
                     ts = parent._tasks.get(tk)
@@ -675,13 +662,13 @@ class TaskAnnotation(SchedulerPlugin):
 
 def custom_arr_optimize(
     dsk: dict,
-    keys: list,
-    fast_funcs: list = FAST_FUNCTIONS,
-    inline_patterns=[],
-    rename_dict: dict | None = None,
-    rewrite_dict: dict | None = None,
-    keep_patterns=[],
-    **kwargs,
+    keys: list,  # noqa: ARG001
+    fast_funcs: list = FAST_FUNCTIONS,  # noqa: ARG001
+    inline_patterns: list | None = None,
+    rename_dict: dict | None = None,  # noqa: ARG001
+    rewrite_dict: dict | None = None,  # noqa: ARG001
+    keep_patterns: list | None = None,
+    **kwargs: Any,  # noqa: ARG001
 ) -> dict:
     """
     Customized implementation of array optimization function.
@@ -730,6 +717,10 @@ def custom_arr_optimize(
     # removing this now-vestigial optimizer + its arguments, is tracked
     # separately. The argument surface is kept for now so the call sites that
     # still pass these kwargs keep working until that follow-up lands.
+    if keep_patterns is None:
+        keep_patterns = []
+    if inline_patterns is None:
+        inline_patterns = []
     return dsk
 
 
@@ -773,7 +764,7 @@ def rewrite_key(key: str | tuple, rwdict: dict) -> str:
 
 
 def custom_fused_keys_renamer(
-    keys: list, max_fused_key_length=120, rename_dict: dict | None = None
+    keys: list, max_fused_key_length: int = 120, rename_dict: dict | None = None
 ) -> str:
     """
     Custom implmentation to create new keys for `fuse` tasks.
@@ -807,7 +798,7 @@ def custom_fused_keys_renamer(
     if max_fused_key_length:  # Take into account size of hash suffix
         max_fused_key_length -= 5
 
-    def _enforce_max_key_limit(key_name):
+    def _enforce_max_key_limit(key_name: str) -> str:
         if max_fused_key_length and len(key_name) > max_fused_key_length:
             name_hash = f"{hash(key_name):x}"[:4]
             key_name = f"{key_name[:max_fused_key_length]}-{name_hash}"
@@ -853,8 +844,8 @@ def split_key(key: tuple | str, rename_dict: dict | None = None) -> str:
         key = key[0]
     kls = key.split("-")
     if rename_dict:
-        kls = list(map(lambda k: rename_dict.get(k, k), kls))
-    kls_ft = list(filter(lambda k: k in ANNOTATIONS.keys(), kls))
+        kls = [rename_dict.get(k, k) for k in kls]
+    kls_ft = list(filter(lambda k: k in ANNOTATIONS, kls))
     if kls_ft:
         return "-".join(kls_ft)
     else:
@@ -899,10 +890,7 @@ def check_pat(key: str | tuple, pat_ls: list[str]) -> bool:
     bool
         Whether `key` contains any pattern in the list.
     """
-    for pat in pat_ls:
-        if check_key(key, pat):
-            return True
-    return False
+    return any(check_key(key, pat) for pat in pat_ls)
 
 
 def inline_pattern(dsk: dict, pat_ls: list[str], inline_constants: bool) -> dict:
@@ -927,18 +915,22 @@ def inline_pattern(dsk: dict, pat_ls: list[str], inline_constants: bool) -> dict
     -------
     dask.optimization.inline
     """
-    keys = [k for k in dsk.keys() if check_pat(k, pat_ls)]
+    keys = [k for k in dsk if check_pat(k, pat_ls)]
     if keys:
         dsk = inline(dsk, keys, inline_constants=inline_constants)
         for k in keys:
             del dsk[k]
         if inline_constants:
-            dsk, dep = cull(dsk, set(list(flatten(keys))))
+            dsk, dep = cull(dsk, set(flatten(keys)))
     return dsk
 
 
 def custom_delay_optimize(
-    dsk: dict, keys: list, fast_functions=[], inline_patterns=[], **kwargs
+    dsk: dict,
+    keys: list,
+    fast_functions: list | None = None,
+    inline_patterns: list | None = None,
+    **kwargs: Any,  # noqa: ARG001
 ) -> dict:
     """
     Custom optimization functions for delayed tasks.
@@ -965,6 +957,10 @@ def custom_delay_optimize(
     # `dask.delayed.optimize` is a no-op. Invoke `fuse_linear_task_spec`
     # directly to keep per-frame chains fused. Flatten `keys` because nested
     # lists (e.g. `da.compute([a, b])`) crash the fuser's internal `set(keys)`.
+    if inline_patterns is None:
+        inline_patterns = []
+    if fast_functions is None:
+        fast_functions = []
     return fuse_linear_task_spec(ensure_dict(dsk), list(flatten(keys)))
 
 
@@ -994,7 +990,7 @@ def unique_keys(keys: list) -> np.ndarray:
     return np.unique(new_keys)
 
 
-def get_keys_pat(pat: str, keys: list, return_all=False) -> list | str:
+def get_keys_pat(pat: str, keys: list, return_all: bool = False) -> list | str:
     """
     Filter a list of task keys by pattern.
 
@@ -1049,7 +1045,7 @@ def optimize_chunk(arr: xr.DataArray, chk: dict) -> xr.DataArray:
     return arr_chk
 
 
-def local_extreme(fm: np.ndarray, k: np.ndarray, etype="max", diff=0) -> np.ndarray:
+def local_extreme(fm: np.ndarray, k: np.ndarray, etype: str = "max", diff: int = 0) -> np.ndarray:
     """
     Find local extreme of a 2d array.
 
@@ -1113,7 +1109,7 @@ def med_baseline(a: np.ndarray, wnd: int) -> np.ndarray:
 
 
 @darr.as_gufunc(signature="(m,n),(m)->(n)", output_dtypes=float)
-def sps_lstsq(a: csc_matrix, b: np.ndarray, **kwargs):
+def sps_lstsq(a: csc_matrix, b: np.ndarray, **kwargs: Any) -> np.ndarray:
     out = np.zeros((b.shape[0], a.shape[1]))
     for i in range(b.shape[0]):
         out[i, :] = lsqr(a, b[i, :].squeeze(), **kwargs)[0]

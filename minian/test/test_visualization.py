@@ -30,6 +30,4 @@ class TestVisualizeSpatialPartition:
             ValueError,
             match="positions has 5 rows but membership has 4",
         ):
-            visualize_spatial_partition(
-                max_proj, positions, membership, adj=adj, n_frames=100
-            )
+            visualize_spatial_partition(max_proj, positions, membership, adj=adj, n_frames=100)
