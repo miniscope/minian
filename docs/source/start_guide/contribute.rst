@@ -59,7 +59,7 @@ To build documentation locally run the following commands:
 
 .. code-block:: console
 
-    pip install -r requirements/requirements-doc.txt
+    pip install -e .[doc]
     cd docs
     make html
 

@@ -12,7 +12,7 @@ def normalize_id(app, exception):
         if os.path.basename(root) in ["pipeline", "cross_reg"]:
             continue
         for html in list(filter(lambda fn: fn.endswith(".html"), files)):
-            with open(os.path.join(root, html)) as html_doc:
+            with open(os.path.join(root, html), encoding="utf-8") as html_doc:
                 soup = BeautifulSoup(html_doc, "html.parser")
             for tag in soup.find_all(name="dt", id=True):
                 tid = IDs.add(tag.get("id"))
@@ -24,7 +24,7 @@ def normalize_id(app, exception):
         if os.path.basename(root) in ["pipeline", "cross_reg"]:
             continue
         for html in list(filter(lambda fn: fn.endswith(".html"), files)):
-            with open(os.path.join(root, html)) as html_doc:
+            with open(os.path.join(root, html), encoding="utf-8") as html_doc:
                 soup = BeautifulSoup(html_doc, "html.parser")
             for tag in soup.find_all(name=True, id=True):
                 tid = tag.get("id")
