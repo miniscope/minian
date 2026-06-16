@@ -39,10 +39,10 @@ def _ensure_ffmpeg() -> None:
 
 def load_videos(
     vpath: str,
-    pattern=r"msCam[0-9]+\.avi$",
+    pattern: str = r"msCam[0-9]+\.avi$",
     dtype: str | type = np.float64,
     downsample: dict | None = None,
-    downsample_strategy="subset",
+    downsample_strategy: str = "subset",
     post_process: Callable | None = None,
 ) -> xr.DataArray:
     """
@@ -100,13 +100,10 @@ def load_videos(
         if `downsample_strategy` is not "subset" or "mean"
     """
     vpath = os.path.normpath(vpath)
-    vlist = natsorted(
-        [vpath + os.sep + v for v in os.listdir(vpath) if re.search(pattern, v)]
-    )
+    vlist = natsorted([vpath + os.sep + v for v in os.listdir(vpath) if re.search(pattern, v)])
     if not vlist:
         raise FileNotFoundError(
-            f"No data with pattern {pattern}"
-            f" found in the specified folder {vpath}"
+            f"No data with pattern {pattern} found in the specified folder {vpath}"
         )
     print(f"loading {len(vlist)} videos in folder {vpath}")
 
@@ -123,11 +120,11 @@ def load_videos(
     varr = xr.DataArray(
         varr,
         dims=["frame", "height", "width"],
-        coords=dict(
-            frame=np.arange(varr.shape[0]),
-            height=np.arange(varr.shape[1]),
-            width=np.arange(varr.shape[2]),
-        ),
+        coords={
+            "frame": np.arange(varr.shape[0]),
+            "height": np.arange(varr.shape[1]),
+            "width": np.arange(varr.shape[2]),
+        },
     )
     if dtype:
         varr = varr.astype(dtype)
@@ -156,10 +153,7 @@ def _load_tif_lazy(fname: str) -> darr.array:
     flist = [fmread(fname, i) for i in range(f)]
 
     sample = flist[0].compute()
-    arr = [
-        da.array.from_delayed(fm, dtype=sample.dtype, shape=sample.shape)
-        for fm in flist
-    ]
+    arr = [da.array.from_delayed(fm, dtype=sample.dtype, shape=sample.shape) for fm in flist]
     return da.array.stack(arr, axis=0)
 
 
@@ -178,10 +172,7 @@ def load_avi_lazy_framewise(fname: str) -> darr.array:
     fmread = da.delayed(load_avi_perframe)
     flist = [fmread(fname, i) for i in range(f)]
     sample = flist[0].compute()
-    arr = [
-        da.array.from_delayed(fm, dtype=sample.dtype, shape=sample.shape)
-        for fm in flist
-    ]
+    arr = [da.array.from_delayed(fm, dtype=sample.dtype, shape=sample.shape) for fm in flist]
     return da.array.stack(arr, axis=0)
 
 
@@ -262,19 +253,16 @@ def load_avi_perframe(fname: str, fid: int) -> np.ndarray:
 
 
 @deprecated(
-    "write_vid_blk is deprecated in v1.3.0 and will be removed in v2.0.0. "
-    "Use write_video instead."
+    "write_vid_blk is deprecated in v1.3.0 and will be removed in v2.0.0. Use write_video instead."
 )
-def write_vid_blk(arr, vpath, options):
+def write_vid_blk(arr: np.ndarray | darr.Array, vpath: str, options: dict) -> str:
     _ensure_ffmpeg()
     uid = uuid4()
     vname = f"{uid}.mp4"
     fpath = os.path.join(vpath, vname)
     if len(arr.shape) == 2:
         arr = np.expand_dims(arr, axis=0)
-    writer = skvideo.io.FFmpegWriter(
-        fpath, outputdict={"-" + k: v for k, v in options.items()}
-    )
+    writer = skvideo.io.FFmpegWriter(fpath, outputdict={"-" + k: v for k, v in options.items()})
     for fm in arr:
         writer.writeFrame(fm)
     writer.close()
@@ -285,8 +273,8 @@ def write_video(
     arr: xr.DataArray,
     vname: str | None = None,
     vpath: str | None = ".",
-    norm=True,
-    options={"crf": "18", "preset": "ultrafast"},
+    norm: bool = True,
+    options: dict | None = None,
 ) -> str:
     """
     Write a video from a movie array using `python-ffmpeg`.
@@ -317,14 +305,14 @@ def write_video(
     --------
     ffmpeg.output
     """
+    if options is None:
+        options = {"crf": "18", "preset": "ultrafast"}
     _ensure_ffmpeg()
     if not vname:
         vname = f"{uuid4()}.mp4"
     fname = os.path.join(vpath, vname)
     if norm:
-        arr_opt = fct.partial(
-            custom_arr_optimize, rename_dict={"rechunk": "merge_restricted"}
-        )
+        arr_opt = fct.partial(custom_arr_optimize, rename_dict={"rechunk": "merge_restricted"})
         with da.config.set(array_optimize=arr_opt):
             arr = arr.astype(np.float32)
             arr_max = arr.max().compute().values
@@ -349,11 +337,8 @@ def write_video(
     return fname
 
 
-@deprecated(
-    "concat_video_recursive is deprecated in v1.3.0 and will be removed in "
-    "v2.0.0."
-)
-def concat_video_recursive(vlist, vname=None):
+@deprecated("concat_video_recursive is deprecated in v1.3.0 and will be removed in v2.0.0.")
+def concat_video_recursive(vlist: list[str], vname: str | None = None) -> str:
     _ensure_ffmpeg()
     if not len(vlist) > 1:
         return vlist[0]

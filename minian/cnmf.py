@@ -1,7 +1,7 @@
 import functools as fct
 import os
 import warnings
-from typing import Optional, Union
+from typing import Any
 
 import cv2
 import cvxpy as cvx
@@ -25,12 +25,11 @@ from sklearn.linear_model import LassoLars
 from statsmodels.tsa.stattools import acovf
 
 from .utilities import (
-    custom_arr_optimize,
     custom_delay_optimize,
+    med_baseline,
     open_minian,
     rechunk_like,
     save_minian,
-    med_baseline,
 )
 
 try:
@@ -38,14 +37,17 @@ try:
 except ImportError:
     from collections.abc import Callable
 
-    def jit(**kwargs) -> Callable:
+    def jit(**kwargs: Any) -> Callable:  # noqa: ARG001
         def wrapper(fn: Callable) -> Callable:
             return fn
+
         return wrapper
 
 
 def get_noise_fft(
-    varr: xr.DataArray, noise_range=(0.25, 0.5), noise_method="logmexp"
+    varr: xr.DataArray,
+    noise_range: tuple[float, float] = (0.25, 0.5),
+    noise_method: str = "logmexp",
 ) -> xr.DataArray:
     """
     Estimates noise along the "frame" dimension aggregating power spectral
@@ -89,16 +91,17 @@ def get_noise_fft(
         output_core_dims=[[]],
         dask="parallelized",
         vectorize=True,
-        kwargs=dict(
-            noise_range=noise_range, noise_method=noise_method, threads=threads
-        ),
+        kwargs={"noise_range": noise_range, "noise_method": noise_method, "threads": threads},
         output_dtypes=[float],
     )
     return sn
 
 
 def noise_fft(
-    px: np.ndarray, noise_range=(0.25, 0.5), noise_method="logmexp", threads=1
+    px: np.ndarray,
+    noise_range: tuple[float, float] = (0.25, 0.5),
+    noise_method: str = "logmexp",
+    threads: float = 1,
 ) -> float:
     """
     Estimates noise of the input by aggregating power spectral density within
@@ -143,7 +146,7 @@ def noise_fft(
 
 
 def get_noise_welch(
-    varr: xr.DataArray, noise_range=(0.25, 0.5), noise_method="logmexp"
+    varr: xr.DataArray, noise_range: tuple[str, str] = (0.25, 0.5), noise_method: str = "logmexp"
 ) -> xr.DataArray:
     """
     Estimates noise along the "frame" dimension aggregating power spectral
@@ -177,18 +180,18 @@ def get_noise_welch(
     """
     sn = xr.apply_ufunc(
         noise_welch,
-        varr.chunk(dict(frame=-1)),
+        varr.chunk({"frame": -1}),
         input_core_dims=[["frame"]],
         dask="parallelized",
         vectorize=True,
-        kwargs=dict(noise_range=noise_range, noise_method=noise_method),
+        kwargs={"noise_range": noise_range, "noise_method": noise_method},
         output_dtypes=[varr.dtype],
     )
     return sn
 
 
 def noise_welch(
-    y: np.ndarray, noise_range=(0.25, 0.5), noise_method="logmexp"
+    y: np.ndarray, noise_range: tuple[float, float] = (0.25, 0.5), noise_method: str = "logmexp"
 ) -> float:
     """
     Estimates noise of the input by aggregating power spectral density within
@@ -237,12 +240,12 @@ def update_spatial(
     sn: xr.DataArray,
     b: xr.DataArray = None,
     f: xr.DataArray = None,
-    dl_wnd=5,
-    sparse_penal=0.5,
-    update_background=False,
-    normalize=True,
-    size_thres=(9, None),
-    in_memory=False,
+    dl_wnd: int = 5,
+    sparse_penal: float = 0.5,
+    update_background: bool = False,
+    normalize: bool = True,
+    size_thres: tuple[int | None, int | None] = (9, None),
+    in_memory: bool = False,
 ) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray]:
     """
     Update spatial components given the input data and temporal dynamic for each
@@ -355,7 +358,7 @@ def update_spatial(
         input_core_dims=[["height", "width"]],
         output_core_dims=[["height", "width"]],
         vectorize=True,
-        kwargs=dict(kernel=selem),
+        kwargs={"kernel": selem},
         dask="parallelized",
         output_dtypes=[A.dtype],
     )
@@ -440,13 +443,9 @@ def update_spatial(
         A_bin = A_new > 0
         mask = np.ones(A_new.sizes["unit_id"], dtype=bool)
         if low:
-            mask = np.logical_and(
-                (A_bin.sum(["height", "width"]) > low).compute(), mask
-            )
+            mask = np.logical_and((A_bin.sum(["height", "width"]) > low).compute(), mask)
         if high:
-            mask = np.logical_and(
-                (A_bin.sum(["height", "width"]) < high).compute(), mask
-            )
+            mask = np.logical_and((A_bin.sum(["height", "width"]) < high).compute(), mask)
         mask = xr.DataArray(
             mask, dims=["unit_id"], coords={"unit_id": A_new.coords["unit_id"].values}
         )
@@ -516,10 +515,7 @@ def update_spatial_perpx(
     -------
     update_spatial : for more explanation of parameters
     """
-    if f is not None:
-        idx = sub[:-1].nonzero()[0]
-    else:
-        idx = sub.nonzero()[0]
+    idx = sub[:-1].nonzero()[0] if f is not None else sub.nonzero()[0]
     try:
         C = C_store.get_orthogonal_selection((idx, slice(None))).T
     except AttributeError:
@@ -537,7 +533,7 @@ def update_spatial_perpx(
 
 @darr.as_gufunc(signature="(f),(),(u)->(u)", output_dtypes=float)
 def update_spatial_block(
-    y: np.ndarray, alpha: np.ndarray, sub: sparse.COO, **kwargs
+    y: np.ndarray, alpha: np.ndarray, sub: sparse.COO, **kwargs: Any
 ) -> sparse.COO:
     """
     Carry out spatial update for each 3d block of data.
@@ -629,19 +625,12 @@ def compute_trace(
     Y = Y.data
     A = darr.from_array(A.data.map_blocks(sparse.COO).compute(), chunks=-1)
     C = C.data.map_blocks(sparse.COO).T
-    b = (
-        b.fillna(0)
-        .data.map_blocks(sparse.COO)
-        .reshape((1, Y.shape[1], Y.shape[2]))
-        .compute()
-    )
+    b = b.fillna(0).data.map_blocks(sparse.COO).reshape((1, Y.shape[1], Y.shape[2])).compute()
     f = f.fillna(0).data.reshape((-1, 1))
     AtA = darr.tensordot(A, A, axes=[(1, 2), (1, 2)]).compute()
     A_norm = (
-        (1 / (A ** 2).sum(axis=(1, 2)))
-        .map_blocks(
-            lambda a: sparse.diagonalize(sparse.COO(a)), chunks=(A.shape[0], A.shape[0])
-        )
+        (1 / (A**2).sum(axis=(1, 2)))
+        .map_blocks(lambda a: sparse.diagonalize(sparse.COO(a)), chunks=(A.shape[0], A.shape[0]))
         .compute()
     )
     B = darr.tensordot(f, b, axes=[(1), (0)])
@@ -651,13 +640,7 @@ def compute_trace(
     CtA = darr.dot(C, AtA)
     CtA = darr.dot(CtA, A_norm)
     YrA = (YtA - CtA + C).clip(0)
-    arr_opt = fct.partial(
-        custom_arr_optimize,
-        inline_patterns=["from-getitem-transpose"],
-        rename_dict={"tensordot": "tensordot_restricted"},
-    )
-    with da.config.set(array_optimize=arr_opt):
-        YrA = da.optimize(YrA)[0]
+    YrA = da.optimize(YrA)[0]
     YrA = xr.DataArray(
         YrA,
         dims=["frame", "unit_id"],
@@ -673,24 +656,22 @@ def update_temporal(
     f: xr.DataArray | None = None,
     Y: xr.DataArray | None = None,
     YrA: xr.DataArray | None = None,
-    noise_freq=0.25,
-    p=2,
-    add_lag="p",
-    jac_thres=0.1,
-    sparse_penal=1,
+    noise_freq: float = 0.25,
+    p: int = 2,
+    add_lag: str = "p",
+    jac_thres: float = 0.1,
+    sparse_penal: float = 1,
     bseg: np.ndarray | None = None,
     med_wd: int | None = None,
-    zero_thres=1e-8,
-    max_iters=200,
-    use_smooth=True,
-    normalize=True,
-    warm_start=False,
-    post_scal=False,
-    scs_fallback=False,
-    concurrent_update=False,
-) -> tuple[
-    xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray
-]:
+    zero_thres: float = 1e-8,
+    max_iters: int = 200,
+    use_smooth: bool = True,
+    normalize: bool = True,
+    warm_start: bool = False,
+    post_scal: bool = False,
+    scs_fallback: bool = False,
+    concurrent_update: bool = False,
+) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray]:
     """
     Update temporal components and deconvolve calcium traces for each cell given
     spatial footprints.
@@ -907,14 +888,12 @@ def update_temporal(
                 f"{cur_YrA.shape[0]} cells will be updated togeter, "
                 f"which takes roughly {mem_demand} MB of memory. "
                 "Consider merging the units "
-                "or changing jac_thres"
+                "or changing jac_thres",
+                stacklevel=2,
             )
         if not warm_start:
             cur_C = None
-        if cur_YrA.shape[0] > 1:
-            dl_opt = inline_opt
-        else:
-            dl_opt = custom_delay_optimize
+        dl_opt = inline_opt if cur_YrA.shape[0] > 1 else custom_delay_optimize
         # explicitly using delay (rather than gufunc) seem to promote the
         # depth-first behavior of dask
         with da.config.set(delayed_optimize=dl_opt):
@@ -939,12 +918,8 @@ def update_temporal(
         c_ls.append(darr.from_delayed(res[0], shape=cur_YrA.shape, dtype=cur_YrA.dtype))
         s_ls.append(darr.from_delayed(res[1], shape=cur_YrA.shape, dtype=cur_YrA.dtype))
         b_ls.append(darr.from_delayed(res[2], shape=cur_YrA.shape, dtype=cur_YrA.dtype))
-        c0_ls.append(
-            darr.from_delayed(res[3], shape=cur_YrA.shape, dtype=cur_YrA.dtype)
-        )
-        g_ls.append(
-            darr.from_delayed(res[4], shape=(cur_YrA.shape[0], p), dtype=cur_YrA.dtype)
-        )
+        c0_ls.append(darr.from_delayed(res[3], shape=cur_YrA.shape, dtype=cur_YrA.dtype))
+        g_ls.append(darr.from_delayed(res[4], shape=(cur_YrA.shape[0], p), dtype=cur_YrA.dtype))
     uids_new = np.concatenate(uid_ls)
     C_new = xr.DataArray(
         darr.concatenate(c_ls, axis=0),
@@ -988,16 +963,12 @@ def update_temporal(
         coords={"unit_id": uids_new, "lag": np.arange(p)},
         name="g",
     )
-    arr_opt = fct.partial(custom_arr_optimize, keep_patterns=["^update_temporal_block"])
-    with da.config.set(array_optimize=arr_opt):
-        da.compute(
-            [
-                save_minian(
-                    var.chunk({"unit_id": 1}), intpath, compute=False, overwrite=True
-                )
-                for var in [C_new, S_new, b0_new, c0_new, g]
-            ]
-        )
+    da.compute(
+        [
+            save_minian(var.chunk({"unit_id": 1}), intpath, compute=False, overwrite=True)
+            for var in [C_new, S_new, b0_new, c0_new, g]
+        ]
+    )
     int_ds = open_minian(intpath, return_dict=True)
     C_new, S_new, b0_new, c0_new, g = (
         int_ds["C_new"],
@@ -1076,12 +1047,9 @@ def get_ar_coef(
     g : np.ndarray
         The estimated AR coefficients.
     """
-    if add_lag == "p":
-        max_lag = p * 2
-    else:
-        max_lag = p + add_lag
+    max_lag = p * 2 if add_lag == "p" else p + add_lag
     cov = acovf(y, fft=True)
-    C_mat = toeplitz(cov[:max_lag], cov[:p]) - sn ** 2 * np.eye(max_lag, p)
+    C_mat = toeplitz(cov[:max_lag], cov[:p]) - sn**2 * np.eye(max_lag, p)
     g = lstsq(C_mat, cov[1 : max_lag + 1])[0]
     if pad:
         res = np.zeros(pad)
@@ -1091,7 +1059,7 @@ def get_ar_coef(
         return g
 
 
-def get_p(y):
+def get_p(y: np.ndarray) -> np.ndarray:
     dif = np.append(np.diff(y), 0)
     rising = dif > 0
     prd_ris, num_ris = label(rising)
@@ -1107,12 +1075,12 @@ def update_temporal_block(
     YrA: np.ndarray,
     noise_freq: float,
     p: int,
-    add_lag="p",
-    normalize=True,
-    use_smooth=True,
-    med_wd=None,
-    concurrent=False,
-    **kwargs
+    add_lag: str = "p",
+    normalize: bool = True,
+    use_smooth: bool = True,
+    med_wd: int | None = None,
+    concurrent: bool = False,
+    **kwargs: Any,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Update temporal components given residule traces of a group of cells.
@@ -1173,7 +1141,7 @@ def update_temporal_block(
         excluded=["noise_range", "noise_method"],
         signature="(f)->()",
     )
-    vec_get_p = np.vectorize(get_p, otypes=[int], signature="(f)->()")
+    np.vectorize(get_p, otypes=[int], signature="(f)->()")
     vec_get_ar_coef = np.vectorize(
         get_ar_coef,
         otypes=[float],
@@ -1217,7 +1185,12 @@ def update_temporal_block(
 
 
 def update_temporal_cvxpy(
-    y: np.ndarray, g: np.ndarray, sn: np.ndarray, A=None, bseg=None, **kwargs
+    y: np.ndarray,
+    g: np.ndarray,
+    sn: np.ndarray,
+    A: np.ndarray | None = None,
+    bseg: np.ndarray | None = None,
+    **kwargs: Any,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Solve the temporal update optimization problem using `cvxpy`
@@ -1291,9 +1264,8 @@ def update_temporal_cvxpy(
     if g.ndim < 2:
         g = g.reshape((1, -1))
     sn = np.atleast_1d(sn)
-    if A is not None:
-        if A.ndim < 2:
-            A = A.reshape((-1, 1))
+    if A is not None and A.ndim < 2:
+        A = A.reshape((-1, 1))
     # get count of frames and units
     _T = y.shape[-1]
     _u = g.shape[0]
@@ -1373,7 +1345,7 @@ def update_temporal_cvxpy(
             _ = prob.solve(solver="ECOS")
         if not (prob.status == "optimal" or prob.status == "optimal_inaccurate"):
             if use_cons:
-                warnings.warn("constrained version of problem infeasible")
+                warnings.warn("constrained version of problem infeasible", stacklevel=2)
             raise ValueError
     except (ValueError, cvx.SolverError):
         lam = sn * sparse_penal
@@ -1395,10 +1367,11 @@ def update_temporal_cvxpy(
                 warnings.warn(
                     f"problem status is {prob.status}, returning zero",
                     RuntimeWarning,
+                    stacklevel=2,
                 )
                 return [np.zeros(c.shape, dtype=float)] * 4
-    if not (prob.status == "optimal"):
-        warnings.warn("problem solved sub-optimally", RuntimeWarning)
+    if prob.status != "optimal":
+        warnings.warn("problem solved sub-optimally", RuntimeWarning, stacklevel=2)
     c = np.where(c.value > zero_thres, c.value, 0)
     s = np.where(s.value > zero_thres, s.value, 0)
     b = np.where(b.value > zero_thres, b.value, 0)
@@ -1411,7 +1384,7 @@ def unit_merge(
     A: xr.DataArray,
     C: xr.DataArray,
     add_list: list[xr.DataArray] | None = None,
-    thres_corr=0.9,
+    thres_corr: float = 0.9,
     noise_freq: float | None = None,
     chunk: int = 600,
 ) -> tuple[xr.DataArray, xr.DataArray, list[xr.DataArray] | None]:
@@ -1458,8 +1431,7 @@ def unit_merge(
     """
     print("computing spatial overlap")
     with da.config.set(
-        array_optimize=darr.optimization.optimize,
-        **{"optimization.fuse.subgraphs": False}
+        array_optimize=darr.optimization.optimize, **{"optimization.fuse.subgraphs": False}
     ):
         A_sps = (A.data.map_blocks(sparse.COO) > 0).rechunk(-1).persist()
         A_inter = sparse.tril(
@@ -1495,9 +1467,7 @@ def unit_merge(
             "footprints via size_thres / mask, so an empty footprint reaching "
             "unit_merge indicates an upstream pipeline bug."
         )
-    nod_df = (
-        cents.set_index("unit_id").loc[unit_ids, ["height", "width"]].reset_index()
-    )
+    nod_df = cents.set_index("unit_id").loc[unit_ids, ["height", "width"]].reset_index()
     adj = adj_corr(C, A_inter, nod_df, freq=noise_freq, idx_dims=["unit_id"], chunk=chunk)
     print("labeling units to be merged")
     adj = adj > thres_corr
@@ -1535,7 +1505,7 @@ def unit_merge(
         return A_merge, C_merge
 
 
-def label_connected(adj: np.ndarray, only_connected=False) -> np.ndarray:
+def label_connected(adj: np.ndarray, only_connected: bool = False) -> np.ndarray:
     """
     Label connected components given adjacency matrix.
 
@@ -1558,7 +1528,7 @@ def label_connected(adj: np.ndarray, only_connected=False) -> np.ndarray:
         np.fill_diagonal(adj, 0)
         adj = np.triu(adj)
         g = nx.from_numpy_array(adj)
-    except:
+    except:  # noqa: E722
         g = nx.from_scipy_sparse_array(adj)
     labels = np.zeros(adj.shape[0], dtype=int)
     for icomp, comp in enumerate(nx.connected_components(g)):
@@ -1571,7 +1541,7 @@ def label_connected(adj: np.ndarray, only_connected=False) -> np.ndarray:
 
 
 def smooth_sig(
-    sig: xr.DataArray, freq: float, method="fft", btype="low"
+    sig: xr.DataArray, freq: float, method: str = "fft", btype: str = "low"
 ) -> xr.DataArray:
     """
     Filter the input timeseries with a cut-off frequency in vecorized fashion.
@@ -1603,8 +1573,8 @@ def smooth_sig(
     """
     try:
         filt_func = {"fft": filt_fft, "butter": filt_butter}[method]
-    except KeyError:
-        raise NotImplementedError(method)
+    except KeyError as e:
+        raise NotImplementedError(method) from e
     sig_smth = xr.apply_ufunc(
         filt_func,
         sig,
@@ -1721,18 +1691,10 @@ def compute_AtC(A: xr.DataArray, C: xr.DataArray) -> xr.DataArray:
         A.coords["height"].values,
         A.coords["width"].values,
     )
-    A = darr.from_array(
-        A.data.map_blocks(sparse.COO, dtype=A.dtype).compute(), chunks=-1
-    )
+    A = darr.from_array(A.data.map_blocks(sparse.COO, dtype=A.dtype).compute(), chunks=-1)
     C = C.transpose("frame", "unit_id").data.map_blocks(sparse.COO, dtype=C.dtype)
-    AtC = darr.tensordot(C, A, axes=(1, 0)).map_blocks(
-        lambda a: a.todense(), dtype=A.dtype
-    )
-    arr_opt = fct.partial(
-        custom_arr_optimize, rename_dict={"tensordot": "tensordot_restricted"}
-    )
-    with da.config.set(array_optimize=arr_opt):
-        AtC = da.optimize(AtC)[0]
+    AtC = darr.tensordot(C, A, axes=(1, 0)).map_blocks(lambda a: a.todense(), dtype=A.dtype)
+    AtC = da.optimize(AtC)[0]
     return xr.DataArray(
         AtC,
         dims=["frame", "height", "width"],
@@ -1744,9 +1706,9 @@ def graph_optimize_corr(
     varr: xr.DataArray,
     G: nx.Graph,
     freq: float,
-    idx_dims=["height", "width"],
+    idx_dims: list[str] | None = None,
     chunk: int = 600,
-    step_size=50,
+    step_size: int = 50,
 ) -> pd.DataFrame:
     """
     Compute correlation in an optimized fashion given a computation graph.
@@ -1796,6 +1758,9 @@ def graph_optimize_corr(
         representing the node index of the edge (correlation), and column "corr"
         with computed value of correlation.
     """
+    if idx_dims is None:
+        idx_dims = ["height", "width"]
+
     nodes_sorted = sorted(G.nodes)
     try:
         positions = np.array(
@@ -1809,9 +1774,7 @@ def graph_optimize_corr(
         ) from None
     membership = spatial_partition(positions, target_chunk=chunk)
     # Cast np.int64 -> plain int to keep node attributes as plain Python types.
-    nx.set_node_attributes(
-        G, {k: {"part": int(v)} for k, v in zip(nodes_sorted, membership)}
-    )
+    nx.set_node_attributes(G, {k: {"part": int(v)} for k, v in zip(nodes_sorted, membership)})
     eg_df = nx.to_pandas_edgelist(G)
     part_map = nx.get_node_attributes(G, "part")
     eg_df["part_src"] = eg_df["source"].map(part_map)
@@ -1823,13 +1786,12 @@ def graph_optimize_corr(
     egd_same, egd_diff = eg_df[~eg_df["part_diff"]], eg_df[eg_df["part_diff"]]
     idx_dict = {d: nx.get_node_attributes(G, d) for d in idx_dims}
 
-    def construct_comput(edf, pxs):
+    def construct_comput(edf: pd.DataFrame, pxs: list[int]) -> np.ndarray:
         px_map = {k: v for v, k in enumerate(pxs)}
         ridx = edf["source"].map(px_map).values
         cidx = edf["target"].map(px_map).values
         idx_arr = {
-            d: xr.DataArray([dd[p] for p in pxs], dims="pixels")
-            for d, dd in idx_dict.items()
+            d: xr.DataArray([dd[p] for p in pxs], dims="pixels") for d, dd in idx_dict.items()
         }
         vsub = varr.sel(**idx_arr).data
         # `idx_corr` wants (N_items, T_frames). xarray's vectorized sel
@@ -1839,10 +1801,8 @@ def graph_optimize_corr(
         # single-dim sel returns `(unit_id, frame)` already in the right
         # orientation but still needs a rechunk so the trace axis is
         # contiguous for the numba kernel.
-        if len(idx_arr) > 1:  # vectorized indexing
-            vsub = vsub.T
-        else:
-            vsub = vsub.rechunk(-1)
+        # vectorized indexing
+        vsub = vsub.T if len(idx_arr) > 1 else vsub.rechunk(-1)
         with da.config.set(**{"optimization.fuse.ave-width": vsub.shape[0]}):
             return da.optimize(smooth_corr(vsub, ridx, cidx, freq=freq))[0]
 
@@ -1881,7 +1841,7 @@ def adj_corr(
     adj: np.ndarray,
     nod_df: pd.DataFrame,
     freq: float,
-    idx_dims=["height", "width"],
+    idx_dims: list[str] | None = None,
     chunk: int = 600,
 ) -> scipy.sparse.csr_matrix:
     """
@@ -1923,6 +1883,8 @@ def adj_corr(
         Sparse matrix of the same shape as `adj` but with values corresponding
         the computed correlation.
     """
+    if idx_dims is None:
+        idx_dims = ["height", "width"]
     G = nx.Graph()
     G.add_nodes_from([(i, d) for i, d in enumerate(nod_df.to_dict("records"))])
     G.add_edges_from([(s, t) for s, t in zip(*adj.nonzero())])
@@ -1932,9 +1894,7 @@ def adj_corr(
     )
 
 
-def spatial_partition(
-    positions: np.ndarray, target_chunk: int
-) -> np.ndarray:
+def spatial_partition(positions: np.ndarray, target_chunk: int) -> np.ndarray:
     """
     Partition 2D points into balanced groups via k-d tree median split.
 
@@ -2004,9 +1964,7 @@ def spatial_partition(
     """
     positions = np.asarray(positions, dtype=float)
     if positions.ndim != 2 or positions.shape[1] != 2:
-        raise ValueError(
-            f"positions must be (N, 2); got shape {positions.shape}"
-        )
+        raise ValueError(f"positions must be (N, 2); got shape {positions.shape}")
     if target_chunk < 1:
         raise ValueError(f"target_chunk must be >= 1; got {target_chunk}")
     # NaN/inf rows would silently cluster via argsort's NaN ordering and
@@ -2059,6 +2017,7 @@ def _canonicalize_edge_pairs(adj: "scipy.sparse.spmatrix") -> np.ndarray:
     return np.unique(np.column_stack([lo, hi]), axis=0)
 
 
+# ruff: disable[E501]
 def partition_diagnostics(
     membership: np.ndarray,
     adj: "scipy.sparse.spmatrix | None" = None,
@@ -2088,22 +2047,25 @@ def partition_diagnostics(
     diag : dict
         Diagnostic keys vary with which optional inputs were supplied:
 
-        ============================== ============ ===================== ============================================================
+
+        ============================== ============ ===================== ============================================================  # noqa: E501
         key                            condition    type / shape          meaning
-        ============================== ============ ===================== ============================================================
-        ``"sizes"``                    always       ``(n_parts,)`` int64  Node count in each partition (``np.bincount(membership)``).
-        ``"n_parts"``                  always       int                   Number of distinct partition labels.
-        ``"edges_per_partition"``      ``adj``      ``(n_parts,)`` int64  Intra-partition edge count per partition.
-        ``"cross_edges"``              ``adj``      int                   Edges whose endpoints are in different partitions.
-        ``"total_edges"``              ``adj``      int                   Total unique undirected edges (self-loops dropped).
-        ``"cross_fraction"``           ``adj``      float                 ``cross_edges / total_edges`` (0.0 if no edges).
-        ``"mem_mb"``                   ``n_frames`` ``(n_parts,)`` float  Per-partition trace memory estimate in MiB.
-        ============================== ============ ===================== ============================================================
+        ============================== ============ ===================== ============================================================  # noqa: E501
+        ``"sizes"``                    always       ``(n_parts,)`` int64  Node count in each partition (``np.bincount(membership)``).  # noqa: E501
+        ``"n_parts"``                  always       int                   Number of distinct partition labels.  # noqa: E501
+        ``"edges_per_partition"``      ``adj``      ``(n_parts,)`` int64  Intra-partition edge count per partition.  # noqa: E501
+        ``"cross_edges"``              ``adj``      int                   Edges whose endpoints are in different partitions.  # noqa: E501
+        ``"total_edges"``              ``adj``      int                   Total unique undirected edges (self-loops dropped).  # noqa: E501
+        ``"cross_fraction"``           ``adj``      float                 ``cross_edges / total_edges`` (0.0 if no edges).  # noqa: E501
+        ``"mem_mb"``                   ``n_frames`` ``(n_parts,)`` float  Per-partition trace memory estimate in MiB.  # noqa: E501
+        ============================== ============ ===================== ============================================================  # noqa: E501
+
 
         Returned as a plain ``dict`` for consistency with the rest of
         the codebase. A structured-return migration is on the roadmap
         with the project's pydantic adoption.
     """
+    # ruff: enable[E501]
     membership = np.asarray(membership, dtype=np.int64)
     sizes = np.bincount(membership) if membership.size else np.zeros(0, dtype=np.int64)
     n_parts = int(len(sizes))
@@ -2111,7 +2073,7 @@ def partition_diagnostics(
     diag: dict = {"sizes": sizes, "n_parts": n_parts}
 
     if n_frames is not None:
-        diag["mem_mb"] = sizes.astype(float) * n_frames * bytes_per_sample / (1024 ** 2)
+        diag["mem_mb"] = sizes.astype(float) * n_frames * bytes_per_sample / (1024**2)
 
     if adj is not None:
         pairs = _canonicalize_edge_pairs(adj)
@@ -2133,9 +2095,7 @@ def partition_diagnostics(
 
 
 @darr.as_gufunc(signature="(p,f),(i),(i)->(i)", output_dtypes=[float])
-def smooth_corr(
-    X: np.ndarray, ridx: np.ndarray, cidx: np.ndarray, freq: float
-) -> np.ndarray:
+def smooth_corr(X: np.ndarray, ridx: np.ndarray, cidx: np.ndarray, freq: float) -> np.ndarray:
     """
     Wraps around :func:`filt_fft_vec` and :func:`idx_corr` to carry out both
     smoothing and computation of partial correlation.
@@ -2244,10 +2204,7 @@ def update_background(
     AtC = compute_AtC(A, C)
     Yb = (Y - AtC).clip(0)
     Yb = save_minian(Yb.rename("Yb"), intpath, overwrite=True)
-    if b is None:
-        b_new = Yb.mean("frame").persist()
-    else:
-        b_new = b.persist()
+    b_new = Yb.mean("frame").persist() if b is None else b.persist()
     b_stk = (
         b_new.stack(spatial=["height", "width"])
         .transpose("spatial")

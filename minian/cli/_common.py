@@ -1,7 +1,10 @@
 """Small shared helpers for the ``minian`` CLI subcommands."""
 
+import argparse
+from collections.abc import Iterable
 
-def add_select_args(parser, kind: str) -> None:
+
+def add_select_args(parser: argparse.ArgumentParser, kind: str) -> None:
     """Add the shared ``<name>`` positional + ``--all`` flag to a subparser.
 
     ``minian data download`` and ``minian notebooks copy`` both accept either a
@@ -12,7 +15,7 @@ def add_select_args(parser, kind: str) -> None:
     parser.add_argument("--all", action="store_true", help=f"select every {kind}")
 
 
-def selected(args, all_names, kind: str) -> list[str]:
+def selected(args: argparse.Namespace, all_names: Iterable[str], kind: str) -> list[str]:
     """Resolve the ``<name>`` / ``--all`` args (see :func:`add_select_args`).
 
     Returns every name when ``--all`` is set, a single-item list when a name is

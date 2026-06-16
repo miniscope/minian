@@ -17,7 +17,7 @@ NOTEBOOKS_DIR = notebook_root()
 ARTIFACT_DIR = Path("artifact").resolve()
 
 
-def execute_notebook(relpath, output):
+def execute_notebook(relpath: str, output: str) -> Path:
     """Execute ``notebooks/<relpath>`` with nbconvert, writing to ``artifact/``.
 
     ``output`` is the output base name (no extension); the executed notebook is
