@@ -2,8 +2,8 @@ Working with MiniAn Variables
 =============================
 
 As :ref:`noted in the pipeline <pipeline/notebook_2:loading videos and visualization>`, almost all MiniAn array variables are :py:class:`xarray.DataArray` objects, which are just n-dimensional arrays with extra metadata.
-We highly recommend taking a look at the :doc:`xarray:data-structures` documentation to get familiar with this format.
-We also recommend taking a look at the :ref:`pipeline/notebook_2:subset part of video` part in the pipeline, as well as the :doc:`xarray:indexing` documentation to understand how to index and manipulate the data.
+We highly recommend taking a look at the :doc:`xarray:user-guide/data-structures` documentation to get familiar with this format.
+We also recommend taking a look at the :ref:`pipeline/notebook_2:subset part of video` part in the pipeline, as well as the :doc:`xarray:user-guide/indexing` documentation to understand how to index and manipulate the data.
 Lastly, the actual data (without coordinates/metadata) in MiniAn are almost always represented as :doc:`dask array <dask:array>`, which are essentially container of a bunch of tasks that can be executed to obtain the data, instead of actual data in RAM.
 To obtain actual in-memory representation of data, you can always call the :py:meth:`.compute() <xarray:xarray.DataArray.compute>` function on any variable, which would convert the underlying data representation into a plain :doc:`numpy ndarray <numpy:reference/arrays.ndarray>`.
 Note that this implies loading the data into RAM so you should make sure you have enough available RAM for such operation.
@@ -91,7 +91,7 @@ At any point, you can do:
     minian_ds = open_minian(dpath)
 
 and the returned ``minian_ds`` would be a :py:class:`xarray:xarray.Dataset` object.
-You would be able to save the whole dataset to any metadata-rich format using the :doc:`xarray io api <xarray:io>`.
+You would be able to save the whole dataset to any metadata-rich format using the :doc:`xarray io api <xarray:user-guide/io>`.
 For example, you can do the following to save the dataset into netCDF format (which, by the way, is supported by :py:func:`open_minian <minian.utilities.open_minian>`):
 
 .. code-block:: python

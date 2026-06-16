@@ -19,9 +19,9 @@ def resolve_intersphinx_aliases(app, env, node, contnode):
 
         # this will rewrite the rendered text:
         # find the text node child
-        text_node = next(iter(contnode.traverse(lambda n: n.tagname == "#text")))
+        text_node = next(iter(contnode.findall(lambda n: n.tagname == "#text")))
         # remove the old text node, add new text node with custom text
-        text_node.parent.replace(text_node, Text(text_to_render, ""))
+        text_node.parent.replace(text_node, Text(text_to_render))
 
         # delegate all the rest of dull work to intersphinx
         return missing_reference(app, env, node, contnode)

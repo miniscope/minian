@@ -20,6 +20,17 @@ MiniAn is available on `PyPI <https://pypi.org/project/minian/>`_:
 We recommend installing into a fresh virtual environment. A pip install does not
 include FFmpeg, so make sure it is on your ``PATH`` (see above).
 
+.. note::
+
+   **Windows:** if the install fails while unpacking deeply nested files (such as
+   JupyterLab widget extensions), enable long path support and reinstall. Windows'
+   default 260-character path limit (``MAX_PATH``) truncates these paths. Set the
+   registry value
+   ``HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled`` to ``1``
+   (requires admin), or run as administrator in PowerShell::
+
+       Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name 'LongPathsEnabled' -Value 1
+
 Install with conda
 ------------------
 

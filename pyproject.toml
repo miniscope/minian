@@ -92,6 +92,15 @@ test = [
     "ruff>=0.15.14",
     "psutil>=7.2.2",
 ]
+doc = [
+    "sphinx>=7.2,<8",
+    "pydata-sphinx-theme>=0.15",
+    "myst-parser>=2.0",
+    "nbsphinx>=0.9.3",
+    "sphinx-argparse>=0.4",
+    "rtds-action>=1.1",
+    "beautifulsoup4>=4.11",
+]
 [build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
