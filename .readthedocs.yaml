@@ -5,6 +5,18 @@
 # Required
 version: 2
 
+# RTD retired the legacy default build image: a `build.os` + `build.tools`
+# section is now mandatory or config validation fails before Sphinx runs.
+# Python is pinned to 3.9 to match the pinned doc/runtime stack in
+# requirements-base.txt (numpy==1.20.2 has no wheels for 3.10+).
+build:
+  os: ubuntu-22.04
+  tools:
+    python: "3.9"
+
+sphinx:
+  configuration: docs/source/conf.py
+
 python:
   install:
     - requirements: requirements/requirements-base.txt
