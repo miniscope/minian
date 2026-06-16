@@ -10,6 +10,10 @@ build:
     python: "3.12"
   apt_packages:
     - pandoc
+  jobs:
+    # Fetch tags so pdm-backend's SCM versioning resolves (RTD clones shallow).
+    post_checkout:
+      - git fetch --tags --unshallow || git fetch --tags
 
 sphinx:
   configuration: docs/source/conf.py
