@@ -35,6 +35,15 @@ dask.array.as_gufunc = custom_as_gufunc
 project = "MiniAn"
 copyright = f"2018-{datetime.datetime.now().year}, MiniAn Developers"
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
+
+try:
+    release = _pkg_version("minian")
+except PackageNotFoundError:
+    release = ""
+version = ".".join(release.split(".")[:2])
+
 
 # -- General configuration ---------------------------------------------------
 
@@ -65,6 +74,7 @@ autodoc_typehints = "none"
 autodoc_member_order = "groupwise"
 autoclass_content = "both"
 autosectionlabel_prefix_document = True
+autosectionlabel_maxdepth = 2
 
 doctest_global_setup = """
 import numpy as np
@@ -81,15 +91,15 @@ intersphinx_mapping = {
     "pandas": ("https://pandas.pydata.org/docs/", None),
     "sklearn": ("https://scikit-learn.org/stable/", None),
     "scipy": ("https://docs.scipy.org/doc/scipy/reference/", None),
-    "xarray": ("http://xarray.pydata.org/en/stable/", None),
+    "xarray": ("https://docs.xarray.dev/en/stable/", None),
     "sparse": ("https://sparse.pydata.org/en/stable/", None),
     "networkx": ("https://networkx.org/documentation/stable/", None),
     "zarr": ("https://zarr.readthedocs.io/en/stable/", None),
     "dask": ("https://docs.dask.org/en/latest/", None),
     "distributed": ("https://distributed.dask.org/en/latest/", None),
     "ffmpeg": ("https://kkroening.github.io/ffmpeg-python/", None),
-    "skimage": ("https://scikit-image.org/docs/0.18.x/", None),
-    "simpleitk": ("https://simpleitk.readthedocs.io/en/v2.0.0/", None),
+    "skimage": ("https://scikit-image.org/docs/stable/", None),
+    "simpleitk": ("https://simpleitk.readthedocs.io/en/latest/", None),
     "medpy": ("https://loli.github.io/medpy/", None),
     "natsort": ("https://natsort.readthedocs.io/en/master/", None),
     "rechunker": ("https://rechunker.readthedocs.io/en/latest/", None),
@@ -141,6 +151,24 @@ exclude_patterns = ["artifact"]
 #
 # html_theme = "alabaster"
 html_theme = "pydata_sphinx_theme"
+
+html_theme_options = {
+    "icon_links": [
+        {
+            "name": "GitHub",
+            "url": "https://github.com/miniscope/minian",
+            "icon": "fa-brands fa-github",
+        },
+    ],
+    "use_edit_page_button": True,
+    "navbar_align": "left",
+}
+html_context = {
+    "github_user": "miniscope",
+    "github_repo": "minian",
+    "github_version": "master",
+    "doc_path": "docs/source",
+}
 
 
 # Add any paths that contain custom static files (such as style sheets) here,
