@@ -19,7 +19,9 @@ jobs:
       - name: Install Ruff
         run: python -m pip install ruff
       - name: Ruff Linting
-        run: ruff check minian
+        run: ruff check
+      - name: Ruff Formatting
+        run: ruff format --check
 
   lock:
     name: lockfile current

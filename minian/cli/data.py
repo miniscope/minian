@@ -1,5 +1,7 @@
 """``minian data`` subcommands: fetch demo datasets from Zenodo."""
 
+import argparse
+
 from ..data import dataset_path, datasets, fetch
 from ..data._registry import DATASETS
 from ._common import add_select_args, human_size, print_table, selected
@@ -9,23 +11,22 @@ def _dataset_size(name: str) -> int:
     return sum(info["size"] for info in DATASETS[name]["files"].values())
 
 
-def _cmd_list(args):
+def _cmd_list(args: argparse.Namespace) -> None:  # noqa: ARG001
     print_table(
-        [(name, human_size(_dataset_size(name)), desc)
-         for name, desc in datasets().items()]
+        [(name, human_size(_dataset_size(name)), desc) for name, desc in datasets().items()]
     )
 
 
-def _cmd_download(args):
+def _cmd_download(args: argparse.Namespace) -> None:
     for name in selected(args, DATASETS, "dataset"):
         print(f"{name} ready at {fetch(name)}")
 
 
-def _cmd_path(args):
+def _cmd_path(args: argparse.Namespace) -> None:
     print(dataset_path(args.name))
 
 
-def add_subparser(subparsers):
+def add_subparser(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser(
         "data",
         help="fetch demo datasets",
