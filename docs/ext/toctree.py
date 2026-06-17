@@ -26,7 +26,7 @@ def _build_toc_node(docname, anchor="anchor", text="test text", bullet=False):
         internal=True,
         refuri=docname,
         anchorname="#" + anchor,
-        *[nodes.Text(text, text)]
+        *[nodes.Text(text)]
     )
     para = addnodes.compact_paragraph("", "", reference)
     ret_list = nodes.list_item("", para)
@@ -56,7 +56,7 @@ def _find_toc_node(toc, ref_id, objtype):
     * Section - First section (refuri) or 2nd+ level section (anchorname)
     * Desc - Just use the anchor name
     """
-    for check_node in toc.traverse(nodes.reference):
+    for check_node in toc.findall(nodes.reference):
         if objtype == nodes.section and (
             check_node.attributes["refuri"] == ref_id
             or check_node.attributes["anchorname"] == "#" + ref_id
@@ -116,7 +116,7 @@ def add_domain_to_toctree(app, doctree, docname):
         effectively nesting it under that element
     """
     toc = app.env.tocs[docname]
-    for desc_node in doctree.traverse(addnodes.desc):
+    for desc_node in doctree.findall(addnodes.desc):
         try:
             ref_id = desc_node.children[0].attributes["ids"][0]
         except (KeyError, IndexError):

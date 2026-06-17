@@ -1,76 +1,54 @@
+"""Back-compat shim for the historical ``minian-install`` command.
+
+``minian-install`` used to download notebooks and demo data over HTTP from
+GitHub at install time. That is no longer how MiniAn ships:
+
+* Notebooks live **inside** the installed package; copy them out with
+  ``minian notebooks copy``.
+* Demo data is fetched on demand, cached, and checksum-verified by
+  ``minian data download``.
+
+This command is kept as a thin, deprecated alias for one or two releases so
+existing instructions keep working; please switch to the ``minian`` CLI.
+"""
+
 import argparse
-import os
-from importlib.metadata import version
+import sys
+import warnings
 
-import requests
-
-NOTEBOOK_FILES = [
-    "pipeline.ipynb",
-    "cross-registration.ipynb",
-    "img/workflow.png",
-    "img/param_pnr.png",
-    "img/param_spatial_update.png",
-    "img/param_temporal_update.png",
-]
-DEMO_FILES = [f"demo_movies/msCam{i}.avi" for i in range(1, 11)] + [
-    f"demo_data/session{i}/minian.nc" for i in range(1, 3)
-]
-try:
-    VERSION = version("minian")
-except:  # noqa: E722
-    VERSION = "0.0.0"
+from .cli import main as minian_main
 
 
-def _get_file(filename: str, version: str) -> None:
-    if os.path.isfile(f"{filename}"):
-        print(f"File {filename} already exists, skipping install of this file.")
-        return
-    for vv in [version, "v" + version]:
-        r = requests.get(
-            f"https://raw.githubusercontent.com/miniscope/minian/{vv}/{filename}", timeout=60
-        )
-        if r.status_code == 200:
-            parent_dir = os.path.dirname(filename)
-            if parent_dir:
-                os.makedirs(parent_dir, exist_ok=True)
-            with open(f"{filename}", "wb") as f:
-                for chunk in r.iter_content(2048):
-                    f.write(chunk)
-            print(f"File {filename} installed.")
-            break
-    else:
-        print(f"File {filename} not found with version {version}, skipping.")
-
-
-def demo(version: str) -> None:
-    print("Installing demo data")
-    for file in DEMO_FILES:
-        _get_file(file, version)
-
-
-def notebook(version: str) -> None:
-    print("Installing notebooks")
-    for file in NOTEBOOK_FILES:
-        _get_file(file, version)
+def _deprecation(message: str) -> None:
+    """Real DeprecationWarning (visible under ``-W`` / in test suites) + a note."""
+    warnings.warn(message, DeprecationWarning, stacklevel=2)
+    print(f"Note: {message}", file=sys.stderr)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--notebooks", action="store_true", help="Installs the notebooks")
-    parser.add_argument("--demo", action="store_true", help="Installs the demo data")
+    parser = argparse.ArgumentParser(
+        description="Deprecated alias for the `minian` CLI (`minian notebooks` / `minian data`)."
+    )
+    parser.add_argument(
+        "--notebooks", action="store_true", help="copy bundled notebooks (all of them)"
+    )
+    parser.add_argument("--demo", action="store_true", help="download the demo datasets")
     parser.add_argument(
         "-v",
         action="store",
-        default=VERSION,
-        help=f"Git repo branch or tag name, default {VERSION}",
+        default=None,
+        help="ignored; kept for back-compat with the old URL-fetch behavior",
     )
     args = parser.parse_args()
 
-    version = args.v
-    print(f"Using version: {version}")
-
+    if not (args.notebooks or args.demo):
+        parser.print_help()
+        return
     if args.notebooks:
-        notebook(version)
-
+        _deprecation(
+            "`minian-install --notebooks` is deprecated; use `minian notebooks copy --all`."
+        )
+        minian_main(["notebooks", "copy", "--all"])
     if args.demo:
-        demo(version)
+        _deprecation("`minian-install --demo` is deprecated; use `minian data download --all`.")
+        minian_main(["data", "download", "--all"])

@@ -40,7 +40,7 @@ For example, the following command will give you a clean pipeline:
 
 .. code-block:: console
 
-    jupyter nbconvert pipeline.ipynb \
+    jupyter nbconvert minian-notebooks/pipeline/pipeline.ipynb \
     --TagRemovePreprocessor.enabled=True \
     --TagRemovePreprocessor.remove_cell_tags="tutorial" \
     --to notebook \

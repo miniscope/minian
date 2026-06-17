@@ -5,6 +5,7 @@ Getting Started
     :maxdepth: 2
 
     install
+    cli
     faq
     changelog
     contribute

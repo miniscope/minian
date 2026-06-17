@@ -18,6 +18,7 @@ def estimate_motion(
     dim: str = "frame",
     npart: int = 3,
     chunk_nfm: int | None = None,
+    mesh_size: tuple[int, int] | None = None,
     **kwargs: Any,
 ) -> xr.DataArray:
     """
@@ -79,9 +80,9 @@ def estimate_motion(
         How frames should be aggregated to generate the template for each chunk.
         Should be either "mean" or "max". By default `"mean"`.
     upsample : int, optional
-        The upsample factor passed to
-        :func:`skimage.registration.phase_cross_correlation` to achieve
-        sub-pixel accuracy.
+        The upsample factor for sub-pixel accuracy on the non-rigid
+        (`mesh_size`) path. The rigid path refines the cross-correlation peak by
+        parabolic interpolation instead and ignores this factor.
     circ_thres : float, optional
         The circularity threshold to check whether a frame can serve as a good
         template for estimating motion. If not `None`, then for each frame a
@@ -136,8 +137,8 @@ def estimate_motion(
         res_dict = {}
         for lab in itt.product(*loop_labs):
             va = varr.sel({loop_dims[i]: lab[i] for i in range(len(loop_dims))})
-            vmax, sh = est_motion_part(va.data, npart, chunk_nfm, **kwargs)
-            if kwargs.get("mesh_size"):
+            vmax, sh = est_motion_part(va.data, npart, chunk_nfm, mesh_size=mesh_size, **kwargs)
+            if mesh_size:
                 sh = xr.DataArray(
                     sh,
                     dims=[dim, "shift_dim", "grid0", "grid1"],
@@ -158,8 +159,8 @@ def estimate_motion(
             res_dict[lab] = sh.assign_coords(**dict(zip(loop_dims, lab)))
         sh = xrconcat_recursive(res_dict, loop_dims)
     else:
-        vmax, sh = est_motion_part(varr.data, npart, chunk_nfm, **kwargs)
-        if kwargs.get("mesh_size"):
+        vmax, sh = est_motion_part(varr.data, npart, chunk_nfm, mesh_size=mesh_size, **kwargs)
+        if mesh_size:
             sh = xr.DataArray(
                 sh,
                 dims=[dim, "shift_dim", "grid0", "grid1"],
@@ -181,7 +182,12 @@ def estimate_motion(
 
 
 def est_motion_part(
-    varr: darr.Array, npart: int, chunk_nfm: int, alt_error: int = 5, **kwargs: Any
+    varr: darr.Array,
+    npart: int,
+    chunk_nfm: int,
+    alt_error: float = 5,
+    mesh_size: tuple[int, int] | None = None,
+    **kwargs: Any,
 ) -> tuple[darr.Array, darr.Array]:
     """
     Construct dask graph for the recursive motion estimation algorithm.
@@ -197,6 +203,10 @@ def est_motion_part(
     alt_error : int, optional
         Error threshold between estimated shifts from two alternative methods,
         specified in pixels. By default `5`.
+    mesh_size : tuple[int, int], optional
+        Number of control points for the BSpline mesh in each dimension. If not
+        `None` the experimental non-rigid motion estimation is enabled. By
+        default `None`.
 
     Returns
     -------
@@ -211,53 +221,78 @@ def est_motion_part(
     if chunk_nfm is None:
         chunk_nfm = varr.chunksize[0]
     varr = varr.rechunk((chunk_nfm, None, None))
-    if kwargs.get("mesh_size"):
-        param = get_bspline_param(varr[0].compute(), kwargs["mesh_size"])
-    tmp_ls = []
-    sh_ls = []
-    for blk in varr.blocks:
-        res = da.delayed(est_motion_chunk)(blk, None, alt_error=alt_error, npart=npart, **kwargs)
-        if alt_error:
-            tmp = darr.from_delayed(res[0], shape=(3, blk.shape[1], blk.shape[2]), dtype=blk.dtype)
-        else:
-            tmp = darr.from_delayed(res[0], shape=(blk.shape[1], blk.shape[2]), dtype=blk.dtype)
-        if kwargs.get("mesh_size"):
-            sh = darr.from_delayed(
-                res[1],
-                shape=(blk.shape[0], 2, int(param[1]), int(param[0])),
-                dtype=float,
-            )
-        else:
-            sh = darr.from_delayed(res[1], shape=(blk.shape[0], 2), dtype=float)
-        tmp_ls.append(tmp)
-        sh_ls.append(sh)
+    has_mesh = bool(mesh_size)
+    if has_mesh:
+        param = get_bspline_param(varr[0].compute(), mesh_size)
+    height, width = varr.shape[1], varr.shape[2]
+    tmp_shape = (3, height, width) if alt_error else (height, width)
+    sh_shape = (sum(varr.chunks[0]), 2)
+    if has_mesh:
+        sh_shape = sh_shape + (int(param[1]), int(param[0]))
 
-    temps = da.optimize(darr.stack(tmp_ls, axis=0))[0]
-    shifts = da.optimize(darr.concatenate(sh_ls, axis=0))[0]
-    while temps.shape[0] > 1:
-        tmp_ls = []
-        sh_ls = []
-        for idx in np.arange(0, temps.numblocks[0], npart):
-            tmps = temps.blocks[idx : idx + npart]
-            sh_org = shifts.blocks[idx : idx + npart]
-            sh_org_ls = [sh_org.blocks[i] for i in range(sh_org.numblocks[0])]
-            res = da.delayed(est_motion_chunk)(
-                tmps, sh_org_ls, alt_error=alt_error, npart=npart, **kwargs
+    # Keep each chunk's result as one delayed `(template, shifts)` tuple and feed
+    # the whole tuple into the next reduction step. Splitting it into separate
+    # `res[0]`/`res[1]` dask nodes would route the shared `est_motion_chunk` task
+    # through two graph paths and run it once per path -- a blow-up that compounds
+    # with recursion depth. The final tuple is split once, at the end.
+    res_ls = [
+        da.delayed(est_motion_chunk)(
+            blk, None, alt_error=alt_error, npart=npart, mesh_size=mesh_size, **kwargs
+        )
+        for blk in varr.blocks
+    ]
+    while len(res_ls) > 1:
+        res_ls = [
+            da.delayed(_est_motion_reduce)(
+                res_ls[idx : idx + npart],
+                alt_error,
+                npart,
+                mesh_size=mesh_size,
+                **kwargs,
             )
-            if alt_error:
-                tmp = darr.from_delayed(
-                    res[0], shape=(3, tmps.shape[1], tmps.shape[2]), dtype=tmps.dtype
-                )
-            else:
-                tmp = darr.from_delayed(
-                    res[0], shape=(tmps.shape[1], tmps.shape[2]), dtype=tmps.dtype
-                )
-            sh_new = darr.from_delayed(res[1], shape=sh_org.shape, dtype=sh_org.dtype)
-            tmp_ls.append(tmp)
-            sh_ls.append(sh_new)
-        temps = darr.stack(tmp_ls, axis=0)
-        shifts = darr.concatenate(sh_ls, axis=0)
+            for idx in range(0, len(res_ls), npart)
+        ]
+    res = res_ls[0]
+    temps = darr.from_delayed(res[0], shape=tmp_shape, dtype=varr.dtype)
+    shifts = darr.from_delayed(res[1], shape=sh_shape, dtype=float)
     return temps, shifts
+
+
+def _est_motion_reduce(
+    res_grp: list, alt_error: float, npart: int, **kwargs: Any
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Combine a group of per-chunk results for one reduction step.
+
+    Stacks the chunk templates into a single array and gathers their shifts, then
+    runs :func:`est_motion_chunk` on the aggregate. Consumes the whole
+    `(template, shifts)` tuples to avoid dask task duplication; see
+    :func:`est_motion_part`.
+
+    Parameters
+    ----------
+    res_grp : list
+        list of `(template, shifts)` tuples for the chunks in this group.
+    alt_error : float
+        Error threshold between estimated shifts from two alternative methods.
+    npart : int
+        Number of frames/chunks to combine for the recursive algorithm.
+
+    Returns
+    -------
+    tmp : np.ndarray
+        Aggregated template for the group.
+    motions : np.ndarray
+        Combined motion estimates for the group.
+
+    See Also
+    --------
+    est_motion_part
+    est_motion_chunk
+    """
+    tmps = np.stack([r[0] for r in res_grp], axis=0)
+    sh_org_ls = [r[1] for r in res_grp]
+    return est_motion_chunk(tmps, sh_org_ls, alt_error=alt_error, npart=npart, **kwargs)
 
 
 def est_motion_chunk(
@@ -369,8 +404,7 @@ def est_motion_chunk(
     prop_good = len(good_idxs) / len(good_fm)
     if prop_good < 0.9:
         warnings.warn(
-            f"only {prop_good} of the frames are good. "
-            "Consider lowering your circularity threshold",
+            f"only {prop_good} of the frames are good.Consider lowering your circularity threshold",
             stacklevel=2,
         )
     # use good frame closest to center as template
@@ -381,39 +415,78 @@ def est_motion_chunk(
         motions = np.zeros((varr.shape[0], 2, int(param[1]), int(param[0])))
     else:
         motions = np.zeros((varr.shape[0], 2))
-    for i, _ in enumerate(varr):
+    # Precompute each frame's rfft2 once for the rigid path so it can be reused
+    # across the two registrations it participates in (as src and as a
+    # neighbour's dst). For 4D reduction input the registered image is the
+    # aggregated frame (slot 1); alt-error additionally uses slots 0/2.
+    use_fft = mesh_size is None
+    fft_mid = fft_first = fft_last = None
+    if use_fft:
+        if varr.ndim > 3:
+            fft_mid = np.fft.rfft2(varr[:, 1], axes=(-2, -1))
+            if alt_error:
+                fft_first = np.fft.rfft2(varr[:, 0], axes=(-2, -1))
+                fft_last = np.fft.rfft2(varr[:, 2], axes=(-2, -1))
+        else:
+            fft_mid = np.fft.rfft2(varr, axes=(-2, -1))
+    for i, _fm in enumerate(varr):
+        src_fft = dst_fft = src_alt_fft = dst_alt_fft = None
+        # register each frame against its neighbour toward the center frame
         if i < mid:
-            if varr.ndim > 3:
-                src, dst = varr[i][1], varr[i + 1][1]
-                src_ma, dst_ma = mask[i][1], mask[i + 1][1]
-                if alt_error:
-                    src_alt, dst_alt = varr[i][2], varr[i + 1][0]
-                    src_alt_ma, dst_alt_ma = mask[i][2], mask[i + 1][0]
-            else:
-                # select the next good frame as template
-                didx = good_idxs[good_idxs - (i + 1) >= 0][0]
-                src, dst = varr[i], varr[didx]
-                src_ma, dst_ma = mask[i], mask[didx]
-            slc = slice(0, i + 1)
+            j, slc = i + 1, slice(0, i + 1)
         elif i > mid:
-            if varr.ndim > 3:
-                src, dst = varr[i][1], varr[i - 1][1]
-                src_ma, dst_ma = mask[i][1], mask[i - 1][1]
-                if alt_error:
-                    src_alt, dst_alt = varr[i][0], varr[i - 1][2]
-                    src_alt_ma, dst_alt_ma = mask[i][0], mask[i - 1][2]
-            else:
-                # select the previous good frame as template
-                didx = good_idxs[good_idxs - (i - 1) <= 0][-1]
-                src, dst = varr[i], varr[didx]
-                src_ma, dst_ma = mask[i], mask[didx]
-            slc = slice(i, None)
+            j, slc = i - 1, slice(i, None)
         else:
             continue
-        mo = est_motion_perframe(src, dst, upsample, src_ma, dst_ma, mesh_size, niter)
+        if varr.ndim > 3:
+            src, dst = varr[i][1], varr[j][1]
+            src_ma, dst_ma = mask[i][1], mask[j][1]
+            if use_fft:
+                src_fft, dst_fft = fft_mid[i], fft_mid[j]
+            if alt_error:
+                # cross-chunk check against the adjacent first/last frames
+                if i < mid:
+                    src_alt, dst_alt = varr[i][2], varr[j][0]
+                    src_alt_ma, dst_alt_ma = mask[i][2], mask[j][0]
+                    if use_fft:
+                        src_alt_fft, dst_alt_fft = fft_last[i], fft_first[j]
+                else:
+                    src_alt, dst_alt = varr[i][0], varr[j][2]
+                    src_alt_ma, dst_alt_ma = mask[i][0], mask[j][2]
+                    if use_fft:
+                        src_alt_fft, dst_alt_fft = fft_first[i], fft_last[j]
+        else:
+            # select the nearest good frame toward the center as template
+            if i < mid:
+                didx = good_idxs[good_idxs - j >= 0][0]
+            else:
+                didx = good_idxs[good_idxs - j <= 0][-1]
+            src, dst = varr[i], varr[didx]
+            src_ma, dst_ma = mask[i], mask[didx]
+            if use_fft:
+                src_fft, dst_fft = fft_mid[i], fft_mid[didx]
+        mo = est_motion_perframe(
+            src,
+            dst,
+            upsample,
+            src_ma,
+            dst_ma,
+            mesh_size,
+            niter,
+            src_fft=src_fft,
+            dst_fft=dst_fft,
+        )
         if alt_error and varr.ndim > 3:
             mo_alt = est_motion_perframe(
-                src_alt, dst_alt, upsample, src_alt_ma, dst_alt_ma, mesh_size, niter
+                src_alt,
+                dst_alt,
+                upsample,
+                src_alt_ma,
+                dst_alt_ma,
+                mesh_size,
+                niter,
+                src_fft=src_alt_fft,
+                dst_fft=dst_alt_fft,
             )
             if ((np.abs(mo - mo_alt) > alt_error).any()) and (
                 np.abs(mo).sum() > np.abs(mo_alt).sum()
@@ -457,6 +530,58 @@ def est_motion_chunk(
     return tmp, motions
 
 
+def _xcorr_subpixel(src_fft: np.ndarray, dst_fft: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """
+    Sub-pixel shift between two frames from their precomputed real FFTs.
+
+    Computes the (un-normalized) cross-correlation -- matching
+    :func:`skimage.registration.phase_cross_correlation` with
+    `normalization=None` -- and refines the integer peak with a 1D parabolic fit
+    along each axis. Taking precomputed `rfft2` results lets the caller reuse
+    each frame's transform across the two registrations it participates in.
+
+    Parameters
+    ----------
+    src_fft, dst_fft : np.ndarray
+        `np.fft.rfft2` of the source and destination frames.
+    shape : tuple[int, int]
+        Spatial shape `(height, width)` of the frames.
+
+    Returns
+    -------
+    shift : np.ndarray
+        Shift `(height, width)` of src relative to dst; `-shift` registers src
+        onto dst (the convention :func:`est_motion_perframe` returns).
+    """
+    # The cross-correlation peaks where src best aligns with dst; its (integer)
+    # location is the whole-pixel shift between the two frames.
+    cross_corr = np.fft.irfft2(src_fft * np.conj(dst_fft), s=shape)
+    peak_idx = np.unravel_index(np.argmax(cross_corr), cross_corr.shape)
+    peak_val = cross_corr[peak_idx]
+    # Refine that integer peak to sub-pixel one axis at a time: fit a parabola
+    # through the peak and its two immediate neighbours and take the vertex.
+    # The FFT wraps negative shifts into the upper half of each axis, so a
+    # refined position past the midpoint is folded back to a negative shift.
+    shift = np.empty(2)
+    for axis in range(2):
+        axis_len = cross_corr.shape[axis]
+        peak_pos = peak_idx[axis]
+        # cross-correlation values at the neighbours one step below/above the peak
+        idx_prev = list(peak_idx)
+        idx_next = list(peak_idx)
+        idx_prev[axis] = (peak_pos - 1) % axis_len
+        idx_next[axis] = (peak_pos + 1) % axis_len
+        val_prev = cross_corr[tuple(idx_prev)]
+        val_next = cross_corr[tuple(idx_next)]
+        denom = val_prev - 2 * peak_val + val_next
+        delta = 0.5 * (val_prev - val_next) / denom if denom != 0 else 0.0
+        refined_pos = peak_pos + delta
+        if refined_pos > axis_len // 2:  # wrap negative shifts
+            refined_pos -= axis_len
+        shift[axis] = refined_pos
+    return shift
+
+
 def est_motion_perframe(
     src: np.ndarray,
     dst: np.ndarray,
@@ -465,6 +590,8 @@ def est_motion_perframe(
     dst_ma: np.ndarray | None = None,
     mesh_size: tuple[int, int] | None = None,
     niter: int = 100,
+    src_fft: np.ndarray | None = None,
+    dst_fft: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Estimate motion given two frames.
@@ -476,7 +603,9 @@ def est_motion_perframe(
     dst : np.ndarray
         The destination frame of registration.
     upsample : int
-        Upsample factor.
+        Upsample factor. Only used for the non-rigid (`mesh_size`) path; the
+        rigid path instead estimates sub-pixel shifts by fitting a parabola to
+        the cross-correlation peak and its two neighbours along each axis.
     src_ma : np.ndarray, optional
         Boolean mask for `src`. Only used if `mesh_size is not None`. By default
         `None`.
@@ -489,6 +618,9 @@ def est_motion_perframe(
     niter : int, optional
         Max number of iteration for the gradient descent process. By default
         `100`.
+    src_fft, dst_fft : np.ndarray, optional
+        Precomputed `np.fft.rfft2` of `src`/`dst` for the rigid path. If `None`
+        they are computed on the fly. By default `None`.
 
     Returns
     -------
@@ -499,14 +631,22 @@ def est_motion_perframe(
     --------
     estimate_motion : for detailed explanation of parameters
     """
+    if mesh_size is None:
+        if src_fft is None:
+            src_fft = np.fft.rfft2(src)
+        if dst_fft is None:
+            dst_fft = np.fft.rfft2(dst)
+        return -_xcorr_subpixel(src_fft, dst_fft, src.shape)
+    # TODO: This SimpleITK BSpline non-rigid path is experimental, likely unused
+    # (the pipeline never sets `mesh_size`), and not ideal. Worth revisiting in
+    # favour of a grid/patch-based piecewise-rigid approach like NoRMCorre, which
+    # estimates a rigid shift per patch and interpolates between them.
     sh, error, phasediff = phase_cross_correlation(
         src,
         dst,
         upsample_factor=upsample,
         normalization=None,
     )
-    if mesh_size is None:
-        return -sh
     src = sitk.GetImageFromArray(src.astype(np.float32))
     dst = sitk.GetImageFromArray(dst.astype(np.float32))
     reg = sitk.ImageRegistrationMethod()
@@ -531,7 +671,11 @@ def est_motion_perframe(
 
 
 def match_temp(
-    src: np.ndarray, dst: np.ndarray, max_sh: int, local: bool, subpixel: bool = False
+    src: np.ndarray,
+    dst: np.ndarray,
+    max_sh: int,
+    local: bool,
+    subpixel: bool = False,
 ) -> np.ndarray:
     dst = np.pad(dst, max_sh)
     cor = cv2.matchTemplate(src.astype(np.float32), dst.astype(np.float32), cv2.TM_CCOEFF_NORMED)
@@ -599,7 +743,7 @@ def check_temp(fm: np.ndarray, max_sh: int) -> float:
     return circularity
 
 
-def apply_shifts(varr: xr.DataArray, shifts: xr.DataArray, fill: Any = np.nan) -> xr.DataArray:
+def apply_shifts(varr: xr.DataArray, shifts: xr.DataArray, fill: float = np.nan) -> xr.DataArray:
     sh_dim = shifts.coords["shift_dim"].values.tolist()
     varr_sh = xr.apply_ufunc(
         shift_perframe,
@@ -615,7 +759,7 @@ def apply_shifts(varr: xr.DataArray, shifts: xr.DataArray, fill: Any = np.nan) -
     return varr_sh
 
 
-def shift_perframe(fm: np.ndarray, sh: int, fill: Any = np.nan) -> np.ndarray:
+def shift_perframe(fm: np.ndarray, sh: np.ndarray, fill: float = np.nan) -> np.ndarray:
     if np.isnan(fm).all():
         return fm
     sh = np.around(sh).astype(int)
@@ -646,7 +790,7 @@ def get_mask(fm: np.ndarray, bin_thres: float, bin_wnd: int) -> np.ndarray:
 
 
 def apply_transform(
-    varr: xr.DataArray, trans: xr.DataArray, fill: int = 0, mesh_size: tuple[int, int] = None
+    varr: xr.DataArray, trans: xr.DataArray, fill: float = 0, mesh_size: tuple[int, int] = None
 ) -> xr.DataArray:
     """
     Apply necessary transform to correct for motion.
@@ -703,7 +847,7 @@ def apply_transform(
 def transform_perframe(
     fm: np.ndarray,
     tx_coef: np.ndarray,
-    fill: int = 0,
+    fill: float = 0,
     param: np.ndarray | None = None,
     mesh_size: tuple[int, int] | None = None,
 ) -> np.ndarray:
@@ -734,15 +878,26 @@ def transform_perframe(
     fm : np.ndarray
         The frame after transform.
     """
-    if tx_coef.ndim > 1:
-        if param is None:
-            if mesh_size is None:
-                mesh_size = get_mesh_size(fm)
-            param = get_bspline_param(fm, mesh_size)
-        tx = sitk.BSplineTransform([sitk.GetImageFromArray(a) for a in tx_coef])
-        tx.SetFixedParameters(param)
-    else:
-        tx = sitk.TranslationTransform(2, -tx_coef[::-1])
+    if tx_coef.ndim == 1:
+        # Rigid translation via cv2.warpAffine (much faster than sitk.Resample
+        # for a bilinear warp). `tx_coef` is (height, width): a positive shift
+        # moves content toward +height/+width.
+        warp = np.array([[1, 0, tx_coef[1]], [0, 1, tx_coef[0]]], dtype=np.float32)
+        out = cv2.warpAffine(
+            np.asarray(fm, dtype=np.float32),
+            warp,
+            (fm.shape[1], fm.shape[0]),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=float(fill),
+        )
+        return out.astype(fm.dtype, copy=False)
+    if param is None:
+        if mesh_size is None:
+            mesh_size = get_mesh_size(fm)
+        param = get_bspline_param(fm, mesh_size)
+    tx = sitk.BSplineTransform([sitk.GetImageFromArray(a) for a in tx_coef])
+    tx.SetFixedParameters(param)
     fm = sitk.GetImageFromArray(fm)
     fm = sitk.Resample(fm, fm, tx, sitk.sitkLinear, fill)
     return sitk.GetArrayFromImage(fm)

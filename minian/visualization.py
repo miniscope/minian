@@ -1,16 +1,14 @@
 import contextlib
 import functools as fct
 import itertools as itt
-import os
+import warnings
 from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any
-from uuid import uuid4
 
 import colorcet as cc
 import cv2
 import dask.array as da
-import ffmpeg
 import holoviews as hv
 import numpy as np
 import pandas as pd
@@ -18,7 +16,6 @@ import panel as pn
 import param
 import scipy.sparse as scisps
 import sklearn.mixture
-import skvideo.io
 import xarray as xr
 from bokeh.palettes import Category10_10, Viridis256
 from dask.diagnostics import ProgressBar
@@ -35,14 +32,30 @@ from holoviews.streams import (
 from holoviews.util import Dynamic
 from matplotlib import cm
 from panel import widgets as pnwgt
-from param.parameterized import Event
 from scipy import linalg
 from scipy.ndimage.measurements import center_of_mass
 from scipy.spatial import cKDTree
 
 from .cnmf import compute_AtC
+from .io import write_video
 from .motion_correction import apply_shifts
-from .utilities import ensure_ffmpeg, rechunk_like
+from .utilities import rechunk_like
+
+_VIZ_IO_DEPRECATED_NAMES = frozenset({"concat_video_recursive", "write_vid_blk"})
+
+
+def __getattr__(name: str) -> Any:
+    if name in _VIZ_IO_DEPRECATED_NAMES:
+        warnings.warn(
+            f"Importing {name!r} from minian.visualization is deprecated and will be "
+            "removed in v2.0.0. Import from minian.io instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from . import io
+
+        return getattr(io, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class VArrayViewer:
@@ -95,10 +108,10 @@ class VArrayViewer:
         varr: xr.DataArray | list[xr.DataArray] | xr.Dataset,
         framerate: int = 30,
         summary: list[str] | None = None,
-        meta_dims: list[str] = None,
+        meta_dims: list[str] | None = None,
         datashading: bool = True,
         layout: bool = False,
-    ):
+    ) -> None:
         """
         Parameters
         ----------
@@ -194,8 +207,8 @@ class VArrayViewer:
         self.pnplot = pn.panel(self.get_hvobj())
 
     def get_hvobj(self) -> hv.Layout:
-        def get_im_ovly(meta: dict) -> hv.DynamicMap:
-            def img(f: np.ndarray, ds: xr.DataArray) -> hv.Image:
+        def get_im_ovly(meta: dict) -> hv.Layout:
+            def img(f: int, ds: xr.DataArray) -> hv.Image:
                 return hv.Image(ds.sel(frame=f).compute(), kdims=["width", "height"])
 
             try:
@@ -214,7 +227,7 @@ class VArrayViewer:
             else:
                 im_ovly = im
 
-            def hist(f: np.ndarray, w: int, h: int, ds: xr.DataArray) -> hv.operation.histogram:
+            def hist(f: int, w: float, h: float, ds: xr.DataArray) -> hv.Histogram:
                 if w and h:
                     cur_im = hv.Image(ds.sel(frame=f).compute(), kdims=["width", "height"]).select(
                         height=h, width=w
@@ -264,10 +277,10 @@ class VArrayViewer:
         """
         return pn.layout.Column(self.widgets, self.pnplot)
 
-    def _widgets(self) -> pn.WidgetBox:
+    def _widgets(self) -> pn.layout.WidgetBox:
         w_play = pnwgt.Player(length=len(self._f), interval=10, value=0, width=650, height=90)
 
-        def play(f: Event) -> None:
+        def play(f: Any) -> None:
             if f.old != f.new:
                 self.strm_f.event(f=int(self._f[f.new]))
 
@@ -280,8 +293,8 @@ class VArrayViewer:
                 for d, v in self.meta_dicts.items()
             }
 
-            def make_update_func(meta_name: str) -> Callable[[Event], None]:
-                def _update(x: Event) -> None:
+            def make_update_func(meta_name: str) -> Callable:
+                def _update(x: Any) -> None:
                     self.cur_metas[meta_name] = x.new
                     self._update_subs()
 
@@ -301,7 +314,7 @@ class VArrayViewer:
             self.sum_sub = self.summary.sel(**self.cur_metas)
         self.pnplot.objects[0].object = self.get_hvobj()
 
-    def _update_box(self, _click: Event) -> None:
+    def _update_box(self, click: Any) -> None:  # noqa: ARG002
         box = self.str_box.data
         self.mask.update(
             {
@@ -397,7 +410,7 @@ class CNMFViewer:
         S: xr.DataArray | None = None,
         org: xr.DataArray | None = None,
         sortNN: bool = True,
-    ):
+    ) -> None:
         """
         Parameters
         ----------
@@ -430,7 +443,7 @@ class CNMFViewer:
         self._org = org if org is not None else minian["org"]
         try:
             self.unit_labels = minian["unit_labels"].compute()
-        except:  # noqa: E722
+        except Exception:
             self.unit_labels = xr.DataArray(
                 self._A["unit_id"].values.copy(),
                 dims=self._A["unit_id"].dims,
@@ -523,7 +536,7 @@ class CNMFViewer:
         else:
             self.cents_sub = self.cents
 
-    def compute_subs(self, _clicks: Event | None = None) -> None:
+    def compute_subs(self, clicks: Any = None) -> None:  # noqa: ARG002
         self.A_sub = self.A_sub.compute()
         self.C_sub = self.C_sub.compute()
         self.S_sub = self.S_sub.compute()
@@ -531,18 +544,18 @@ class CNMFViewer:
         self.C_norm_sub = self.C_norm_sub.compute()
         self.S_norm_sub = self.S_norm_sub.compute()
 
-    def update_all(self, _clicks: Event | None = None) -> None:
+    def update_all(self, clicks: Any = None) -> None:  # noqa: ARG002
         self.update_subs()
         self.strm_uid.event(index=[])
         self.strm_f.event(x=0)
         self.update_spatial_all()
 
-    def callback_uid(self, _index: Event | None = None) -> None:
+    def callback_uid(self, index: Any = None) -> None:  # noqa: ARG002
         self.update_temp()
         self.update_AC()
         self.update_usub_lab()
 
-    def callback_f(self, f: np.ndarray, _y: Any) -> None:
+    def callback_f(self, f: float, y: Any) -> None:  # noqa: ARG002
         if len(self._AC) > 0 and len(self._mov) > 0:
             fidx = np.abs(self._f - f).argmin()
             f = self._f[fidx]
@@ -556,19 +569,19 @@ class CNMFViewer:
             self.pipAC.send([])
             self.pipmov.send([])
 
-    def callback_usub(self, usub: Event | None = None) -> None:
+    def callback_usub(self, usub: list | None = None) -> None:
         self.update_temp_comp_sub(usub)
         self.update_AC(usub)
         self.update_usub_lab(usub)
 
-    def _meta_wgt(self) -> pn.WidgetBox:
+    def _meta_wgt(self) -> pn.layout.WidgetBox:
         wgt_meta = {
             d: pnwgt.Select(name=d, options=v, height=45, width=120)
             for d, v in self.meta_dicts.items()
         }
 
-        def make_update_func(meta_name: str) -> Callable[[str], None]:
-            def _update(x: str) -> None:
+        def make_update_func(meta_name: str) -> Callable:
+            def _update(x: Any) -> None:
                 self.metas[meta_name] = x.new
                 self.update_subs()
 
@@ -604,7 +617,7 @@ class CNMFViewer:
             ),
         )
 
-    def _temp_comp_sub(self, usub: np.ndarray | None = None) -> pn.viewable.Viewable:
+    def _temp_comp_sub(self, usub: list | None = None) -> pn.viewable.Viewable:
         if usub is None:
             usub = self.strm_usub.usub
         if self._normalize:
@@ -621,7 +634,8 @@ class CNMFViewer:
                 S.sel(unit_id=usub).compute().rename("Intensity (A. U.)").dropna("frame", how="all")
             ).to(hv.Curve, "frame")
         cur_vl = hv.DynamicMap(
-            lambda f, _y: hv.VLine(f) if f else hv.VLine(0), streams=[self.strm_f]
+            lambda f, y: hv.VLine(f) if f else hv.VLine(0),  # noqa: ARG005
+            streams=[self.strm_f],
         ).options(color="red")
         cur_cv = hv.Curve([], kdims=["frame"], vdims=["Internsity (A.U.)"])
         self.strm_f.source = cur_cv
@@ -644,15 +658,15 @@ class CNMFViewer:
         temp_comp[temp_comp.keys()[0]] = temp_comp[temp_comp.keys()[0]].options(height=h_cv + 75)
         return pn.panel(temp_comp)
 
-    def update_temp_comp_sub(self, usub: np.ndarray | None = None) -> None:
+    def update_temp_comp_sub(self, usub: list | None = None) -> None:
         self.temp_comp_sub.object = self._temp_comp_sub(usub).object
         self.wgt_man.objects = self._man_wgt().objects
 
-    def update_norm(self, norm: Event) -> None:
+    def update_norm(self, norm: Any) -> None:
         self._normalize = norm.new
         self.update_temp_comp_sub()
 
-    def _temp_comp_wgt(self) -> pn.Column:
+    def _temp_comp_wgt(self) -> pn.layout.Column:
         cur_idxs = self.strm_uid.index or self._u
         ntabs = np.ceil(len(cur_idxs) / 5)
         sub_idxs = np.array_split(cur_idxs, ntabs)
@@ -660,7 +674,7 @@ class CNMFViewer:
         def_idxs = list(idxs_dict.values())[0]
         wgt_grp = pnwgt.Select(name="", options=idxs_dict, width=120, height=30, value=def_idxs)
 
-        def update_usub(usub: Event) -> None:
+        def update_usub(usub: Any) -> None:
             self.usub_sel = []
             self.strm_usub.event(usub=usub.new)
 
@@ -671,47 +685,43 @@ class CNMFViewer:
             name="Previous Group", width=120, height=30, button_type="primary"
         )
 
-        def prv(_clicks: Event) -> None:
+        def prv(clicks: Any) -> None:  # noqa: ARG001
             cur_val = wgt_grp.value
             ig = list(idxs_dict.values()).index(cur_val)
-            try:
+            with contextlib.suppress(Exception):
                 prv_val = idxs_dict[list(idxs_dict.keys())[ig - 1]]
                 wgt_grp.value = prv_val
-            except:  # noqa: E722, S110
-                pass
 
         wgt_grp_prv.param.watch(prv, "clicks")
         wgt_grp_nxt = pnwgt.Button(name="Next Group", width=120, height=30, button_type="primary")
 
-        def nxt(_clicks: Event) -> None:
+        def nxt(clicks: Any) -> None:  # noqa: ARG001
             cur_val = wgt_grp.value
             ig = list(idxs_dict.values()).index(cur_val)
-            try:
+            with contextlib.suppress(Exception):
                 nxt_val = idxs_dict[list(idxs_dict.keys())[ig + 1]]
                 wgt_grp.value = nxt_val
-            except:  # noqa: E722, S110
-                pass
 
         wgt_grp_nxt.param.watch(nxt, "clicks")
         wgt_norm = pnwgt.Checkbox(name="Normalize", value=self._normalize, width=120, height=10)
         wgt_norm.param.watch(self.update_norm, "value")
         wgt_showC = pnwgt.Checkbox(name="ShowC", value=self._showC, width=120, height=10)
 
-        def callback_showC(val: Event) -> None:
+        def callback_showC(val: Any) -> None:
             self._showC = val.new
             self.update_temp_comp_sub()
 
         wgt_showC.param.watch(callback_showC, "value")
         wgt_showS = pnwgt.Checkbox(name="ShowS", value=self._showS, width=120, height=10)
 
-        def callback_showS(val: Event) -> None:
+        def callback_showS(val: Any) -> None:
             self._showS = val.new
             self.update_temp_comp_sub()
 
         wgt_showS.param.watch(callback_showS, "value")
         wgt_play = pnwgt.Player(length=len(self._f), interval=10, value=0, width=280)
 
-        def play(f: Event) -> None:
+        def play(f: Any) -> None:
             if f.old != f.new:
                 self.strm_f.event(x=self._f[f.new])
 
@@ -722,7 +732,7 @@ class CNMFViewer:
         )
         return pn.layout.Column(wgt_groups, wgt_play)
 
-    def _man_wgt(self) -> pn.Column:
+    def _man_wgt(self) -> pn.layout.Column:
         usub = self.strm_usub.usub
         usub.sort()
         usub.reverse()
@@ -738,7 +748,7 @@ class CNMFViewer:
             for uid, ulb in zip(usub, ulabs)
         }
 
-        def callback_ulab(value: Event, uid: str) -> None:
+        def callback_ulab(value: Any, uid: Any) -> None:
             self.unit_labels.loc[uid] = value.new
 
         for uid, sel in wgt_sel.items():
@@ -749,7 +759,7 @@ class CNMFViewer:
             for uid in usub
         }
 
-        def callback_chk(val: Event, uid: str) -> None:
+        def callback_chk(val: Any, uid: Any) -> None:
             if val.old != val.new:
                 if val.new:
                     self.usub_sel.append(uid)
@@ -761,14 +771,14 @@ class CNMFViewer:
             chk.param.watch(cb, "value")
         wgt_discard = pnwgt.Button(name="Discard Selected", button_type="primary", width=180)
 
-        def callback_discard(_clicks: Event | None) -> None:
+        def callback_discard(clicks: Any) -> None:  # noqa: ARG001
             for uid in self.usub_sel:
                 wgt_sel[uid].value = -1
 
         wgt_discard.param.watch(callback_discard, "clicks")
         wgt_merge = pnwgt.Button(name="Merge Selected", button_type="primary", width=180)
 
-        def callback_merge(_clicks: Event | None) -> None:
+        def callback_merge(clicks: Any) -> None:  # noqa: ARG001
             for uid in self.usub_sel:
                 wgt_sel[uid].value = self.usub_sel[0]
 
@@ -787,7 +797,7 @@ class CNMFViewer:
     def update_temp(self) -> None:
         self.update_temp_comp_wgt()
 
-    def update_AC(self, usub: np.ndarray | None = None) -> None:
+    def update_AC(self, usub: list | None = None) -> None:
         if usub is None:
             usub = self.strm_usub.usub
         if usub:
@@ -826,7 +836,7 @@ class CNMFViewer:
             self._mov = xr.DataArray([])
             self.strm_f.event(x=0)
 
-    def update_usub_lab(self, usub: np.ndarray | None = None) -> None:
+    def update_usub_lab(self, usub: list | None = None) -> None:
         if usub is None:
             usub = self.strm_usub.usub
         if usub:
@@ -834,17 +844,17 @@ class CNMFViewer:
         else:
             self.pipusub.send([])
 
-    def _spatial_all_wgt(self) -> pn.WidgetBox:
+    def _spatial_all_wgt(self) -> pn.layout.WidgetBox:
         wgt_useAC = pnwgt.Checkbox(name="UseAC", value=self._useAC, width=120, height=15)
 
-        def callback_useAC(val: Event) -> None:
+        def callback_useAC(val: Any) -> None:
             self._useAC = val.new
             self.update_AC()
 
         wgt_useAC.param.watch(callback_useAC, "value")
         return pn.layout.WidgetBox(wgt_useAC, width=150)
 
-    def _spatial_all(self) -> pn.panel:
+    def _spatial_all(self) -> pn.viewable.Viewable:
         metas = self.metas
         Asum = hv.Image(self.Asum.sel(**metas), ["width", "height"]).options(
             frame_height=len(self._h),
@@ -1012,7 +1022,7 @@ class AlignViewer:
             output_dtypes=[float],
         )
 
-    def update_plot(self) -> pn.panel:
+    def update_plot(self) -> pn.viewable.Viewable:
         Adict = {
             c: self.curA.sel(session=self.sess_rgb[c]).dropna("unit_id", how="all").compute()
             for c in self.sess_rgb
@@ -1076,26 +1086,26 @@ class AlignViewer:
             self.curA = self.dataA.persist()
             self.curmap = self.mappings
 
-    def cb_update_erd(self, val: Event) -> None:
+    def cb_update_erd(self, val: Any) -> None:
         self.erode = val.new
         self.processA()
         self.update_meta()
         self.plot.object = self.update_plot().object
 
-    def cb_update_meta(self, dim: str, val: Event) -> None:
+    def cb_update_meta(self, dim: str, val: Any) -> None:
         self.meta[dim] = val.new
         self.update_meta()
         self.plot.object = self.update_plot().object
 
-    def cb_update_rgb(self, ch: str, ss: Event) -> None:
+    def cb_update_rgb(self, ch: str, ss: Any) -> None:
         self.sess_rgb[ch] = ss.new
         self.plot.object = self.update_plot().object
 
-    def cb_showma(self, val: Event) -> None:
+    def cb_showma(self, val: Any) -> None:
         self.show_ma = val.new
         self.plot.object = self.update_plot().object
 
-    def cb_showuma(self, val: Event) -> None:
+    def cb_showuma(self, val: Any) -> None:
         self.show_uma = val.new
         self.plot.object = self.update_plot().object
 
@@ -1109,104 +1119,6 @@ class AlignViewer:
             Resulting visualizations containing both plots and toolbars.
         """
         return pn.layout.Row(self.plot, pn.layout.Column(self.wgt_meta, self.wgt_rgb, self.wgt_opt))
-
-
-def write_vid_blk(arr: np.ndarray, vpath: str, options: dict) -> str:
-    ensure_ffmpeg()
-    uid = uuid4()
-    vname = f"{uid}.mp4"
-    fpath = os.path.join(vpath, vname)
-    if len(arr.shape) == 2:
-        arr = np.expand_dims(arr, axis=0)
-    writer = skvideo.io.FFmpegWriter(fpath, outputdict={"-" + k: v for k, v in options.items()})
-    for fm in arr:
-        writer.writeFrame(fm)
-    writer.close()
-    return fpath
-
-
-def write_video(
-    arr: xr.DataArray | xr.DataTree,
-    vname: str | None = None,
-    vpath: str | None = ".",
-    norm: bool = True,
-    options: bool = None,
-) -> str:
-    """
-    Write a video from a movie array using `python-ffmpeg`.
-
-    Parameters
-    ----------
-    arr : xr.DataArray
-        Input movie array. Should have dimensions: ("frame", "height", "width")
-        and should only be chunked along the "frame" dimension.
-    vname : str, optional
-        The name of output video. If `None` then a random one will be generated
-        using :func:`uuid4.uuid`. By default `None`.
-    vpath : str, optional
-        The path to the folder containing the video. By default `"."`.
-    norm : bool, optional
-        Whether to normalize the values of the input array such that they span
-        the full pixel depth range (0, 255). By default `True`.
-    options : dict, optional
-        Optional output arguments passed to `ffmpeg`. By default `{"crf": "18",
-        "preset": "ultrafast"}`.
-
-    Returns
-    -------
-    fname : str
-        The absolute path to the video file.
-
-    See Also
-    --------
-    ffmpeg.output
-    """
-    if options is None:
-        options = {"crf": "18", "preset": "ultrafast"}
-    ensure_ffmpeg()
-    if not vname:
-        vname = f"{uuid4()}.mp4"
-    fname = os.path.join(vpath, vname)
-    if norm:
-        arr = arr.astype(np.float32)
-        arr_max = arr.max().compute().values
-        arr_min = arr.min().compute().values
-        den = arr_max - arr_min
-        arr -= arr_min
-        arr /= den
-        arr *= 255
-    arr = arr.clip(0, 255).astype(np.uint8)
-    w, h = arr.sizes["width"], arr.sizes["height"]
-    process = (
-        ffmpeg.input("pipe:", format="rawvideo", pix_fmt="gray", s=f"{w}x{h}")
-        .filter("pad", int(np.ceil(w / 2) * 2), int(np.ceil(h / 2) * 2))
-        .output(fname, pix_fmt="yuv420p", vcodec="libx264", r=30, **options)
-        .overwrite_output()
-        .run_async(pipe_stdin=True)
-    )
-    for blk in arr.data.blocks:
-        process.stdin.write(np.array(blk).tobytes())
-    process.stdin.close()
-    process.wait()
-    return fname
-
-
-def concat_video_recursive(vlist: list[str], vname: str | None = None) -> str:
-    ensure_ffmpeg()
-    if not len(vlist) > 1:
-        return vlist[0]
-    if len(vlist) > 256:
-        vlist = np.array_split(vlist, 256)
-        vlist = [concat_video_recursive(list(v)) for v in vlist]
-    vpath = os.path.dirname(vlist[0])
-    streams = [ffmpeg.input(p) for p in vlist]
-    if vname is None:
-        vname = f"{uuid4()}.mp4"
-    fpath = os.path.join(vpath, vname)
-    ffmpeg.concat(*streams).output(fpath).run(overwrite_output=True)
-    for vp in vlist:
-        os.remove(vp)
-    return fpath
 
 
 def generate_videos(
@@ -1498,7 +1410,7 @@ def centroid(A: xr.DataArray, verbose: bool = False) -> pd.DataFrame:
         "height", "width" and any other additional metadata dimension.
     """
 
-    def rel_cent(im: xr.DataArray) -> np.ndarray:
+    def rel_cent(im: np.ndarray) -> np.ndarray:
         im_nan = np.isnan(im)
         if im_nan.all():
             return np.array([np.nan, np.nan])
@@ -1584,7 +1496,7 @@ def visualize_preprocess(
         "title": "Contours {label} {group} {dimensions}",
     }
 
-    def _vis(f: xr.DataArray) -> tuple[hv.Image, hv.operation.contours]:
+    def _vis(f: xr.DataArray) -> tuple[hv.Image, hv.Contours]:
         im = hv.Image(f, kdims=["width", "height"]).options(**opts_im)
         cnt = hv.operation.contours(im).options(**opts_cnt)
         return im, cnt

@@ -1,32 +1,24 @@
-import os
-import subprocess
-import sys
-
 import pandas as pd
 import pytest
 
+from ._notebook import execute_notebook
 
-def test_cross_reg_notebook():
-    os.makedirs("artifact", exist_ok=True)
-    args = [
-        # Resolve jupyter via the active interpreter for Windows portability.
-        sys.executable,
-        "-m",
-        "jupyter",
-        "nbconvert",
-        "--to",
-        "notebook",
-        "--output",
-        "artifact/cross-registration.ipynb",
-        "--execute",
-        "cross-registration.ipynb",
-    ]
-    subprocess.run(args, check=True)
-    assert os.path.exists("./demo_data/shiftds.nc")
-    assert os.path.exists("./demo_data/cents.pkl")
-    assert os.path.exists("./demo_data/mappings.pkl")
-    cents = pd.read_pickle("./demo_data/cents.pkl")
-    mappings = pd.read_pickle("./demo_data/mappings.pkl")
+
+@pytest.mark.slow
+@pytest.mark.parametrize("dataset", ["cross-reg-sessions"], indirect=True)
+def test_cross_reg_notebook(dataset):
+    # The notebook fetches the two-session demo and writes its outputs back into
+    # that dataset directory; the ``dataset`` fixture clears stale outputs first
+    # and cleans them up on teardown, so we just read the outputs from there.
+    dpath = dataset
+    execute_notebook("cross_registration/cross-registration.ipynb", "cross-registration")
+
+    assert (dpath / "shiftds.nc").exists()
+    assert (dpath / "cents.pkl").exists()
+    assert (dpath / "mappings.pkl").exists()
+    # Read back the notebook's own outputs.
+    cents = pd.read_pickle(dpath / "cents.pkl")
+    mappings = pd.read_pickle(dpath / "mappings.pkl")
     assert len(cents) == 508
     # Use a relative tolerance: the exact centroid sums drift slightly
     # (~0.005%) across numpy/scipy/scikit-image versions.

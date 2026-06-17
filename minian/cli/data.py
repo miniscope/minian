@@ -1,0 +1,49 @@
+"""``minian data`` subcommands: fetch demo datasets from Zenodo."""
+
+import argparse
+
+from ..data import dataset_path, datasets, fetch
+from ..data._registry import DATASETS
+from ._common import add_select_args, human_size, print_table, selected
+
+
+def _dataset_size(name: str) -> int:
+    return sum(info["size"] for info in DATASETS[name]["files"].values())
+
+
+def _cmd_list(args: argparse.Namespace) -> None:  # noqa: ARG001
+    print_table(
+        [(name, human_size(_dataset_size(name)), desc) for name, desc in datasets().items()]
+    )
+
+
+def _cmd_download(args: argparse.Namespace) -> None:
+    for name in selected(args, DATASETS, "dataset"):
+        print(f"{name} ready at {fetch(name)}")
+
+
+def _cmd_path(args: argparse.Namespace) -> None:
+    print(dataset_path(args.name))
+
+
+def add_subparser(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser(
+        "data",
+        help="fetch demo datasets",
+        description=(
+            "Fetch demo datasets from Zenodo. Downloads are cached under the OS "
+            "cache dir; set the MINIAN_CACHE_DIR environment variable to override "
+            "the location (point it at a prepopulated cache to run offline)."
+        ),
+    )
+    sub = parser.add_subparsers(title="subcommands", dest="data_command", required=True)
+
+    sub.add_parser("list", help="list datasets and sizes").set_defaults(func=_cmd_list)
+
+    dl = sub.add_parser("download", help="download and cache a dataset")
+    add_select_args(dl, "dataset")
+    dl.set_defaults(func=_cmd_download)
+
+    pa = sub.add_parser("path", help="print a dataset's local path (fetching if needed)")
+    pa.add_argument("name", help="dataset name")
+    pa.set_defaults(func=_cmd_path)
