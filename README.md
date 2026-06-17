@@ -5,13 +5,16 @@
 </p>
 
 
-[![pytest status](https://github.com/miniscope/minian/workflows/pytest/badge.svg?branch=master)](https://github.com/miniscope/minian/actions?query=workflow%3Apytest)
+[![pytest status](https://github.com/miniscope/minian/actions/workflows/testandcov.yml/badge.svg?branch=master)](https://github.com/miniscope/minian/actions/workflows/testandcov.yml)
 [![codecov](https://codecov.io/gh/miniscope/minian/branch/master/graph/badge.svg)](https://codecov.io/gh/miniscope/minian)
+[![pypi version](https://img.shields.io/pypi/v/minian.svg)](https://pypi.org/project/minian/)
+[![python versions](https://img.shields.io/pypi/pyversions/minian.svg)](https://pypi.org/project/minian/)
 [![conda version](https://img.shields.io/conda/vn/conda-forge/minian.svg)](https://anaconda.org/conda-forge/minian)
 [![documentation status](https://readthedocs.org/projects/minian/badge/?version=latest)](https://minian.readthedocs.io/en/latest/?badge=latest)
+[![DOI](https://img.shields.io/badge/DOI-10.7554%2FeLife.70661-blue)](https://doi.org/10.7554/eLife.70661)
 
 [![license](https://img.shields.io/github/license/miniscope/minian)](https://www.gnu.org/licenses/gpl-3.0)
-[![code style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![code style](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![commit style](https://img.shields.io/badge/commit_style-conventional-orange)](https://conventionalcommits.org)
 
 

@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use MiniAn, please cite the following article."
+title: "Minian, an open-source miniscope analysis pipeline"
+type: software
+url: "https://github.com/miniscope/minian"
+repository-code: "https://github.com/miniscope/minian"
+license: GPL-3.0
+preferred-citation:
+  type: article
+  title: "Minian, an open-source miniscope analysis pipeline"
+  doi: "10.7554/eLife.70661"
+  journal: "eLife"
+  volume: 11
+  year: 2022
+  authors:
+    - family-names: Dong
+      given-names: Zhe
+    - family-names: Mau
+      given-names: William
+    - family-names: Feng
+      given-names: Yu
+    - family-names: Pennington
+      given-names: Zachary T.
+    - family-names: Chen
+      given-names: Lingxuan
+    - family-names: Zaki
+      given-names: Yosif
+    - family-names: Rajan
+      given-names: Kanaka
+    - family-names: Shuman
+      given-names: Tristan
+    - family-names: Aharoni
+      given-names: Daniel
+    - family-names: Cai
+      given-names: Denise J.
