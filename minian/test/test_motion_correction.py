@@ -44,7 +44,7 @@ def test_est_motion_perframe_recovers_integer_shift(shift):
     rng = np.random.default_rng(0)
     dst = rng.random((64, 64)).astype(np.float32)
     src = np.roll(dst, shift, axis=(0, 1))
-    mo = est_motion_perframe(src, dst, upsample=100)
+    mo = est_motion_perframe(src, dst)
     np.testing.assert_allclose(mo, [-shift[0], -shift[1]], atol=1e-6)
 
 
@@ -54,7 +54,7 @@ def test_est_motion_perframe_subpixel(shift):
     # be recovered to within a fraction of a pixel by the parabolic peak refinement.
     dst = _smooth_frame()
     src = transform_perframe(dst, np.array(shift))
-    mo = est_motion_perframe(src, dst, upsample=100)
+    mo = est_motion_perframe(src, dst)
     np.testing.assert_allclose(mo, [-shift[0], -shift[1]], atol=0.5)
 
 
@@ -62,7 +62,7 @@ def test_identical_frames_estimate_zero_shift():
     # The parabolic peak refinement leaves a ~1e-5 residual on a perfect
     # autocorrelation peak, so assert "negligibly small" rather than exactly zero.
     fm = _smooth_frame()
-    np.testing.assert_allclose(est_motion_perframe(fm, fm, upsample=100), [0.0, 0.0], atol=1e-3)
+    np.testing.assert_allclose(est_motion_perframe(fm, fm), [0.0, 0.0], atol=1e-3)
 
 
 def test_fft_cache_matches_plain_path():
@@ -70,10 +70,8 @@ def test_fft_cache_matches_plain_path():
     # the cached transforms must give bit-identical shifts to computing them inline.
     dst = _smooth_frame()
     src = transform_perframe(dst, np.array([2.0, -1.0]))
-    plain = est_motion_perframe(src, dst, upsample=100)
-    cached = est_motion_perframe(
-        src, dst, upsample=100, src_fft=np.fft.rfft2(src), dst_fft=np.fft.rfft2(dst)
-    )
+    plain = est_motion_perframe(src, dst)
+    cached = est_motion_perframe(src, dst, src_fft=np.fft.rfft2(src), dst_fft=np.fft.rfft2(dst))
     np.testing.assert_array_equal(plain, cached)
 
 
