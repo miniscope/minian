@@ -50,6 +50,21 @@ def fetch_dataset() -> Callable[[str], Path]:
     return dataset_path
 
 
+@pytest.fixture(scope="session")
+def simulate_recording() -> Callable[..., object]:
+    """Factory for small synthetic recordings with exact ground truth.
+
+    Returns the :func:`minian.test._simulated.simulate_recording` callable so a
+    test can build the recording it needs - optionally with extra effect steps
+    like ``BrainMotion`` - and score a stage's output against the shipped ground
+    truth (see :mod:`minian.test._simulated`). The minisim import is deferred to
+    first use so test collection that does not touch synthetic data pays nothing.
+    """
+    from ._simulated import simulate_recording as factory
+
+    return factory
+
+
 @pytest.fixture
 def dataset(request: pytest.FixtureRequest, fetch_dataset: Callable[[str], Path]) -> Iterator[Path]:
     """Function-scoped dataset directory with output cleanup tied to its scope.
