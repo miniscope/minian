@@ -22,7 +22,7 @@ dependencies = [
     "netcdf4",
     "networkx>=2.4",
     "numpy>=1.20.2",
-    "opencv-python>=4.2.0.34",
+    "opencv-python-headless>=4.2.0.34",
     "pandas>=1.2.3",
     "panel>=0.8.0",
     "pooch>=1.6.0",
