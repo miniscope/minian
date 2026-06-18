@@ -26,7 +26,7 @@ from ..motion_correction import (
     estimate_motion,
     transform_perframe,
 )
-from ._simulated import PX_SIZE_UM, as_movie
+from ._simulated import DURATION_S, FPS, PIXEL_SIZE_UM, as_movie
 
 # --- kernel: registration + warp primitives (no simulator) -----------------
 
@@ -98,46 +98,47 @@ def test_transform_perframe_translates_by_the_given_shift():
 # --- ground truth: estimate_motion / apply_transform vs minisim -------------
 #
 # Tolerances reflect measured sub-pixel recovery on this fixture (aligned RMSE
-# ~0.4-0.7 px); the 1.0 px bound leaves headroom for seed/platform variation while
-# still failing loudly on a real regression.
+# ~0.03-0.05 px on the well-separated somata make_recording plants); the 1.0 px
+# bound leaves wide headroom for seed/platform variation while still failing loudly
+# on a real regression.
 
 _RMSE_TOL_PX = 1.0
 
 
-def test_estimate_motion_recovers_random_walk(simulate_recording):
-    rec = simulate_recording([BrainMotion(model="walk", walk_step_um=1.5, max_shift_um=10.0)])
+def test_estimate_motion_recovers_random_walk(simulated_recording):
+    rec = simulated_recording([BrainMotion(model="walk", walk_step_um=1.5, max_shift_um=10.0)])
     est = estimate_motion(as_movie(rec)).compute()
     rmse = shift_rmse(est.values, rec.ground_truth.shifts, correction=True, align=True)
     assert rmse < _RMSE_TOL_PX
 
 
-def test_estimate_motion_recovers_known_trajectory(simulate_recording):
+def test_estimate_motion_recovers_known_trajectory(simulated_recording):
     # An exact, RNG-free trajectory: a ramp on height and a sinusoid on width, in
     # pixels, converted to the um the spec expects. estimate_motion must track it.
-    n_frames = 120
+    n_frames = int(DURATION_S * FPS)
     dy = np.linspace(0.0, 5.0, n_frames)
     dx = 3.0 * np.sin(np.linspace(0.0, 3.0 * np.pi, n_frames))
-    traj_um = [(float(y * PX_SIZE_UM), float(x * PX_SIZE_UM)) for y, x in zip(dy, dx)]
-    rec = simulate_recording([BrainMotion(trajectory_um=traj_um, max_shift_um=10.0)])
+    traj_um = [(float(y * PIXEL_SIZE_UM), float(x * PIXEL_SIZE_UM)) for y, x in zip(dy, dx)]
+    rec = simulated_recording([BrainMotion(trajectory_um=traj_um, max_shift_um=10.0)])
     est = estimate_motion(as_movie(rec)).compute()
     rmse = shift_rmse(est.values, rec.ground_truth.shifts, correction=True, align=True)
     assert rmse < _RMSE_TOL_PX
 
 
-def test_estimate_motion_on_static_movie_is_near_zero(simulate_recording):
+def test_estimate_motion_on_static_movie_is_near_zero(simulated_recording):
     # No brain_motion step: the movie is motionless, so the estimate must stay near
     # zero (only sensor-noise jitter, well under a pixel RMS).
-    rec = simulate_recording()
+    rec = simulated_recording()
     assert rec.ground_truth.shifts is None
     est = estimate_motion(as_movie(rec)).compute()
     assert shift_rmse(est.values, np.zeros_like(est.values)) < _RMSE_TOL_PX
 
 
-def test_apply_transform_sharpens_temporal_mean(simulate_recording):
+def test_apply_transform_sharpens_temporal_mean(simulated_recording):
     # Motion smears static structure across the time-average; correcting it should
     # sharpen the temporal mean. Compare a center crop to avoid the edge fill the
     # correction introduces at the frame borders.
-    rec = simulate_recording([BrainMotion(model="walk", walk_step_um=1.5, max_shift_um=10.0)])
+    rec = simulated_recording([BrainMotion(model="walk", walk_step_um=1.5, max_shift_um=10.0)])
     mov = as_movie(rec)
     est = estimate_motion(mov).compute()
     corrected = apply_transform(mov, est).compute()
