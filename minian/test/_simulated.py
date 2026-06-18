@@ -18,8 +18,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-import dask.array as darr
-import numpy as np
 import xarray as xr
 from minisim.recording import Recording
 from minisim.spec import AnyStep
@@ -55,22 +53,11 @@ def simulated_recording(
 
 
 def as_movie(recording: Recording, *, chunk_nfm: int = 20) -> xr.DataArray:
-    """Adapt a recording's ``observed`` counts into a minian-shaped movie.
+    """Adapt a recording into the dask-backed movie minian's pipeline consumes.
 
-    Returns a dask-backed ``(frame, height, width)`` :class:`xarray.DataArray`
-    chunked every ``chunk_nfm`` frames - the layout
-    :func:`minian.motion_correction.estimate_motion` and the rest of the pipeline
-    expect.
+    :attr:`~minisim.Recording.observed_movie` is the labeled
+    ``(frame, height, width)`` DataArray; chunking it every ``chunk_nfm`` frames
+    yields the dask layout :func:`minian.motion_correction.estimate_motion` and the
+    rest of the pipeline expect.
     """
-    obs = recording.observed
-    n_frames, height, width = obs.shape
-    return xr.DataArray(
-        darr.from_array(obs, chunks=(chunk_nfm, -1, -1)),
-        dims=["frame", "height", "width"],
-        coords={
-            "frame": np.arange(n_frames),
-            "height": np.arange(height),
-            "width": np.arange(width),
-        },
-        name="movie",
-    )
+    return recording.observed_movie.chunk({"frame": chunk_nfm})
