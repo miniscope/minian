@@ -85,9 +85,19 @@ minian-install = "minian.install:main"
 numba = [
     "numba>=0.52.0",
 ]
+training = [
+    "minian[numba]",
+    "minisim>=1.0.2,<2",
+    # pipeline_groundtruth.ipynb plays the synthetic recording inline with mediapy
+    # (Google, Apache-2.0; pulls only ipython/matplotlib/numpy/Pillow), matching how
+    # minisim's own training notebooks show video. Everything else the notebook needs
+    # (holoviews, panel, jupyter, matplotlib) is already a core minian dependency.
+    "mediapy>=1.2",
+]
 test = [
     "minian[numba]",
-    "minisim>=1.0.1,<2",
+    "minisim>=1.0.2,<2",
+    "mediapy>=1.2",
     "pytest>=8.4.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.14",
