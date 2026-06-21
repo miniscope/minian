@@ -93,15 +93,17 @@ training = [
     # minisim's own training notebooks show video. Everything else the notebook needs
     # (holoviews, panel, jupyter, matplotlib) is already a core minian dependency.
     "mediapy>=1.2",
-    # The interactive cell navigator is a Panel widget; rendering Panel/Bokeh objects
-    # through the ipywidgets comm (VS Code, JupyterLab) needs jupyter-bokeh (Bokeh org,
-    # BSD). Without it those cells raise ModuleNotFoundError at display time.
+    # The interactive cell navigator is an ipywidgets slider that redraws a Bokeh layout.
+    # ipywidgets drives the slider (reliable in VS Code / Lab); jupyter-bokeh (Bokeh org,
+    # BSD) is what renders the Bokeh figures through the ipywidgets comm in those editors.
+    "ipywidgets>=8",
     "jupyter-bokeh>=4",
 ]
 test = [
     "minian[numba]",
     "minisim>=1.0.2,<2",
     "mediapy>=1.2",
+    "ipywidgets>=8",
     "jupyter-bokeh>=4",
     "pytest>=8.4.1",
     "pytest-cov>=7.1.0",
