@@ -17,6 +17,4 @@ from ._notebook import execute_notebook
 @pytest.mark.slow
 def test_pipeline_groundtruth_executes():
     """The ground-truth notebook runs end to end on its default dataset."""
-    execute_notebook(
-        "pipeline_groundtruth/pipeline_groundtruth.ipynb", "pipeline_groundtruth"
-    )
+    execute_notebook("pipeline_groundtruth/pipeline_groundtruth.ipynb", "pipeline_groundtruth")
