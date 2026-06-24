@@ -585,7 +585,7 @@ def _xcorr_subpixel(src_fft: np.ndarray, dst_fft: np.ndarray, shape: tuple[int, 
 def est_motion_perframe(
     src: np.ndarray,
     dst: np.ndarray,
-    upsample: int,
+    upsample: int = 100,
     src_ma: np.ndarray | None = None,
     dst_ma: np.ndarray | None = None,
     mesh_size: tuple[int, int] | None = None,
@@ -602,10 +602,11 @@ def est_motion_perframe(
         The frame to be registered.
     dst : np.ndarray
         The destination frame of registration.
-    upsample : int
+    upsample : int, optional
         Upsample factor. Only used for the non-rigid (`mesh_size`) path; the
         rigid path instead estimates sub-pixel shifts by fitting a parabola to
-        the cross-correlation peak and its two neighbours along each axis.
+        the cross-correlation peak and its two neighbours along each axis. By
+        default `100`.
     src_ma : np.ndarray, optional
         Boolean mask for `src`. Only used if `mesh_size is not None`. By default
         `None`.
