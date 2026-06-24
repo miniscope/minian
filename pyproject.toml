@@ -87,7 +87,7 @@ numba = [
 ]
 training = [
     "minian[numba]",
-    "minisim>=1.0.2,<2",
+    "minisim>=1.0.3,<2",
     # pipeline_groundtruth.ipynb plays the synthetic recording inline with mediapy
     # (Google, Apache-2.0; pulls only ipython/matplotlib/numpy/Pillow), matching how
     # minisim's own training notebooks show video. Everything else the notebook needs
@@ -101,7 +101,7 @@ training = [
 ]
 test = [
     "minian[numba]",
-    "minisim>=1.0.2,<2",
+    "minisim>=1.0.3,<2",
     "mediapy>=1.2",
     "ipywidgets>=8",
     "jupyter-bokeh>=4",

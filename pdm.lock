@@ -5,7 +5,7 @@
 groups = ["default", "doc", "numba", "test", "training"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:b535bc2192ed946a5c3e376e4f05b7989d56a33e3d8230cefdbc941c7b21bf54"
+content_hash = "sha256:ceeaa9725128438b0dac3b5fcc67ed80e1bddd23d08a21d17c981982e80296c5"
 
 [[metadata.targets]]
 requires_python = ">=3.10,<3.12"
@@ -2526,7 +2526,7 @@ files = [
 
 [[package]]
 name = "minisim"
-version = "1.0.2"
+version = "1.0.3"
 requires_python = ">=3.10"
 summary = "Physically-driven synthetic 1-photon miniscope data: a forward-model generator and teaching tool, the inverse of the minian analysis pipeline."
 groups = ["test", "training"]
@@ -2540,8 +2540,8 @@ dependencies = [
     "zarr<3,>=2.18",
 ]
 files = [
-    {file = "minisim-1.0.2-py3-none-any.whl", hash = "sha256:be1797443983571eeeccd5bf96c1196bbb411a6117ef95c7670c01bfaaa55eb8"},
-    {file = "minisim-1.0.2.tar.gz", hash = "sha256:9b639cbf473f77e738d02ad8dae7ba1219a1a151b630e868a1684d16e202c014"},
+    {file = "minisim-1.0.3-py3-none-any.whl", hash = "sha256:26a88dfc02ac2ef076c7eb1a3c146716ec32bed46563251639dcb97f1cc6ef0e"},
+    {file = "minisim-1.0.3.tar.gz", hash = "sha256:8d492f160ba668f37127f4ba40b2979df23479f0fb870036ad5402bfdc9cf1d5"},
 ]
 
 [[package]]
