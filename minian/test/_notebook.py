@@ -23,7 +23,9 @@ def execute_notebook(relpath: str, output: str) -> Path:
     ``output`` is the output base name (no extension); the executed notebook is
     written to ``artifact/<output>.ipynb`` (the docs build reads it from there).
     ``check=True`` turns a non-zero nbconvert exit (a failed notebook) into a
-    test failure.
+    test failure. The per-cell ``--ExecutePreprocessor.timeout`` bounds a hung
+    cell (e.g. a deadlocked dask cluster) so it surfaces as a failing test with
+    a traceback rather than blocking until CI's wall-clock ceiling.
     """
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     subprocess.run(
@@ -35,6 +37,7 @@ def execute_notebook(relpath: str, output: str) -> Path:
             "--to",
             "notebook",
             "--execute",
+            "--ExecutePreprocessor.timeout=600",
             "--output-dir",
             str(ARTIFACT_DIR),
             "--output",
