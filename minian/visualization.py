@@ -1569,8 +1569,11 @@ def visualize_seeds(
     opts_pts = {
         "frame_width": 600,
         "aspect": asp,
-        "size_index": "seeds",
-        "color_index": mask,
+        # HoloViews >=1.16 removed size_index/color_index; map the dimensions
+        # directly instead. size_index="seeds" rendered each point with radius
+        # sqrt(base_size * seeds) where base_size = size**2 = (sqrt(6))**2 = 6
+        # (area scaling, scaling_factor=1), so reproduce it exactly here.
+        "size": (hv.dim("seeds") * 6) ** 0.5,
         "tools": ["hover"],
         "fill_alpha": 0.8,
         "line_alpha": 0,
@@ -1578,6 +1581,7 @@ def visualize_seeds(
     }
     if mask:
         vdims = ["seeds", mask]
+        opts_pts["color"] = mask
     else:
         vdims = ["seeds"]
         opts_pts["color"] = "white"
