@@ -1,9 +1,10 @@
 """Smoke-execution for bundled notebooks without a dedicated test.
 
-The two heavy notebooks (pipeline, cross-registration) have dedicated tests
-(``test_pipeline.py`` / ``test_cross_reg.py``) that execute them AND assert
-golden values, so they are not re-executed here. Any *other* shipped notebook
-is discovered automatically and smoke-executed so it cannot rot silently.
+The bundled notebooks with dedicated tests (``test_pipeline.py``,
+``test_cross_reg.py``, ``test_groundtruth.py``) are executed there - the first
+two assert golden values, the ground-truth one is gated on the optional
+``minisim`` dependency - so they are not re-executed here. Any *other* shipped
+notebook is discovered automatically and smoke-executed so it cannot rot silently.
 """
 
 import pytest
@@ -16,6 +17,7 @@ from ._notebook import execute_notebook
 DEDICATED_TESTS = {
     "pipeline/pipeline.ipynb",
     "cross_registration/cross-registration.ipynb",
+    "pipeline_groundtruth/pipeline_groundtruth.ipynb",
 }
 
 _SMOKE = [nb for nb in notebook_files() if nb not in DEDICATED_TESTS]

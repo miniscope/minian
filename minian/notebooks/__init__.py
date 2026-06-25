@@ -30,6 +30,10 @@ NOTEBOOKS: dict[str, str] = {
         "motion-correct, then CNMF (spatial/temporal)."
     ),
     "cross_registration": ("Align and match cells across recording sessions of the same animal."),
+    "pipeline_groundtruth": (
+        "Run the full pipeline on a minisim synthetic recording and score every "
+        "stage against ground truth (needs the 'training' extra)."
+    ),
 }
 
 # Never copy/list build junk or notebook execution output.
