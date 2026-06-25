@@ -45,6 +45,10 @@ jobs:
     name: Test and Cov py ${{ matrix.python-version }}, ${{ matrix.os }}
     needs: prefetch-data
     runs-on: ${{ matrix.os }}
+    # Healthy runs finish in ~40-60min. This backstop kills a deadlocked job
+    # (e.g. a hung dask cluster) in minutes instead of the 6h GitHub ceiling,
+    # so a flaky hang frees the runner and reports promptly.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
