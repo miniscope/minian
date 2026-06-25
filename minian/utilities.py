@@ -314,7 +314,10 @@ def save_minian(
     if overwrite:
         with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(fp)
-    arr = ds.to_zarr(fp, compute=compute, mode=md)
+    # safe_chunks=False: save_minian manages its own chunking (the rechunk
+    # below), so xarray's >=2024.x check that encoding chunks align with dask
+    # chunks is a false positive here and would otherwise raise.
+    arr = ds.to_zarr(fp, compute=compute, mode=md, safe_chunks=False)
     if (chunks is not None) and compute:
         chunks = {d: var.sizes[d] if v <= 0 else v for d, v in chunks.items()}
         dst_path = os.path.join(dpath, str(uuid4()))
