@@ -1569,15 +1569,18 @@ def visualize_seeds(
     opts_pts = {
         "frame_width": 600,
         "aspect": asp,
-        "size_index": "seeds",
-        "color_index": mask,
+        "size": 8,
         "tools": ["hover"],
         "fill_alpha": 0.8,
         "line_alpha": 0,
         "cmap": pt_cmap,
     }
+    # HoloViews >=1.16 removed the size_index/color_index options; map the color
+    # dimension directly instead (the mask column, via pt_cmap) and use a fixed
+    # point size.
     if mask:
         vdims = ["seeds", mask]
+        opts_pts["color"] = mask
     else:
         vdims = ["seeds"]
         opts_pts["color"] = "white"
