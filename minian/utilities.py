@@ -314,10 +314,17 @@ def save_minian(
     if overwrite:
         with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(fp)
-    # safe_chunks=False: save_minian manages its own chunking (the rechunk
-    # below), so xarray's >=2024.x check that encoding chunks align with dask
-    # chunks is a false positive here and would otherwise raise.
-    arr = ds.to_zarr(fp, compute=compute, mode=md, safe_chunks=False)
+    # Drop any stale ``encoding['chunks']`` inherited from a previous save (e.g.
+    # an array read back via ``xr.open_zarr`` and then rechunked in memory). On
+    # xarray >=2024.x, honoring that stale shape when it no longer tiles the
+    # current dask layout raises "Specified Zarr chunks ... would overlap
+    # multiple Dask chunks" -- and with safe_chunks disabled it would instead
+    # let parallel dask write tasks race on a shared zarr chunk and silently
+    # corrupt the data. Clearing it lets xarray derive zarr chunks from the live
+    # dask layout, so writes stay aligned and the safe_chunks guard stays armed.
+    for v in ds.variables:
+        ds[v].encoding.pop("chunks", None)
+    arr = ds.to_zarr(fp, compute=compute, mode=md)
     if (chunks is not None) and compute:
         chunks = {d: var.sizes[d] if v <= 0 else v for d, v in chunks.items()}
         dst_path = os.path.join(dpath, str(uuid4()))
