@@ -1583,12 +1583,12 @@ def visualize_seeds(
         # kept ones are never hidden behind a rejected point. Overlay order is
         # z-order in HoloViews, so this is independent of seeds' row order.
         vdims = ["seeds", mask]
-        false_pts = hv.Points(
-            seeds[~seeds[mask]], kdims=["width", "height"], vdims=vdims
-        ).options(color="red", **opts_pts)
-        true_pts = hv.Points(
-            seeds[seeds[mask]], kdims=["width", "height"], vdims=vdims
-        ).options(color="white", **opts_pts)
+        false_pts = hv.Points(seeds[~seeds[mask]], kdims=["width", "height"], vdims=vdims).options(
+            color="red", **opts_pts
+        )
+        true_pts = hv.Points(seeds[seeds[mask]], kdims=["width", "height"], vdims=vdims).options(
+            color="white", **opts_pts
+        )
         return im * false_pts * true_pts
     pts = hv.Points(seeds, kdims=["width", "height"], vdims=["seeds"]).options(
         color="white", **opts_pts

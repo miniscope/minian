@@ -78,8 +78,6 @@ class TestVisualizeSeeds:
         from ..visualization import visualize_seeds
 
         hv.extension("bokeh")  # .options() resolves against a loaded backend
-        seeds = pd.DataFrame(
-            {"height": [1, 2], "width": [1, 2], "seeds": [5, 6]}
-        )
+        seeds = pd.DataFrame({"height": [1, 2], "width": [1, 2], "seeds": [5, 6]})
         ov = visualize_seeds(self._max_proj(), seeds)
         assert len(ov.traverse(specs=[hv.Points])) == 1
