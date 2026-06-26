@@ -6,6 +6,15 @@ import scipy.sparse
 import xarray as xr
 
 
+def _max_proj(n: int = 10) -> xr.DataArray:
+    """A blank ``(height, width)`` max projection for seeding the viz helpers."""
+    return xr.DataArray(
+        np.zeros((n, n), dtype="float32"),
+        dims=("height", "width"),
+        coords={"height": np.arange(n), "width": np.arange(n)},
+    )
+
+
 class TestVisualizeSpatialPartition:
     """The visualization layer is mostly covered by notebook execution in
     test_pipeline.py; here we just pin the explicit contract violation
@@ -18,11 +27,7 @@ class TestVisualizeSpatialPartition:
         # file needs.
         from ..visualization import visualize_spatial_partition
 
-        max_proj = xr.DataArray(
-            np.zeros((10, 10), dtype="float32"),
-            dims=("height", "width"),
-            coords={"height": np.arange(10), "width": np.arange(10)},
-        )
+        max_proj = _max_proj()
         positions = np.zeros((5, 2), dtype=float)
         membership = np.zeros(4, dtype=int)  # length mismatch
         adj = scipy.sparse.csr_matrix((5, 5))
@@ -37,13 +42,6 @@ class TestVisualizeSeeds:
     """Pin the seed-overlay z-order: kept (True) seeds must render on top of
     filtered-out (False) seeds so a good seed is never hidden behind a rejected
     one, regardless of the row order of the seeds dataframe."""
-
-    def _max_proj(self) -> xr.DataArray:
-        return xr.DataArray(
-            np.zeros((10, 10), dtype="float32"),
-            dims=("height", "width"),
-            coords={"height": np.arange(10), "width": np.arange(10)},
-        )
 
     def test_true_seeds_render_on_top_of_false(self):
         import holoviews as hv
@@ -62,7 +60,7 @@ class TestVisualizeSeeds:
                 "mask_good": [True, False, True, False],
             }
         )
-        ov = visualize_seeds(self._max_proj(), seeds, mask="mask_good")
+        ov = visualize_seeds(_max_proj(), seeds, mask="mask_good")
         points = ov.traverse(specs=[hv.Points])
         assert len(points) == 2
         # traverse preserves overlay (z) order; the last layer is on top.
@@ -82,7 +80,7 @@ class TestVisualizeSeeds:
 
         hv.extension("bokeh")  # .options() resolves against a loaded backend
         seeds = pd.DataFrame({"height": [1, 2], "width": [1, 2], "seeds": [5, 6]})
-        ov = visualize_seeds(self._max_proj(), seeds)
+        ov = visualize_seeds(_max_proj(), seeds)
         assert len(ov.traverse(specs=[hv.Points])) == 1
         title = hv.Store.lookup_options("bokeh", ov, "plot").kwargs.get("title")
         assert title == "seeds: 2 total"

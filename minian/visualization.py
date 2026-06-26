@@ -1578,6 +1578,12 @@ def visualize_seeds(
         "line_alpha": 0,
     }
     im = hv.Image(max_proj, kdims=["width", "height"]).options(**opts_im)
+
+    def points(df: pd.DataFrame, color: str, vdims: list[str]) -> hv.Points:
+        return hv.Points(df, kdims=["width", "height"], vdims=vdims).options(
+            color=color, **opts_pts
+        )
+
     if mask:
         # Overlay kept (True) seeds on top of filtered-out (False) seeds so the
         # kept ones are never hidden behind a rejected point. Overlay order is
@@ -1585,19 +1591,12 @@ def visualize_seeds(
         vdims = ["seeds", mask]
         kept = seeds[seeds[mask]]
         rejected = seeds[~seeds[mask]]
-        false_pts = hv.Points(rejected, kdims=["width", "height"], vdims=vdims).options(
-            color="red", **opts_pts
-        )
-        true_pts = hv.Points(kept, kdims=["width", "height"], vdims=vdims).options(
-            color="white", **opts_pts
-        )
         # Count the same subsets that are plotted so the header can never drift.
         title = f"{mask}: {len(kept)} true (white), {len(rejected)} false (red)"
-        return (im * false_pts * true_pts).opts(title=title)
-    pts = hv.Points(seeds, kdims=["width", "height"], vdims=["seeds"]).options(
-        color="white", **opts_pts
-    )
-    return (im * pts).opts(title=f"seeds: {len(seeds)} total")
+        return (im * points(rejected, "red", vdims) * points(kept, "white", vdims)).opts(
+            title=title
+        )
+    return (im * points(seeds, "white", ["seeds"])).opts(title=f"seeds: {len(seeds)} total")
 
 
 def visualize_gmm_fit(
