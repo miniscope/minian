@@ -40,7 +40,7 @@ def _ensure_ffmpeg() -> None:
 def load_videos(
     vpath: str,
     pattern: str = r"msCam[0-9]+\.avi$",
-    dtype: str | type = np.float64,
+    dtype: str | type = np.float32,
     downsample: dict | None = None,
     downsample_strategy: str = "subset",
     post_process: Callable | None = None,
@@ -64,7 +64,9 @@ def load_videos(
         `r"msCam[0-9]+\.avi$"`, which can be interpreted as filenames starting
         with "msCam" followed by at least a number, and then followed by ".avi".
     dtype : Union[str, type], optional
-        Datatype of the resulting DataArray, by default `np.float64`.
+        Datatype of the resulting DataArray, by default `np.float32`. The source
+        footage is 8-bit, so its values are represented exactly in `float32`
+        while halving memory and on-disk size relative to `float64`.
     downsample : dict, optional
         A dictionary mapping dimension names to an integer downsampling factor.
         The dimension names should be one of "height", "width" or "frame". By
