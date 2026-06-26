@@ -254,6 +254,12 @@ def save_minian(
     on-disk rechunking of the result can be performed using
     :func:`rechunker.rechunk` if `chunks` are given.
 
+    This function is **layout-authoritative**: the on-disk chunk grid always
+    follows the live dask layout of `var` (or `chunks`, when given). Any
+    ``encoding['chunks']`` inherited from a previous save -- e.g. when `var` was
+    read back with :func:`xarray.open_zarr` and then rechunked in memory -- is
+    discarded before writing, so callers never need to clear ``var.encoding``.
+
     Parameters
     ----------
     var : xr.DataArray
@@ -314,14 +320,10 @@ def save_minian(
     if overwrite:
         with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(fp)
-    # Drop any stale ``encoding['chunks']`` inherited from a previous save (e.g.
-    # an array read back via ``xr.open_zarr`` and then rechunked in memory). On
-    # xarray >=2024.x, honoring that stale shape when it no longer tiles the
-    # current dask layout raises "Specified Zarr chunks ... would overlap
-    # multiple Dask chunks" -- and with safe_chunks disabled it would instead
-    # let parallel dask write tasks race on a shared zarr chunk and silently
-    # corrupt the data. Clearing it lets xarray derive zarr chunks from the live
-    # dask layout, so writes stay aligned and the safe_chunks guard stays armed.
+    # Drop any stale encoding['chunks'] inherited from an earlier save (e.g. an
+    # array reopened with xr.open_zarr and then rechunked in memory). Honoring a
+    # tag that no longer tiles the live layout raises on xarray >=2024; clearing
+    # it lets xarray derive the grid from the current dask chunks.
     for v in ds.variables:
         ds[v].encoding.pop("chunks", None)
     arr = ds.to_zarr(fp, compute=compute, mode=md)

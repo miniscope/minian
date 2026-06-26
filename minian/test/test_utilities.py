@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import dask.array as darr
 import numpy as np
 import xarray as xr
 
@@ -114,3 +115,32 @@ def test_update_meta_matches_save_minian_on_multivar_dataset(tmp_path):
     xr.testing.assert_identical(updated, direct)
     assert updated["A"].attrs["unit"] == "au"
     assert updated["A"].attrs["doc"] == "footprints"
+
+
+def test_save_minian_discards_stale_chunk_encoding(tmp_path):
+    """A stale ``encoding['chunks']`` must not be honored when saving.
+
+    xarray stamps ``encoding['chunks']`` when it reads a zarr store and leaves it
+    in place when the array is later rechunked in memory. Saving such an array
+    then raises "would overlap multiple Dask chunks" on xarray >=2024. save_minian
+    drops the tag, so the round-trip is byte-identical and the on-disk grid
+    follows the live layout.
+    """
+    mn = tmp_path / "minian"
+    data = np.arange(3 * 8, dtype="float64").reshape(3, 8)
+    var = xr.DataArray(
+        darr.from_array(data, chunks=(3, 2)),  # live frame chunks: 2, 2, 2, 2
+        dims=["unit_id", "frame"],
+        coords={"unit_id": np.arange(3), "frame": np.arange(8)},
+        name="C",
+    )
+    # Stale tag from an earlier save: a 4-frame grid no longer tiling (3, 2).
+    var.encoding["chunks"] = (3, 4)
+
+    saved = save_minian(var, str(mn), overwrite=True)
+    np.testing.assert_array_equal(saved.compute().values, data)
+
+    roundtrip = open_minian(str(mn))["C"]
+    np.testing.assert_array_equal(roundtrip.values, data)
+    # On-disk grid follows the live (3, 2) layout, not the stale (3, 4).
+    assert roundtrip.encoding.get("chunks") == (3, 2)
