@@ -38,7 +38,7 @@ class TestVisualizeSeeds:
     filtered-out (False) seeds so a good seed is never hidden behind a rejected
     one, regardless of the row order of the seeds dataframe."""
 
-    def _max_proj(self):
+    def _max_proj(self) -> xr.DataArray:
         return xr.DataArray(
             np.zeros((10, 10), dtype="float32"),
             dims=("height", "width"),
