@@ -1,3 +1,9 @@
+## Unreleased
+
+### Fix
+
+- `save_minian` no longer writes a stale `encoding['chunks']` carried over from a reloaded-and-rechunked array. When an array read back with `xr.open_zarr` was rechunked in memory and then saved again, that leftover tag could write chunk metadata disagreeing with the actual on-disk layout -- raising "Specified Zarr chunks ... would overlap multiple Dask chunks" on xarray >=2024, or silently corrupting the store on read if the chunk-alignment guard were disabled. `save_minian` now drops the stale tag and lets the on-disk grid follow the live dask layout. **Stock pipelines are unaffected** -- they only ever save freshly computed arrays. If you ran custom reload -> transform -> re-save code on xarray >=2024, re-verify those stores.
+
 ## v2.0.0 (2026-06-16)
 
 ### Highlight
