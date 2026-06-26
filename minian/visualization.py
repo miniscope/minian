@@ -1564,30 +1564,36 @@ def visualize_seeds(
     """
     h, w = max_proj.sizes["height"], max_proj.sizes["width"]
     asp = w / h
-    pt_cmap = {True: "white", False: "red"}
     opts_im = {"frame_width": 600, "aspect": asp, "cmap": "Viridis"}
     opts_pts = {
         "frame_width": 600,
         "aspect": asp,
-        # HoloViews >=1.16 removed size_index/color_index; map the dimensions
-        # directly instead. size_index="seeds" rendered each point with radius
-        # sqrt(base_size * seeds) where base_size = size**2 = (sqrt(6))**2 = 6
-        # (area scaling, scaling_factor=1), so reproduce it exactly here.
+        # HoloViews >=1.16 removed size_index; map the dimension directly.
+        # size_index="seeds" rendered each point with radius sqrt(base_size *
+        # seeds) where base_size = size**2 = (sqrt(6))**2 = 6 (area scaling,
+        # scaling_factor=1), so reproduce it exactly here.
         "size": (hv.dim("seeds") * 6) ** 0.5,
         "tools": ["hover"],
         "fill_alpha": 0.8,
         "line_alpha": 0,
-        "cmap": pt_cmap,
     }
+    im = hv.Image(max_proj, kdims=["width", "height"]).options(**opts_im)
     if mask:
+        # Overlay kept (True) seeds on top of filtered-out (False) seeds so the
+        # kept ones are never hidden behind a rejected point. Overlay order is
+        # z-order in HoloViews, so this is independent of seeds' row order.
         vdims = ["seeds", mask]
-        opts_pts["color"] = mask
-    else:
-        vdims = ["seeds"]
-        opts_pts["color"] = "white"
-    im = hv.Image(max_proj, kdims=["width", "height"])
-    pts = hv.Points(seeds, kdims=["width", "height"], vdims=vdims)
-    return im.options(**opts_im) * pts.options(**opts_pts)
+        false_pts = hv.Points(
+            seeds[~seeds[mask]], kdims=["width", "height"], vdims=vdims
+        ).options(color="red", **opts_pts)
+        true_pts = hv.Points(
+            seeds[seeds[mask]], kdims=["width", "height"], vdims=vdims
+        ).options(color="white", **opts_pts)
+        return im * false_pts * true_pts
+    pts = hv.Points(seeds, kdims=["width", "height"], vdims=["seeds"]).options(
+        color="white", **opts_pts
+    )
+    return im * pts
 
 
 def visualize_gmm_fit(
