@@ -70,6 +70,9 @@ class TestVisualizeSeeds:
         assert top.dimension_values("mask_good").size == 2
         assert bool(top.dimension_values("mask_good").all())  # top = kept seeds
         assert not bool(bottom.dimension_values("mask_good").any())  # bottom = rejected
+        # header reports the true/false counts
+        title = hv.Store.lookup_options("bokeh", ov, "plot").kwargs.get("title")
+        assert title == "mask_good: 2 true (white), 2 false (red)"
 
     def test_unmasked_returns_single_points_layer(self):
         import holoviews as hv
@@ -81,3 +84,5 @@ class TestVisualizeSeeds:
         seeds = pd.DataFrame({"height": [1, 2], "width": [1, 2], "seeds": [5, 6]})
         ov = visualize_seeds(self._max_proj(), seeds)
         assert len(ov.traverse(specs=[hv.Points])) == 1
+        title = hv.Store.lookup_options("bokeh", ov, "plot").kwargs.get("title")
+        assert title == "seeds: 2 total"
