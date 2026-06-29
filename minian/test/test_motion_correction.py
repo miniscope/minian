@@ -10,9 +10,15 @@ Two tiers, both fast enough to run every CI cycle (the heavy notebook golden in
 * **Ground truth** - the full :func:`estimate_motion` / :func:`apply_transform`
   path against a minisim recording that ships the exact applied motion. The
   estimate is the *correction*, i.e. the negation of ``GroundTruth.shifts``, so it
-  is scored with :func:`minisim.shift_rmse` (``correction=True``); ``align=True``
-  absorbs the constant offset between the pipeline's registration template and
-  minisim's zero-shift reference. See :mod:`minian.test._simulated`.
+  is scored with :func:`minisim.shift_rmse` (``correction=True``). The motion is
+  checked along two independent axes: a **shape** test with ``align=True`` (does
+  the correction track the motion, ignoring origin) and an **offset** test (is the
+  constant gap between correction and motion exactly the shift that re-centers the
+  ground truth to zero mean). minisim anchors its ground truth at frame 0 while
+  minian centers its shifts to zero mean (smallest corrected bounding box), so the
+  two carry a constant offset; ``align`` deliberately absorbs it in the shape test,
+  and the offset test pins it down so a regression that lets the shifts run off
+  cannot hide behind ``align``. See :mod:`minian.test._simulated`.
 """
 
 import numpy as np
@@ -96,18 +102,39 @@ def test_transform_perframe_translates_by_the_given_shift():
 # --- ground truth: estimate_motion / apply_transform vs minisim -------------
 #
 # Tolerances reflect measured sub-pixel recovery on this fixture (aligned RMSE
-# ~0.03-0.05 px on the well-separated somata make_recording plants); the 1.0 px
-# bound leaves wide headroom for seed/platform variation while still failing loudly
-# on a real regression.
+# ~0.03 px on the well-separated somata make_recording plants, and the per-axis
+# centering offset ~0.06-0.15 px); the bounds leave ~8x headroom for seed/platform
+# variation while still failing loudly on a real regression.
 
-_RMSE_TOL_PX = 1.0
+_RMSE_TOL_PX = 0.25
+_OFFSET_TOL_PX = 0.5
 
 
 def test_estimate_motion_recovers_random_walk(simulated_recording):
+    # Shape: with align=True the constant origin offset is absorbed, so this scores
+    # purely how well the correction tracks the motion. The offset it ignores is
+    # checked separately by test_estimate_motion_offset_is_ground_truth_mean.
     rec = simulated_recording([BrainMotion(model="walk", walk_step_um=1.5, max_shift_um=10.0)])
     est = estimate_motion(as_movie(rec)).compute()
     rmse = shift_rmse(est.values, rec.ground_truth.shifts, correction=True, align=True)
     assert rmse < _RMSE_TOL_PX
+
+
+def test_estimate_motion_offset_is_ground_truth_mean(simulated_recording):
+    # Offset: the shape test's align=True throws away the constant gap between
+    # minian's zero-mean-centered correction and minisim's frame-0-anchored motion.
+    # That gap is not free though - it is exactly the shift that re-centers the
+    # ground truth to zero mean. Compute both and require they match, so a regression
+    # that stops centering and lets the shifts run off (a large static offset, hence
+    # needless cropping or padding) fails loudly instead of hiding behind align.
+    rec = simulated_recording([BrainMotion(model="walk", walk_step_um=1.5, max_shift_um=10.0)])
+    gt = rec.ground_truth.shifts
+    est = estimate_motion(as_movie(rec)).compute()
+    # est is the correction (negation of the applied motion), so the per-axis mean of
+    # (-est - gt) is the constant offset minian introduced relative to the motion.
+    measured_offset = (-est.values - gt).mean(axis=0)
+    zero_mean_offset = -gt.mean(axis=0)
+    np.testing.assert_allclose(measured_offset, zero_mean_offset, atol=_OFFSET_TOL_PX)
 
 
 def test_estimate_motion_recovers_known_trajectory(simulated_recording):
