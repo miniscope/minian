@@ -1186,52 +1186,42 @@ def update_temporal_block(
     return c, s, b, c0, g
 
 
-# Cone solvers the temporal update can use, most preferred first.
-#
-# ECOS stays first so that any environment which has it keeps producing exactly
-# the results it produced before -- it was a hard requirement for years and is
-# what the published parameter defaults were tuned against. It is optional now
-# (`pip install minian[ecos]`) because it ships no wheel past cp312, and none at
-# all for arm64 macOS, so requiring it made every newer interpreter compile it
-# from C source at install time. Clarabel is cvxpy's own default and one of its
-# required dependencies, so it is always available as a fallback.
-_CONE_SOLVERS = ("ECOS", "CLARABEL", "SCS")
+# Primary cone solvers for the temporal update, most preferred first. ECOS is
+# first for result-compatibility: it was required for years, so environments
+# that still have it must keep solving exactly as before. It is an optional
+# extra now (see CHANGELOG). SCS is deliberately absent -- it is the dedicated
+# retry solver below, and listing it here too would let it be chosen as primary
+# and then "fall back" to itself.
+_CONE_SOLVERS = ("ECOS", "CLARABEL")
 
-# cvxpy forwards solver options through verbatim, and these solvers spell their
-# iteration cap differently: ECOS and SCS take `max_iters`, Clarabel takes
-# `max_iter`. Clarabel rejects an unknown setting with TypeError rather than
-# ignoring it, so the name has to be mapped rather than passed blindly.
-_MAX_ITER_OPT = {"ECOS": "max_iters", "CLARABEL": "max_iter", "SCS": "max_iters"}
+# cvxpy forwards solver options verbatim and Clarabel spells its iteration cap
+# `max_iter`, rejecting the more common `max_iters` with TypeError rather than
+# ignoring it. Solvers absent from this map take the `max_iters` default.
+_MAX_ITER_OPT = {"CLARABEL": "max_iter"}
+_DEFAULT_MAX_ITER_OPT = "max_iters"
 
 
 @fct.lru_cache(maxsize=1)
 def cone_solver() -> str:
     """Name of the cone solver used for the temporal update.
 
-    Returns the first entry of :data:`_CONE_SOLVERS` that cvxpy reports as
-    installed. Cached, because :func:`cvxpy.installed_solvers` walks every
-    solver interface and this is called once per optimization problem.
-
-    Returns
-    -------
-    solver : str
-        A solver name accepted by :meth:`cvxpy.Problem.solve`.
+    Prefers ``ECOS`` when it is installed, otherwise ``CLARABEL``. Cached,
+    because :func:`cvxpy.installed_solvers` re-imports every absent solver on
+    each call and this runs once per optimization problem.
 
     Raises
     ------
     RuntimeError
-        If cvxpy reports none of them, which means the install is broken --
-        clarabel and scs are both required cvxpy dependencies.
+        If neither is installed. clarabel is a required cvxpy dependency, so
+        this means a broken environment rather than a missing extra.
     """
     installed = set(cvx.installed_solvers())
     for name in _CONE_SOLVERS:
         if name in installed:
             return name
     raise RuntimeError(
-        "None of the supported cone solvers "
-        f"({', '.join(_CONE_SOLVERS)}) are installed. cvxpy requires clarabel "
-        "and scs, so this usually means a broken environment; reinstall with "
-        "`pip install --force-reinstall cvxpy`."
+        f"None of the supported cone solvers ({', '.join(_CONE_SOLVERS)}) are "
+        "installed; reinstall with `pip install --force-reinstall cvxpy`."
     )
 
 
@@ -1407,11 +1397,11 @@ def update_temporal_cvxpy(
         )
         prob = cvx.Problem(obj, cons)
         try:
-            _solver = cone_solver()
+            solver = cone_solver()
             _ = prob.solve(
-                solver=_solver,
+                solver=solver,
                 warm_start=warm_start,
-                **{_MAX_ITER_OPT[_solver]: max_iters},
+                **{_MAX_ITER_OPT.get(solver, _DEFAULT_MAX_ITER_OPT): max_iters},
             )
             if prob.status in ["infeasible", "unbounded", None]:
                 raise ValueError

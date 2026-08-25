@@ -81,13 +81,8 @@ minian = "minian.cli:main"
 minian-install = "minian.install:main"
 
 [project.optional-dependencies]
-# ECOS is the solver the temporal update has always used, and it stays the
-# preferred one whenever it is installed -- `pip install minian[ecos]` keeps
-# results bit-identical to older releases. It is opt-in rather than required
-# because it publishes no wheel past cp312 (and none at all for arm64 macOS),
-# so requiring it forced anyone on a newer interpreter to compile it from C
-# source at install time. Without it, `update_temporal_cvxpy` falls back to
-# Clarabel, which cvxpy requires and ships wheels for everywhere.
+# Opt-in: keeps the temporal update on ECOS for results bit-identical to
+# MiniAn <= 2.0.x. Not required, because ecos has no wheel past cp312.
 ecos = [
     "ecos>=2.0.7",
 ]

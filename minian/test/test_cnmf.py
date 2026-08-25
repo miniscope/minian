@@ -1,5 +1,6 @@
 """Unit tests for discrete functions in ``minian.cnmf`` on synthetic input."""
 
+import os
 from collections.abc import Callable, Iterator
 
 import dask.array as da
@@ -14,7 +15,6 @@ from sklearn.neighbors import radius_neighbors_graph
 from .. import cnmf
 from ..cnmf import (
     _CONE_SOLVERS,
-    _MAX_ITER_OPT,
     adj_corr,
     cone_solver,
     filt_fft_vec,
@@ -617,29 +617,33 @@ class TestPartitionDiagnostics:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def _clear_solver_cache() -> Iterator[None]:
+    """Start each solver test with a cold ``cone_solver`` cache.
+
+    It is ``lru_cache``d, so without this a case would return whichever solver
+    the previous case pretended to install. Deliberately not ``autouse`` -- at
+    module scope that would attach it to every unrelated test in this file.
+    """
+    cone_solver.cache_clear()
+    yield
+    cone_solver.cache_clear()
+
+
+@pytest.mark.usefixtures("_clear_solver_cache")
 class TestConeSolver:
     """Solver selection for the temporal update.
 
-    ``ecos`` is an optional extra: it publishes no wheel past cp312, so
-    requiring it made newer interpreters compile it from C source at install
-    time. These pin the preference order so the fallback cannot silently
-    change which solver a given environment picks.
+    Pins the preference order so the fallback cannot silently change which
+    solver a given environment picks.
     """
-
-    @pytest.fixture(autouse=True)
-    def _clear_cache(self) -> Iterator[None]:
-        # cone_solver is lru_cached, so every case must start cold or it
-        # would return whichever solver the previous case installed.
-        cone_solver.cache_clear()
-        yield
-        cone_solver.cache_clear()
 
     @pytest.mark.parametrize(
         ("installed", "expected"),
         [
             (["ECOS", "CLARABEL", "SCS"], "ECOS"),
             (["CLARABEL", "SCS"], "CLARABEL"),
-            (["SCS"], "SCS"),
+            # Reported order must not matter, only _CONE_SOLVERS order.
             (["SCS", "CLARABEL"], "CLARABEL"),
             (["OSQP", "CLARABEL", "ECOS"], "ECOS"),
         ],
@@ -647,21 +651,17 @@ class TestConeSolver:
     def test_picks_first_available_in_preference_order(
         self, monkeypatch, installed: list[str], expected: str
     ):
-        # Preference is _CONE_SOLVERS order, not the order cvxpy reports.
         monkeypatch.setattr(cnmf.cvx, "installed_solvers", lambda: installed)
         assert cone_solver() == expected
 
-    def test_prefers_ecos_so_existing_results_are_unchanged(self, monkeypatch):
-        # The guarantee behind making ecos optional rather than dropping it:
-        # anyone who installs minian[ecos] keeps the old solver.
-        monkeypatch.setattr(cnmf.cvx, "installed_solvers", lambda: ["CLARABEL", "ECOS", "SCS"])
-        assert cone_solver() == "ECOS"
-
-    def test_raises_when_no_supported_solver_is_installed(self, monkeypatch):
-        # clarabel and scs are both required cvxpy deps, so an empty list
-        # means a broken env -- fail loudly rather than passing solver=None
-        # and letting cvxpy pick something untested.
-        monkeypatch.setattr(cnmf.cvx, "installed_solvers", lambda: ["OSQP"])
+    @pytest.mark.parametrize("installed", [["OSQP"], ["SCS"], []])
+    def test_raises_when_no_primary_solver_is_installed(self, monkeypatch, installed: list[str]):
+        # clarabel is a required cvxpy dep, so none of these can happen in a
+        # working env -- fail loudly rather than passing solver=None and
+        # letting cvxpy pick something untested. SCS is covered here on
+        # purpose: it is the retry solver, never a primary, so an env with
+        # only SCS is broken rather than merely missing the ecos extra.
+        monkeypatch.setattr(cnmf.cvx, "installed_solvers", lambda: installed)
         with pytest.raises(RuntimeError, match="cone solvers"):
             cone_solver()
 
@@ -681,7 +681,13 @@ class TestConeSolver:
         # No monkeypatching: whatever this install actually has must be
         # something cvxpy will accept. Catches a preference list that has
         # drifted from the solvers cvxpy ships.
-        assert cone_solver() in set(cnmf.cvx.installed_solvers())
+        got = cone_solver()
+        assert got in set(cnmf.cvx.installed_solvers())
+        # CI's solver-ecos job sets this to prove the extra really wins
+        # selection, not merely that selection produced something usable.
+        expected = os.environ.get("MINIAN_EXPECT_SOLVER")
+        if expected:
+            assert got == expected, f"expected {expected}, selected {got}"
 
 
 # ---------------------------------------------------------------------------
@@ -708,6 +714,7 @@ def _ar2_problem(
     return y, g, sn
 
 
+@pytest.mark.usefixtures("_clear_solver_cache")
 class TestTemporalUpdateSolvers:
     """Every solver in the preference order must actually drive the problem.
 
@@ -717,24 +724,12 @@ class TestTemporalUpdateSolvers:
     the solve through a non-ECOS solver broke until the name was mapped.
     """
 
-    @pytest.fixture(autouse=True)
-    def _clear_cache(self) -> Iterator[None]:
-        cone_solver.cache_clear()
-        yield
-        cone_solver.cache_clear()
-
-    def test_every_supported_solver_has_an_iteration_option(self):
-        # Adding a solver to _CONE_SOLVERS without its option name would raise
-        # KeyError at solve time, deep inside a dask worker.
-        assert set(_MAX_ITER_OPT) == set(_CONE_SOLVERS)
-
     @pytest.mark.parametrize("solver", _CONE_SOLVERS)
     def test_solve_succeeds_under_each_installed_solver(self, monkeypatch, solver):
         if solver not in cnmf.cvx.installed_solvers():
             pytest.skip(f"{solver} not installed")
         y, g, sn = _ar2_problem()
         monkeypatch.setattr(cnmf.cvx, "installed_solvers", lambda: [solver])
-        cone_solver.cache_clear()
         c, s, b, c0 = cnmf.update_temporal_cvxpy(
             y,
             g,

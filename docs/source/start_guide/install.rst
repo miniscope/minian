@@ -16,6 +16,8 @@ MiniAn is available on `PyPI <https://pypi.org/project/minian/>`_:
     python -m pip install minian
     # installation with optimized numba routines
     python -m pip install 'minian[numba]'
+    # add the ECOS solver, for results bit-identical to MiniAn <= 2.0.x
+    python -m pip install 'minian[ecos]'
 
 We recommend installing into a fresh virtual environment. A pip install does not
 include FFmpeg, so make sure it is on your ``PATH`` (see above).
