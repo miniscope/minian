@@ -41,6 +41,31 @@ jobs:
           python -m pip install .
           minian data download --all
 
+  solver-ecos:
+    # The matrix above installs without `ecos`, so it only exercises the Clarabel
+    # fallback. ECOS stays preferred wherever it is installed, so it needs its own
+    # coverage or a regression there ships unnoticed. One interpreter is enough:
+    # ecos has no wheel past cp312, which is why it is optional in the first place.
+    name: ECOS solver path py3.12
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install minian with the ecos extra
+        run: |
+          python -m pip install "pdm>=2.26.9"
+          pdm install --with test --with ecos
+      # MINIAN_EXPECT_SOLVER makes the real-environment test assert that the
+      # extra actually won selection, rather than just resolving to something
+      # usable. Folded into the pytest run so the minian import stack (holoviews,
+      # datashader, dask, xarray) is paid once for this job instead of twice.
+      - name: Solver tests
+        env:
+          MINIAN_EXPECT_SOLVER: ECOS
+        run: pdm run pytest minian/test/test_cnmf.py -k "ConeSolver or TemporalUpdateSolvers" -p no:cacheprovider
+
   test-and-coverage:
     name: Test and Cov py ${{ matrix.python-version }}, ${{ matrix.os }}
     needs: prefetch-data

@@ -11,7 +11,6 @@ dependencies = [
     "dask>=2025.1.0",
     "datashader>=0.12.1",
     "distributed>=2025.1.0",
-    "ecos>=2.0.7",
     "ffmpeg-python>=0.2.0",
     "holoviews>=1.12.7",
     "jinja2>=2.11.3",
@@ -82,6 +81,11 @@ minian = "minian.cli:main"
 minian-install = "minian.install:main"
 
 [project.optional-dependencies]
+# Opt-in: keeps the temporal update on ECOS for results bit-identical to
+# MiniAn <= 2.0.x. Not required, because ecos has no wheel past cp312.
+ecos = [
+    "ecos>=2.0.7",
+]
 numba = [
     "numba>=0.52.0",
 ]
