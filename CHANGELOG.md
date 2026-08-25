@@ -1,5 +1,9 @@
 ## Unreleased
 
+### Change
+
+- `ecos` is no longer a required dependency; install it with `pip install minian[ecos]`. It publishes no wheel for CPython 3.13 or newer (and none at all for arm64 macOS), so requiring it meant pip fell back to the source archive and tried to compile C code at install time -- which fails on any machine without a compiler toolchain, and on managed Windows machines can trip endpoint security while downloading one. The temporal update now picks its cone solver at runtime via `minian.cnmf.cone_solver`: `ecos` when installed, otherwise `clarabel` (a required cvxpy dependency with wheels on every platform). **Environments that already have `ecos` are unaffected** -- it stays the preferred solver, so results do not change. Without it, recovered calcium traces match ECOS to within ~1e-5 relative on the test problem; only near-zero values around the `zero_thres` cutoff differ.
+
 ### Fix
 
 - `save_minian` no longer writes a stale `encoding['chunks']` carried over from a reloaded-and-rechunked array. When an array read back with `xr.open_zarr` was rechunked in memory and then saved again, that leftover tag could write chunk metadata disagreeing with the actual on-disk layout -- raising "Specified Zarr chunks ... would overlap multiple Dask chunks" on xarray >=2024, or silently corrupting the store on read if the chunk-alignment guard were disabled. `save_minian` now drops the stale tag and lets the on-disk grid follow the live dask layout. **Stock pipelines are unaffected** -- they only ever save freshly computed arrays. If you ran custom reload -> transform -> re-save code on xarray >=2024, re-verify those stores.

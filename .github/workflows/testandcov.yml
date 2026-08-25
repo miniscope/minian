@@ -41,6 +41,35 @@ jobs:
           python -m pip install .
           minian data download --all
 
+  solver-ecos:
+    # The matrix above installs without `ecos`, so it only ever exercises the
+    # Clarabel fallback. ECOS is still the preferred solver wherever it is
+    # installed, and stays the one the published parameter defaults were tuned
+    # against, so it needs coverage of its own or a regression there would ship
+    # unnoticed. Scoped to the solver tests on one interpreter: ecos publishes
+    # no wheel past cp312, which is the whole reason it is optional now.
+    name: ECOS solver path py3.12
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install minian with the ecos extra
+        run: |
+          python -m pip install "pdm>=2.26.9"
+          pdm install --with test --with ecos
+      - name: Confirm ecos is the solver in use
+        run: |
+          pdm run python -c "
+          from minian.cnmf import cone_solver
+          got = cone_solver()
+          assert got == 'ECOS', f'expected ECOS with the extra installed, got {got}'
+          print('cone_solver() ->', got)
+          "
+      - name: Solver tests
+        run: pdm run pytest minian/test/test_cnmf.py -k "ConeSolver or TemporalUpdateSolvers" -p no:cacheprovider
+
   test-and-coverage:
     name: Test and Cov py ${{ matrix.python-version }}, ${{ matrix.os }}
     needs: prefetch-data

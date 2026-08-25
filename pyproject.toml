@@ -11,7 +11,6 @@ dependencies = [
     "dask>=2025.1.0",
     "datashader>=0.12.1",
     "distributed>=2025.1.0",
-    "ecos>=2.0.7",
     "ffmpeg-python>=0.2.0",
     "holoviews>=1.12.7",
     "jinja2>=2.11.3",
@@ -82,6 +81,16 @@ minian = "minian.cli:main"
 minian-install = "minian.install:main"
 
 [project.optional-dependencies]
+# ECOS is the solver the temporal update has always used, and it stays the
+# preferred one whenever it is installed -- `pip install minian[ecos]` keeps
+# results bit-identical to older releases. It is opt-in rather than required
+# because it publishes no wheel past cp312 (and none at all for arm64 macOS),
+# so requiring it forced anyone on a newer interpreter to compile it from C
+# source at install time. Without it, `update_temporal_cvxpy` falls back to
+# Clarabel, which cvxpy requires and ships wheels for everywhere.
+ecos = [
+    "ecos>=2.0.7",
+]
 numba = [
     "numba>=0.52.0",
 ]

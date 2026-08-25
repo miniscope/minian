@@ -2,10 +2,10 @@
 # It is not intended for manual editing.
 
 [metadata]
-groups = ["default", "doc", "numba", "test", "training"]
+groups = ["default", "doc", "ecos", "numba", "test", "training"]
 strategy = ["inherit_metadata"]
-lock_version = "4.5.0"
-content_hash = "sha256:ceeaa9725128438b0dac3b5fcc67ed80e1bddd23d08a21d17c981982e80296c5"
+lock_version = "4.5.1"
+content_hash = "sha256:9af1697e53309c158d097063ea6b7441b039c617b45f38510ee9b38163abaa55"
 
 [[metadata.targets]]
 requires_python = ">=3.10,<3.12"
@@ -1180,7 +1180,7 @@ files = [
 name = "ecos"
 version = "2.0.14"
 summary = "This is the Python package for ECOS: Embedded Cone Solver. See Github page for more information."
-groups = ["default"]
+groups = ["ecos"]
 dependencies = [
     "numpy>=1.6",
     "scipy>=0.9",
@@ -3038,7 +3038,7 @@ name = "numpy"
 version = "2.2.6"
 requires_python = ">=3.10"
 summary = "Fundamental package for array computing in Python"
-groups = ["default", "numba", "test", "training"]
+groups = ["default", "ecos", "numba", "test", "training"]
 marker = "python_version >= \"3.10\" and python_version < \"3.12\""
 files = [
     {file = "numpy-2.2.6-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:b412caa66f72040e6d268491a59f2c43bf03eb6c96dd8f0307829feb7fa2b6fb"},
@@ -3073,7 +3073,7 @@ name = "numpy"
 version = "2.4.6"
 requires_python = ">=3.11"
 summary = "Fundamental package for array computing in Python"
-groups = ["default", "numba", "test", "training"]
+groups = ["default", "ecos", "numba", "test", "training"]
 marker = "python_version >= \"3.12\""
 files = [
     {file = "numpy-2.4.6-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:001fbb8e08d942dd57599e781f2472269ee7f2755fae407b4f67b2f0b17da3f1"},
@@ -4682,7 +4682,7 @@ name = "scipy"
 version = "1.15.3"
 requires_python = ">=3.10"
 summary = "Fundamental algorithms for scientific computing in Python"
-groups = ["default", "test", "training"]
+groups = ["default", "ecos", "test", "training"]
 marker = "python_version >= \"3.10\" and python_version < \"3.12\""
 dependencies = [
     "numpy<2.5,>=1.23.5",
@@ -4714,7 +4714,7 @@ name = "scipy"
 version = "1.18.0"
 requires_python = ">=3.12"
 summary = "Fundamental algorithms for scientific computing in Python"
-groups = ["default", "test", "training"]
+groups = ["default", "ecos", "test", "training"]
 marker = "python_version >= \"3.12\""
 dependencies = [
     "numpy<2.8,>=2.0.0",

@@ -1,6 +1,6 @@
 """Unit tests for discrete functions in ``minian.cnmf`` on synthetic input."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import dask.array as da
 import networkx as nx
@@ -11,8 +11,12 @@ import scipy.sparse
 import xarray as xr
 from sklearn.neighbors import radius_neighbors_graph
 
+from .. import cnmf
 from ..cnmf import (
+    _CONE_SOLVERS,
+    _MAX_ITER_OPT,
     adj_corr,
+    cone_solver,
     filt_fft_vec,
     graph_optimize_corr,
     partition_diagnostics,
@@ -606,3 +610,177 @@ class TestPartitionDiagnostics:
         assert diag["sizes"].shape == (0,)
         assert diag["total_edges"] == 0
         assert diag["mem_mb"].shape == (0,)
+
+
+# ---------------------------------------------------------------------------
+# cone_solver
+# ---------------------------------------------------------------------------
+
+
+class TestConeSolver:
+    """Solver selection for the temporal update.
+
+    ``ecos`` is an optional extra: it publishes no wheel past cp312, so
+    requiring it made newer interpreters compile it from C source at install
+    time. These pin the preference order so the fallback cannot silently
+    change which solver a given environment picks.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self) -> Iterator[None]:
+        # cone_solver is lru_cached, so every case must start cold or it
+        # would return whichever solver the previous case installed.
+        cone_solver.cache_clear()
+        yield
+        cone_solver.cache_clear()
+
+    @pytest.mark.parametrize(
+        ("installed", "expected"),
+        [
+            (["ECOS", "CLARABEL", "SCS"], "ECOS"),
+            (["CLARABEL", "SCS"], "CLARABEL"),
+            (["SCS"], "SCS"),
+            (["SCS", "CLARABEL"], "CLARABEL"),
+            (["OSQP", "CLARABEL", "ECOS"], "ECOS"),
+        ],
+    )
+    def test_picks_first_available_in_preference_order(
+        self, monkeypatch, installed: list[str], expected: str
+    ):
+        # Preference is _CONE_SOLVERS order, not the order cvxpy reports.
+        monkeypatch.setattr(cnmf.cvx, "installed_solvers", lambda: installed)
+        assert cone_solver() == expected
+
+    def test_prefers_ecos_so_existing_results_are_unchanged(self, monkeypatch):
+        # The guarantee behind making ecos optional rather than dropping it:
+        # anyone who installs minian[ecos] keeps the old solver.
+        monkeypatch.setattr(cnmf.cvx, "installed_solvers", lambda: ["CLARABEL", "ECOS", "SCS"])
+        assert cone_solver() == "ECOS"
+
+    def test_raises_when_no_supported_solver_is_installed(self, monkeypatch):
+        # clarabel and scs are both required cvxpy deps, so an empty list
+        # means a broken env -- fail loudly rather than passing solver=None
+        # and letting cvxpy pick something untested.
+        monkeypatch.setattr(cnmf.cvx, "installed_solvers", lambda: ["OSQP"])
+        with pytest.raises(RuntimeError, match="cone solvers"):
+            cone_solver()
+
+    def test_result_is_cached(self, monkeypatch):
+        calls = []
+
+        def _installed() -> list[str]:
+            calls.append(1)
+            return ["CLARABEL"]
+
+        monkeypatch.setattr(cnmf.cvx, "installed_solvers", _installed)
+        assert cone_solver() == "CLARABEL"
+        assert cone_solver() == "CLARABEL"
+        assert len(calls) == 1
+
+    def test_real_environment_resolves_to_a_usable_solver(self):
+        # No monkeypatching: whatever this install actually has must be
+        # something cvxpy will accept. Catches a preference list that has
+        # drifted from the solvers cvxpy ships.
+        assert cone_solver() in set(cnmf.cvx.installed_solvers())
+
+
+# ---------------------------------------------------------------------------
+# update_temporal_cvxpy solver compatibility
+# ---------------------------------------------------------------------------
+
+
+def _ar2_problem(
+    seed: int = 0, n_unit: int = 3, n_frame: int = 400
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Synthetic AR(2) traces with known sparse spikes, plus noise."""
+    rng = np.random.default_rng(seed)
+    g = np.tile(np.array([1.6, -0.64]), (n_unit, 1))
+    spikes = np.zeros((n_unit, n_frame))
+    for u in range(n_unit):
+        idx = rng.choice(n_frame - 20, size=8, replace=False) + 10
+        spikes[u, idx] = rng.uniform(1, 3, 8)
+    c = np.zeros((n_unit, n_frame))
+    for u in range(n_unit):
+        for f in range(2, n_frame):
+            c[u, f] = g[u, 0] * c[u, f - 1] + g[u, 1] * c[u, f - 2] + spikes[u, f]
+    sn = np.full(n_unit, 0.15)
+    y = c + rng.normal(0, sn[0], (n_unit, n_frame))
+    return y, g, sn
+
+
+class TestTemporalUpdateSolvers:
+    """Every solver in the preference order must actually drive the problem.
+
+    Regression guard: cvxpy forwards solver options verbatim, and Clarabel
+    spells its iteration cap ``max_iter`` where ECOS and SCS use ``max_iters``.
+    Passing the wrong one raises TypeError instead of being ignored, so routing
+    the solve through a non-ECOS solver broke until the name was mapped.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self) -> Iterator[None]:
+        cone_solver.cache_clear()
+        yield
+        cone_solver.cache_clear()
+
+    def test_every_supported_solver_has_an_iteration_option(self):
+        # Adding a solver to _CONE_SOLVERS without its option name would raise
+        # KeyError at solve time, deep inside a dask worker.
+        assert set(_MAX_ITER_OPT) == set(_CONE_SOLVERS)
+
+    @pytest.mark.parametrize("solver", _CONE_SOLVERS)
+    def test_solve_succeeds_under_each_installed_solver(self, monkeypatch, solver):
+        if solver not in cnmf.cvx.installed_solvers():
+            pytest.skip(f"{solver} not installed")
+        y, g, sn = _ar2_problem()
+        monkeypatch.setattr(cnmf.cvx, "installed_solvers", lambda: [solver])
+        cone_solver.cache_clear()
+        c, s, b, c0 = cnmf.update_temporal_cvxpy(
+            y,
+            g,
+            sn,
+            sparse_penal=1.0,
+            max_iters=200,
+            use_cons=False,
+            scs_fallback=False,
+            c_last=None,
+            zero_thres=1e-8,
+            warm_start=False,
+        )
+        assert c.shape == y.shape
+        assert np.all(np.isfinite(c)) and np.all(np.isfinite(s))
+        assert (s >= 0).all(), "spike non-negativity constraint violated"
+        # An all-zero return is how the function signals total solver failure.
+        assert c.max() > 0, f"{solver} produced an all-zero solution"
+
+    def test_clarabel_matches_ecos_on_the_same_problem(self, monkeypatch):
+        # The guarantee behind making ecos optional: dropping it must not
+        # change the answer. Tiny differences survive near zero_thres, so
+        # compare the recovered traces rather than exact spike support.
+        installed = cnmf.cvx.installed_solvers()
+        if not {"ECOS", "CLARABEL"} <= set(installed):
+            pytest.skip("needs both ECOS and CLARABEL installed")
+        y, g, sn = _ar2_problem()
+        kw = {
+            "sparse_penal": 1.0,
+            "max_iters": 200,
+            "use_cons": False,
+            "scs_fallback": False,
+            "c_last": None,
+            "zero_thres": 1e-8,
+            "warm_start": False,
+        }
+        res = {}
+        for name in ("ECOS", "CLARABEL"):
+            monkeypatch.setattr(cnmf.cvx, "installed_solvers", lambda n=name: [n])
+            cone_solver.cache_clear()
+            res[name] = cnmf.update_temporal_cvxpy(y.copy(), g, sn, **kw)
+
+        c_ecos, c_clara = res["ECOS"][0], res["CLARABEL"][0]
+        assert np.corrcoef(c_ecos.ravel(), c_clara.ravel())[0, 1] > 0.9999
+        assert np.abs(c_ecos - c_clara).max() < 1e-3
+
+        # Spike support agrees once round-off dust just above zero_thres is
+        # excluded -- below 1e-6 the two solvers disagree on near-zero values.
+        s_ecos, s_clara = res["ECOS"][1], res["CLARABEL"][1]
+        assert (s_ecos > 1e-4).sum() == (s_clara > 1e-4).sum()

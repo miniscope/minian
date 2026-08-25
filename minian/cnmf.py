@@ -780,7 +780,9 @@ def update_temporal(
         result values caused by high `sparse_penal` or to revert the per-cell
         normalization. By default `False`.
     scs_fallback : bool, optional
-        Whether to fall back to `scs` solver if the default `ecos` solver fails.
+        Whether to fall back to the `scs` solver if the primary cone solver
+        fails. The primary solver is chosen by :func:`cone_solver` -- `ecos`
+        when it is installed, otherwise `clarabel`.
         By default `False`.
     concurrent_update : bool, optional
         Whether to update a group of cells as a single optimization problem.
@@ -1184,6 +1186,55 @@ def update_temporal_block(
     return c, s, b, c0, g
 
 
+# Cone solvers the temporal update can use, most preferred first.
+#
+# ECOS stays first so that any environment which has it keeps producing exactly
+# the results it produced before -- it was a hard requirement for years and is
+# what the published parameter defaults were tuned against. It is optional now
+# (`pip install minian[ecos]`) because it ships no wheel past cp312, and none at
+# all for arm64 macOS, so requiring it made every newer interpreter compile it
+# from C source at install time. Clarabel is cvxpy's own default and one of its
+# required dependencies, so it is always available as a fallback.
+_CONE_SOLVERS = ("ECOS", "CLARABEL", "SCS")
+
+# cvxpy forwards solver options through verbatim, and these solvers spell their
+# iteration cap differently: ECOS and SCS take `max_iters`, Clarabel takes
+# `max_iter`. Clarabel rejects an unknown setting with TypeError rather than
+# ignoring it, so the name has to be mapped rather than passed blindly.
+_MAX_ITER_OPT = {"ECOS": "max_iters", "CLARABEL": "max_iter", "SCS": "max_iters"}
+
+
+@fct.lru_cache(maxsize=1)
+def cone_solver() -> str:
+    """Name of the cone solver used for the temporal update.
+
+    Returns the first entry of :data:`_CONE_SOLVERS` that cvxpy reports as
+    installed. Cached, because :func:`cvxpy.installed_solvers` walks every
+    solver interface and this is called once per optimization problem.
+
+    Returns
+    -------
+    solver : str
+        A solver name accepted by :meth:`cvxpy.Problem.solve`.
+
+    Raises
+    ------
+    RuntimeError
+        If cvxpy reports none of them, which means the install is broken --
+        clarabel and scs are both required cvxpy dependencies.
+    """
+    installed = set(cvx.installed_solvers())
+    for name in _CONE_SOLVERS:
+        if name in installed:
+            return name
+    raise RuntimeError(
+        "None of the supported cone solvers "
+        f"({', '.join(_CONE_SOLVERS)}) are installed. cvxpy requires clarabel "
+        "and scs, so this usually means a broken environment; reinstall with "
+        "`pip install --force-reinstall cvxpy`."
+    )
+
+
 def update_temporal_cvxpy(
     y: np.ndarray,
     g: np.ndarray,
@@ -1234,7 +1285,9 @@ def update_temporal_cvxpy(
         Whether to try constrained version of the problem first. By default
         `False`.
     scs_fallback : bool
-        Whether to fall back to `scs` solver if the default `ecos` solver fails.
+        Whether to fall back to the `scs` solver if the primary cone solver
+        fails. The primary solver is chosen by :func:`cone_solver` -- `ecos`
+        when it is installed, otherwise `clarabel`.
     c_last : np.ndarray, optional
         Initial estimation of calcium traces for each cell used to warm start.
     zero_thres : float
@@ -1342,7 +1395,7 @@ def update_temporal_cvxpy(
         obj = cvx.Minimize(cvx.sum(cvx.norm(s, 1, axis=1)))
         prob = cvx.Problem(obj, cons + cons_noise)
         if use_cons:
-            _ = prob.solve(solver="ECOS")
+            _ = prob.solve(solver=cone_solver())
         if not (prob.status == "optimal" or prob.status == "optimal_inaccurate"):
             if use_cons:
                 warnings.warn("constrained version of problem infeasible", stacklevel=2)
@@ -1354,7 +1407,12 @@ def update_temporal_cvxpy(
         )
         prob = cvx.Problem(obj, cons)
         try:
-            _ = prob.solve(solver="ECOS", warm_start=warm_start, max_iters=max_iters)
+            _solver = cone_solver()
+            _ = prob.solve(
+                solver=_solver,
+                warm_start=warm_start,
+                **{_MAX_ITER_OPT[_solver]: max_iters},
+            )
             if prob.status in ["infeasible", "unbounded", None]:
                 raise ValueError
         except (cvx.SolverError, ValueError):
